@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: MIT
+# The phone's GPU and Wi-Fi firmware, copied from its own (read-only)
+# Android partitions before udev loads the drivers that ask for it, so a
+# new card works on its first boot. A run with everything in place copies
+# nothing.
+[Unit]
+Description=Copy markw's own GPU and Wi-Fi firmware to the root
+DefaultDependencies=no
+After=systemd-remount-fs.service
+Before=systemd-udev-trigger.service sysinit.target
+ConditionPathIsReadWrite=/usr/lib
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/omamobile/omamobile-markw-firmware
+
+[Install]
+WantedBy=sysinit.target

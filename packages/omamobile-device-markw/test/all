@@ -79,6 +79,14 @@ grep -q '^\[Network\]' "$tmp/root/usr/lib/systemd/network/20-usb-gadget.network"
 [[ -L $tmp/root/usr/lib/systemd/system/swap.target.wants/omamobile-zram.service ]] \
   || fail "zram swap starts with swap.target"
 sh -n vendor/omamobile-zram || fail "the zram helper parses"
+[[ -x $tmp/root/usr/lib/omamobile/omamobile-markw-firmware ]] || fail "the firmware copy is executable"
+[[ -L $tmp/root/usr/lib/systemd/system/sysinit.target.wants/omamobile-markw-firmware.service ]] \
+  || fail "the firmware copy runs at every boot"
+grep -q '^Before=systemd-udev-trigger.service' vendor/systemd/system/omamobile-markw-firmware.service \
+  || fail "the firmware is in place before udev loads the drivers"
+bash -n vendor/omamobile-markw-firmware || fail "the firmware copy parses"
+grep -q 'mount -o ro ' vendor/omamobile-markw-firmware || fail "Android partitions are mounted read-only"
+grep -qF '/ro") != 1' vendor/omamobile-markw-firmware || fail "a partition that isn't read-only is never mounted"
 power="$tmp/root/usr/lib/systemd/logind.conf.d/10-omamobile-power-key.conf"
 grep -q '^HandlePowerKey=ignore$' "$power" \
   || fail "a short press must not power the phone off"

@@ -3,7 +3,7 @@
 pkgname=omamobile-device-markw
 pkgver=$(cat "${startdir:-.}/version")
 pkgrel=1
-pkgdesc="Omarchy Mobile support for the Xiaomi Redmi 4 Prime (markw): storage guard, USB networking and zram swap"
+pkgdesc="Omarchy Mobile support for the Xiaomi Redmi 4 Prime (markw): storage guard, USB networking, zram swap and its own firmware copied from its partitions"
 arch=(aarch64)
 url="https://github.com/derekross/omarchy-mobile"
 license=(MIT)

@@ -1,0 +1,103 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Copy the phone's own firmware from its Android partitions onto the root,
+# so a freshly written card has a GPU and Wi-Fi without hand copying:
+#
+#   system   etc/firmware/a530_pm4.fw, a530_pfp.fw    -> qcom/
+#            etc/firmware/a506_zap.*                  -> qcom/msm8953/xiaomi/markw/
+#   modem    image/wcnss.mdt, wcnss.b??               -> ./
+#   persist  WCNSS_qcom_wlan_nv.bin (this phone's own -> wlan/prima/
+#            Wi-Fi calibration)
+#
+# under /usr/lib/firmware/updates, which the kernel searches first. The
+# files are Qualcomm's and Xiaomi's and this phone's: they stay on the
+# phone and never enter the repository or a package.
+#
+# Partitions are found by PARTNAME, must be read-only at the block layer
+# (the storage guard), and are mounted read-only and unmounted again. A run
+# with everything in place copies nothing.
+#
+#   omamobile-markw-firmware          copy what is missing or changed
+#   omamobile-markw-firmware --check  report only; exit 1 if anything is missing
+set -u
+dest=${OMAMOBILE_FIRMWARE_DEST:-/usr/lib/firmware/updates}
+check=0
+[[ ${1:-} == --check ]] && check=1
+
+say() { echo "omamobile-markw-firmware: $*"; }
+
+# The eMMC partition whose PARTNAME is $1 (never the microSD card).
+partition() {
+  local u
+  for u in /sys/class/block/mmcblk*p*/uevent; do
+    [[ -f $u ]] || continue
+    [[ $(sed -n 's/^PARTNAME=//p' "$u") == "$1" ]] || continue
+    [[ $(cat "${u%/uevent}/../device/type" 2>/dev/null) == MMC ]] || continue
+    echo "/dev/$(basename "${u%/uevent}")"
+    return 0
+  done
+  return 1
+}
+
+missing=0
+copied=0
+failed=0
+
+# Whether two files are the same (coreutils only: the root has no cmp).
+same() {
+  [[ -f $2 ]] || return 1
+  [[ $(sha256sum < "$1") == "$(sha256sum < "$2")" ]]
+}
+
+# copy PARTNAME DESTDIR SOURCE... (paths inside the partition; globs allowed)
+copy() {
+  local name=$1 subdir=$2
+  shift 2
+  local dev mnt src f target
+  if ! dev=$(partition "$name"); then
+    say "no $name partition: skipped"
+    failed=1
+    return
+  fi
+  if [[ $(cat "/sys/class/block/${dev#/dev/}/ro") != 1 ]]; then
+    say "$dev ($name) is not read-only: the storage guard is off, so nothing is touched"
+    failed=1
+    return
+  fi
+  mnt=$(mktemp -d /run/omamobile-fw-XXXXXX)
+  if ! mount -o ro "$dev" "$mnt" 2>/dev/null; then
+    say "could not mount $dev ($name) read-only"
+    rmdir "$mnt"
+    failed=1
+    return
+  fi
+  mkdir -p "$dest/$subdir"
+  for src in "$@"; do
+    for f in "$mnt"/$src; do
+      [[ -f $f ]] || { say "$name has no $src"; failed=1; continue; }
+      target=$dest/$subdir/$(basename "$f")
+      same "$f" "$target" && continue
+      if (( check )); then
+        say "missing or changed: ${target#"$dest"/}"
+        missing=1
+      else
+        install -m 0644 "$f" "$target.new" && mv -f "$target.new" "$target" && copied=$((copied + 1))
+      fi
+    done
+  done
+  umount "$mnt"
+  rmdir "$mnt"
+}
+
+copy system qcom etc/firmware/a530_pm4.fw etc/firmware/a530_pfp.fw
+copy system qcom/msm8953/xiaomi/markw 'etc/firmware/a506_zap.*'
+copy modem . image/wcnss.mdt 'image/wcnss.b??'
+copy persist wlan/prima WCNSS_qcom_wlan_nv.bin
+
+if (( check )); then
+  (( missing || failed )) && exit 1
+  say "all firmware in place"
+  exit 0
+fi
+(( copied )) && say "copied $copied file(s) to $dest"
+exit $failed
