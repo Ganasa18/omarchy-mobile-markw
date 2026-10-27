@@ -14,7 +14,8 @@ import qs.Commons as Commons
 // Folded by that button, the keyboard stays folded until a text field gets
 // a new focus-in, and a tap on the field that already has focus (a
 // terminal) gives none. So the button stays in the corner as a "show
-// keyboard" button until the keyboard unfolds again (markw, 2026-10-27).
+// keyboard" button until the keyboard unfolds again or another window takes
+// focus (markw, 2026-10-27).
 //
 // The button's window is anchored to the bottom-right corner with normal
 // exclusion, so the compositor places it right above the area the keyboard
@@ -43,34 +44,72 @@ Item {
   // `shell call omamobile.keyboard hideKeyboard ''` / `showKeyboard ''` /
   // `toggleKeyboard ''` (not show/hide: the IPC command line takes `show`
   // for itself)
-  function hideKeyboard() { userHidden = true; setVisible(false); return "ok" }
+  function hideKeyboard() { fold(); setVisible(false); return "ok" }
   function showKeyboard() { setVisible(true); return "ok" }
   function toggleKeyboard() { setVisible(!oskOpen); return oskOpen ? "hiding" : "showing" }
 
+  // Showing also turns squeekboard back on: the screensaver turns it off
+  // while it runs, and a keyboard left off ignores SetVisible.
   function setVisible(visible) {
-    Quickshell.execDetached(["busctl", "--user", "call", "sm.puri.OSK0", "/sm/puri/OSK0",
-                             "sm.puri.OSK0", "SetVisible", "b", visible ? "true" : "false"])
+    var call = "busctl --user call sm.puri.OSK0 /sm/puri/OSK0 sm.puri.OSK0 SetVisible b " + (visible ? "true" : "false")
+    if (visible)
+      call = "gsettings set org.gnome.desktop.a11y.applications screen-keyboard-enabled true; sleep 0.2; " + call
+    Quickshell.execDetached(["sh", "-c", call])
   }
 
   property bool oskOpen: false
-  // Folded by our button; cleared when the keyboard unfolds again.
+  // Folded, by our button or by anything else (the screen going off and the
+  // lock coming up folds it too); cleared when the keyboard unfolds again.
+  // A field that keeps its focus across the lock gets no new focus-in, so
+  // without the button nothing brought the keyboard back (markw).
   property bool userHidden: false
-  onOskOpenChanged: if (oskOpen) userHidden = false
+  // Folded over an app's window rather than a shell surface (the drawer's
+  // search, the lock).
+  property bool foldedInApp: false
+  // The app it was folded over (or the last one, folded over the lock).
+  property var foldedOn: null
+  property var lastApp: null
+  onOskOpenChanged: oskOpen ? (userHidden = false) : fold()
 
-  // ...or after a while unused: left in the corner of the home screen, it
-  // covered the edit mode's Done button.
-  Timer {
-    running: root.userHidden
-    interval: 10000
-    onTriggered: root.userHidden = false
+  function fold() {
+    var active = ToplevelManager.activeToplevel
+    foldedInApp = active !== null
+    foldedOn = active !== null ? active : lastApp
+    userHidden = true
   }
 
-  // ...or when another window takes focus: its fields get a focus-in of
-  // their own, and a closed terminal shouldn't leave the button behind.
+  // ...or after a while unused, but only when folded over a shell surface
+  // and not locked: left in the corner of the home screen, it covered the
+  // edit mode's Done button.
+  Timer {
+    id: unusedTimer
+    running: root.userHidden && !root.foldedInApp
+    interval: 10000
+    onTriggered: lockCheck.running = true
+  }
+  Process {
+    id: lockCheck
+    command: ["omarchy-shell", "lock", "isLocked"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        if (String(text).trim() === "true") unusedTimer.restart()
+        else root.userHidden = false
+      }
+    }
+  }
+
+  // ...or when another app takes focus: its fields get a focus-in of their
+  // own, and a closed terminal shouldn't leave the button behind. Coming
+  // back to the same app (from the lock) keeps it.
   Connections {
     target: ToplevelManager
     ignoreUnknownSignals: true
-    function onActiveToplevelChanged() { root.userHidden = false }
+    function onActiveToplevelChanged() {
+      var active = ToplevelManager.activeToplevel
+      if (active === null) return
+      if (active !== root.foldedOn) root.userHidden = false
+      root.lastApp = active
+    }
   }
 
   Process {
