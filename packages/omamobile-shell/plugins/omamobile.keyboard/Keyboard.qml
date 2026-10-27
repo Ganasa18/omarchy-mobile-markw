@@ -11,6 +11,11 @@ import qs.Commons as Commons
 // it (sm.puri.OSK0 SetVisible false). Visibility comes from
 // bin/omamobile-osk-watch (squeekboard's Visible on the session bus).
 //
+// Folded by that button, the keyboard stays folded until a text field gets
+// a new focus-in, and a tap on the field that already has focus (a
+// terminal) gives none. So the button stays in the corner as a "show
+// keyboard" button until the keyboard unfolds again (markw, 2026-10-27).
+//
 // The button's window is anchored to the bottom-right corner with normal
 // exclusion, so the compositor places it right above the area the keyboard
 // reserves; the window is the button, so it takes no other touches.
@@ -32,13 +37,13 @@ Item {
 
   // `shell call omamobile.keyboard state ''`
   function state() {
-    return JSON.stringify({ keyboard: oskOpen, watcher: oskWatch.running, button: button.visible })
+    return JSON.stringify({ keyboard: oskOpen, folded: userHidden, watcher: oskWatch.running, button: button.visible })
   }
 
   // `shell call omamobile.keyboard hideKeyboard ''` / `showKeyboard ''` /
   // `toggleKeyboard ''` (not show/hide: the IPC command line takes `show`
   // for itself)
-  function hideKeyboard() { setVisible(false); return "ok" }
+  function hideKeyboard() { userHidden = true; setVisible(false); return "ok" }
   function showKeyboard() { setVisible(true); return "ok" }
   function toggleKeyboard() { setVisible(!oskOpen); return oskOpen ? "hiding" : "showing" }
 
@@ -48,6 +53,25 @@ Item {
   }
 
   property bool oskOpen: false
+  // Folded by our button; cleared when the keyboard unfolds again.
+  property bool userHidden: false
+  onOskOpenChanged: if (oskOpen) userHidden = false
+
+  // ...or after a while unused: left in the corner of the home screen, it
+  // covered the edit mode's Done button.
+  Timer {
+    running: root.userHidden
+    interval: 10000
+    onTriggered: root.userHidden = false
+  }
+
+  // ...or when another window takes focus: its fields get a focus-in of
+  // their own, and a closed terminal shouldn't leave the button behind.
+  Connections {
+    target: ToplevelManager
+    ignoreUnknownSignals: true
+    function onActiveToplevelChanged() { root.userHidden = false }
+  }
 
   Process {
     id: oskWatch
@@ -76,7 +100,7 @@ Item {
   PanelWindow {
     id: button
 
-    visible: root.oskOpen
+    visible: root.oskOpen || root.userHidden
     anchors { bottom: true; right: true }
     margins { right: Style.space(8); bottom: Style.space(6) }
     implicitWidth: root.size + Style.space(8)
@@ -102,8 +126,8 @@ Item {
       Text {
         anchors.centerIn: parent
         textFormat: Text.PlainText
-        // nf-md-keyboard_close
-        text: String.fromCodePoint(0xF030F)
+        // nf-md-keyboard_close, or nf-md-keyboard while folded
+        text: String.fromCodePoint(root.oskOpen ? 0xF030F : 0xF030C)
         color: Commons.Color.bar.text
         font.family: Style.font.family
         font.pixelSize: Math.round(root.size * 0.5)
@@ -112,7 +136,7 @@ Item {
       MouseArea {
         id: tap
         anchors.fill: parent
-        onClicked: root.hideKeyboard()
+        onClicked: root.oskOpen ? root.hideKeyboard() : root.showKeyboard()
       }
     }
   }

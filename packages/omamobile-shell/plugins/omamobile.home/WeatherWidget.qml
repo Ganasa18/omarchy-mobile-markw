@@ -70,6 +70,13 @@ Item {
   readonly property var look: forecast ? HomeModel.weatherText(forecast.code) : ({ icon: "󰖐", text: "" })
   readonly property string unit: config.units === "fahrenheit" ? "°F" : "°C"
 
+  // As in ClockWidget: with no card behind it (Home.qml's `bare`), a raised
+  // outline keeps the text readable. "align": "right" puts it at the end of
+  // its cell (beside a clock).
+  readonly property bool bare: config.card !== true
+  readonly property color shade: Qt.rgba(0, 0, 0, 0.55)
+  readonly property bool alignRight: config.align === "right"
+
   // Not set up: say what it would do and open the settings.
   Column {
     anchors.centerIn: parent
@@ -79,17 +86,21 @@ Item {
 
     Text {
       width: parent.width
-      horizontalAlignment: Text.AlignHCenter
+      horizontalAlignment: widget.alignRight ? Text.AlignRight : Text.AlignHCenter
       textFormat: Text.PlainText
       text: "󰖐  Weather is off"
       color: widget.fg
+      style: widget.bare ? Text.Raised : Text.Normal
+      styleColor: widget.shade
       font.family: Style.font.family
       font.pixelSize: Style.font.title
     }
     Text {
       width: parent.width
-      visible: widget.height > 90
-      horizontalAlignment: Text.AlignHCenter
+      visible: widget.height > 90 && !widget.bare
+      horizontalAlignment: widget.alignRight ? Text.AlignRight : Text.AlignHCenter
+      style: widget.bare ? Text.Raised : Text.Normal
+      styleColor: widget.shade
       textFormat: Text.PlainText
       text: "Tap to turn it on. Uses open-meteo.com."
       color: widget.dim
@@ -100,7 +111,8 @@ Item {
   }
 
   Row {
-    anchors.centerIn: parent
+    anchors.verticalCenter: parent.verticalCenter
+    x: widget.alignRight ? widget.width - width - Style.spacing.xxl : (widget.width - width) / 2
     visible: widget.configured
     spacing: Style.spacing.xl
 
@@ -123,6 +135,8 @@ Item {
           : widget.failure || (!widget.coords && geo.failure ? geo.failure + ". Tap to name a place."
             : !widget.coords ? "Finding your location…" : "…")
         color: widget.fg
+        style: widget.bare ? Text.Raised : Text.Normal
+        styleColor: widget.shade
         font.family: Style.font.family
         font.pixelSize: widget.forecast ? Style.font.displayLarge : Style.font.body
       }
@@ -133,6 +147,8 @@ Item {
           widget.forecast.high !== null ? "↑" + widget.forecast.high + "° ↓" + widget.forecast.low + "°" : ""]
           .filter(function(s) { return !!s }).join(" · ") : ""
         color: widget.dim
+        style: widget.bare ? Text.Raised : Text.Normal
+        styleColor: widget.shade
         font.family: Style.font.family
         font.pixelSize: Style.font.body
         elide: Text.ElideRight

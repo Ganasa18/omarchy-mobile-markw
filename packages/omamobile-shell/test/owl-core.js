@@ -341,6 +341,12 @@ test("phone actions and android.* answers, with mocks", () => {
   eq([sys.kernel, sys.uptime, sys.memory], ["7.3.0", 123, { total: 8192000, used: 5120000, available: 3072000 }])
   eq(P.systemFrom("", "1", "7.3.0\n", " 116041613312 16160268288\n").storage, { total: 116041613312, used: 16160268288, available: 99881345024 })
   eq([sys.storage, P.storageFrom("Size Used"), P.storageFrom("0 0")], [null, null, null])
+  const conf = 'CODENAME=markw\nNAME="Xiaomi Redmi 4 Prime"\nSOC=msm8953\nPANEL_SIZE=1080x1920\n@@\n8\n'
+  const markw = P.systemFrom("", "1", "7.1.3\n", "", conf)
+  eq([markw.cpu.soc, markw.cpu.maker, markw.cpu.cores, markw.codename, markw.display.width, markw.display.height],
+     ["msm8953", "Xiaomi", 8, "markw", 1080, 1920])
+  eq(P.deviceFrom(conf), { model: "Redmi 4 Prime", maker: "Xiaomi", android: null, sdk: null, soc: "msm8953" })
+  eq([sys.cpu.soc, sys.codename, P.deviceFrom("").model], [null, null, null])
   eq([P.batteryFrom("97\nCharging\n").level, P.batteryFrom("97\nCharging\n").charging, P.batteryFrom("97\nCharging\n").status], [97, true, "charging"])
   eq([P.batteryFrom("").level, P.batteryFrom("").status], [null, null])
   eq([P.panelOff("0\n"), P.panelOff("4\n"), P.panelOff("")], [false, true, false])

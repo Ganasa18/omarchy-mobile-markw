@@ -1256,6 +1256,10 @@ Item {
 
     readonly property var limits: HomeModel.sizeLimits(modelData, root.layout.grid, root.userCatalog)
     readonly property bool isUser: isWidget && HomeModel.isUserType(modelData.type)
+    // The clock and the weather sit on the wallpaper itself, as on Android,
+    // unless their settings ask for a card ("card": true).
+    readonly property bool bare: isWidget && (modelData.type === "clock" || modelData.type === "weather")
+      && !(modelData.config && modelData.config.card === true)
     x: modelData.x * owner.cellW + dragX
     y: modelData.y * owner.cellH + dragY
     width: Math.max(limits.minW * owner.cellW, Math.min(limits.maxW * owner.cellW, modelData.w * owner.cellW + growX))
@@ -1268,7 +1272,7 @@ Item {
       id: card
       anchors.fill: parent
       anchors.margins: root.gap
-      visible: cell.isWidget
+      visible: cell.isWidget && (!cell.bare || root.editing)
       radius: Math.max(Style.cornerRadius, 12)
       color: root.cardColor
     }

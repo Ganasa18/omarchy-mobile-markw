@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "omamobile.launcher",
   "name": "Mobile launcher",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": "Omarchy Mobile",
   "license": "MIT",
-  "description": "The phone's home bar: one input at the bottom of the screen that searches apps, opens the app grid and sends a prompt to your coding agent.",
+  "description": "The phone's home bar: a gesture bar at the bottom of the screen (swipe up for the app grid, further for recent apps, tap for home) and an input that searches apps and sends a prompt to your coding agent.",
   "kinds": [
     "panel"
   ],
@@ -16,9 +16,16 @@
   "settings": {
     "defaults": {
       "columns": 4,
-      "sentenceWords": 3
+      "sentenceWords": 3,
+      "dock": "gesture"
     },
     "schema": [
+      {
+        "key": "dock",
+        "type": "string",
+        "label": "Bottom of the screen",
+        "description": "gesture (a handle to swipe) or search (the search bar)"
+      },
       {
         "key": "columns",
         "type": "integer",

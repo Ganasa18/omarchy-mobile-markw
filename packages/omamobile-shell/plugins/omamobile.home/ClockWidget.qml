@@ -41,20 +41,30 @@ Item {
 
   readonly property bool wide: width > height * 1.6
 
+  // With no card behind it (Home.qml's `bare`), a raised outline keeps the
+  // text readable on a light wallpaper; a text style, not a shadow effect.
+  readonly property bool bare: config.card !== true
+  readonly property color shade: Qt.rgba(0, 0, 0, 0.55)
+  // "align": "left" puts it at the start of its cell (beside a weather widget).
+  readonly property int alignment: config.align === "left" ? Text.AlignLeft : Text.AlignHCenter
+
   Column {
-    anchors.centerIn: parent
+    anchors.verticalCenter: parent.verticalCenter
+    x: Style.spacing.xxl
     width: widget.width - Style.spacing.xxl * 2
     spacing: Style.spacing.xs
 
     Text {
       width: parent.width
-      horizontalAlignment: Text.AlignHCenter
+      horizontalAlignment: widget.alignment
       textFormat: Text.PlainText
       text: Qt.formatDateTime(clock.date, widget.timeFormat)
       color: widget.home ? widget.home.foreground : "white"
       font.family: Style.font.family
-      font.pixelSize: Math.max(Style.font.display, Math.min(widget.height * 0.46, widget.width * 0.26))
+      font.pixelSize: Math.max(Style.font.display, Math.min(widget.height * 0.46, widget.width * (config.align === "left" ? 0.42 : 0.26)))
       font.weight: Font.Light
+      style: widget.bare ? Text.Raised : Text.Normal
+      styleColor: widget.shade
       fontSizeMode: Text.HorizontalFit
       minimumPixelSize: Style.font.title
     }
@@ -62,12 +72,14 @@ Item {
     Text {
       width: parent.width
       visible: widget.height >= 80
-      horizontalAlignment: Text.AlignHCenter
+      horizontalAlignment: widget.alignment
       textFormat: Text.PlainText
       text: Qt.formatDateTime(clock.date, widget.config.dateFormat || "dddd d MMMM")
       color: widget.home ? widget.home.dimForeground : "white"
       font.family: Style.font.family
       font.pixelSize: Style.font.heading
+      style: widget.bare ? Text.Raised : Text.Normal
+      styleColor: widget.shade
       elide: Text.ElideRight
     }
   }

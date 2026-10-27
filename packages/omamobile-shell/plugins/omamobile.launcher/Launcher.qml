@@ -13,8 +13,9 @@ import "LauncherModel.js" as LauncherModel
 // The phone's home surface, after Omalauncher: one bar at the bottom of the
 // screen that is app search, app grid and coding-agent prompt at once.
 //
-// Collapsed, it is a dock holding a single search pill. Tapping it raises the
-// app drawer with the input focused. Typing filters the grid; text that reads
+// Collapsed, it is a gesture bar (a swipe up raises the app drawer with the
+// input focused) or, with "dock": "search", a dock holding a single search
+// pill that raises it on a tap. Typing filters the grid; text that reads
 // like a sentence (or matches no app) offers "Ask <agent>" (the user's
 // Omarchy default agent) instead, and Enter
 // takes whichever is on top: the first app, or a terminal running the agent
@@ -224,7 +225,25 @@ Item {
   readonly property color foreground: Commons.Color.menu.text
   readonly property int touch: Math.max(44, Style.space(44))
   readonly property int inputHeight: Math.max(48, Style.space(48))
-  readonly property int dockHeight: inputHeight + Style.spacing.xxl * 2
+  // The dock: Android's gesture bar by default (a handle; swipe up for the
+  // drawer, further for recent apps, tap for home), or the search pill
+  // ("dock": "search" in the plugin's settings).
+  readonly property bool gestureDock: settings.dock !== "search"
+  // The drawer's input row keeps the search pill's height either way.
+  readonly property int inputRowHeight: inputHeight + Style.spacing.xxl * 2
+  readonly property int dockHeight: gestureDock ? Math.max(28, Style.space(28)) : inputRowHeight
+
+  // As the switcher's Home: the home screen (an empty workspace) on its home page.
+  function goHome() {
+    Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.focus({ workspace = \"empty\" })"])
+    Quickshell.execDetached(["qs", "ipc", "-p", Quickshell.shellDir, "call", "shell", "call", "omamobile.home", "goHome", ""])
+  }
+
+  function showRecents() {
+    // Through the CLI, like Omarchy's background does: a plugin may only
+    // summon panels it owns, and the switcher is its own plugin.
+    Quickshell.execDetached(["omarchy-shell", "shell", "summon", "omamobile.switcher", "{}"])
+  }
 
   property real reveal: opened ? 1 : 0
   Behavior on reveal { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
@@ -244,17 +263,22 @@ Item {
       anchors { bottom: true; left: true; right: true }
       implicitHeight: root.dockHeight
       exclusionMode: ExclusionMode.Auto
-      color: Commons.Color.bar.background
+      // The gesture bar is only its handle, on the wallpaper (or the app above it).
+      color: root.gestureDock ? "transparent" : Commons.Color.bar.background
       WlrLayershell.namespace: "omamobile-dock"
       // Bottom, not Top: its exclusive zone still keeps windows off it, and
       // fullscreen windows (the screensaver, video) cover it. On Top it was
       // drawn over a fullscreen window when it re-mapped after the drawer.
       WlrLayershell.layer: WlrLayer.Bottom
 
-      // Swipe up on the dock for recent apps (omamobile.switcher), as on
-      // Android; a tap still opens the drawer.
+      // The gesture bar: swipe up for the drawer, a long swipe (a quarter of
+      // the screen; the touch stays with this surface past its edge) for
+      // recent apps (omamobile.switcher), a tap for home. The search pill:
+      // any swipe up for recent apps, a tap for the drawer.
       Item {
+        id: dockArea
         anchors.fill: parent
+        readonly property real longSwipe: Math.max(120, (modelData.height || 960) / 4)
 
         DragHandler {
           target: null
@@ -262,15 +286,30 @@ Item {
           property real swipeY: 0
           onActiveTranslationChanged: swipeY = activeTranslation.y
           onActiveChanged: {
-            if (active) swipeY = 0
-            // Through the CLI, like Omarchy's background does: a plugin may
-            // only summon panels it owns, and the switcher is its own plugin.
-            else if (swipeY < -24)
-              Quickshell.execDetached(["omarchy-shell", "shell", "summon", "omamobile.switcher", "{}"])
+            if (active) { swipeY = 0; return }
+            if (swipeY >= -24) return
+            if (!root.gestureDock || -swipeY >= dockArea.longSwipe) root.showRecents()
+            else root.expand()
           }
         }
 
+        TapHandler {
+          enabled: root.gestureDock
+          onTapped: root.goHome()
+        }
+
+        Rectangle {
+          visible: root.gestureDock
+          anchors.centerIn: parent
+          width: Math.max(96, Style.space(108))
+          height: Math.max(4, Style.space(4))
+          radius: height / 2
+          color: root.foreground
+          opacity: 0.7
+        }
+
         SearchPill {
+          visible: !root.gestureDock
           anchors.fill: parent
           anchors.margins: Style.spacing.xxl
           placeholder: (root.hasAgent ? "Search apps or ask " + root.agentName + "…" : "Search apps…")
@@ -485,7 +524,7 @@ Item {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        height: root.dockHeight
+        height: root.inputRowHeight
 
         TextField {
           id: input

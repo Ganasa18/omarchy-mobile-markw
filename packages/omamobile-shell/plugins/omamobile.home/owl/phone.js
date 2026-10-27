@@ -305,14 +305,39 @@ function batteryFrom(text) {
            temp: null, voltage: null, health: null, plugged: null, technology: null, cycles: null }
 }
 
-// /proc/meminfo, /proc/uptime, uname and df -> android.system.
-function systemFrom(meminfo, uptime, kernel, df) {
+// The phone itself, from its device descriptor and nproc: these used to be
+// the Pixel 7 Pro's, and other phones showed them too (markw, 2026-10-27).
+var DESCRIPTOR_COMMAND = "cat /usr/share/omamobile/device.conf 2>/dev/null; echo '@@'; nproc"
+function descriptorFrom(text) {
+  var parts = String(text || "").split("@@\n")
+  var get = function(key) {
+    var m = new RegExp("^" + key + "=\"?([^\"\\n]*)\"?\\s*$", "m").exec(parts[0] || "")
+    return m ? m[1].trim() : ""
+  }
+  var name = get("NAME")
+  var words = name ? name.split(/\s+/) : []
+  var panel = /^(\d+)x(\d+)$/.exec(get("PANEL_SIZE"))
+  var cores = parseInt(parts[1], 10)
+  return { maker: words.length > 1 ? words[0] : null, model: words.length > 1 ? words.slice(1).join(" ") : (name || null),
+           soc: get("SOC") || null, codename: get("CODENAME") || null, cores: isFinite(cores) ? cores : null,
+           width: panel ? parseInt(panel[1], 10) : null, height: panel ? parseInt(panel[2], 10) : null }
+}
+
+// The descriptor -> android.device.
+function deviceFrom(text) {
+  var d = descriptorFrom(text)
+  return { model: d.model, maker: d.maker, android: null, sdk: null, soc: d.soc }
+}
+
+// /proc/meminfo, /proc/uptime, uname, df and the descriptor -> android.system.
+function systemFrom(meminfo, uptime, kernel, df, descriptor) {
   var kb = function(name) { var m = new RegExp("^" + name + ":\\s+(\\d+)", "m").exec(meminfo || ""); return m ? parseInt(m[1], 10) * 1024 : null }
   var total = kb("MemTotal"), available = kb("MemAvailable")
+  var d = descriptorFrom(descriptor)
   return { kernel: String(kernel || "").trim() || null, uptime: Math.floor(parseFloat(uptime) || 0),
            memory: { total: total, used: total !== null && available !== null ? total - available : null, available: available },
-           storage: storageFrom(df), cpu: { soc: "gs201", maker: "Google", hardware: null, cores: 8, abi: "arm64-v8a", maxMhz: null },
-           display: { width: 1440, height: 3120, hz: 120, dpi: 512 }, build: null, codename: "cheetah", patch: null,
+           storage: storageFrom(df), cpu: { soc: d.soc, maker: d.maker, hardware: null, cores: d.cores, abi: "arm64-v8a", maxMhz: null },
+           display: { width: d.width, height: d.height, hz: null, dpi: null }, build: null, codename: d.codename, patch: null,
            locale: null, timezone: null, launcher: "omamobile", theme: null, apps: 0 }
 }
 
@@ -345,6 +370,7 @@ if (typeof module !== "undefined") {
     sourceLimits: sourceLimits, LIMITS: LIMITS, hostOf: hostOf, OWL_CELL_DP: OWL_CELL_DP,
     actionArgv: actionArgv, volumeFrom: volumeFrom, mediaFrom: mediaFrom, MEDIA_FORMAT: MEDIA_FORMAT,
     modesFrom: modesFrom, systemFrom: systemFrom, storageFrom: storageFrom,
+    DESCRIPTOR_COMMAND: DESCRIPTOR_COMMAND, descriptorFrom: descriptorFrom, deviceFrom: deviceFrom,
     batteryFrom: batteryFrom, BATTERY_COMMAND: BATTERY_COMMAND, panelOff: panelOff, DEVICE_ACTIONS: DEVICE_ACTIONS
   }
 }
