@@ -19,8 +19,14 @@ sh -n initramfs/init
 sh -n device/flame/initramfs/init
 sh -n device/flame/initramfs/build
 bash -n tools/build-flame-probe
+sh -n device/markw/initramfs/init
+sh -n device/markw/initramfs/build
+bash -n tools/build-markw-probe
+bash -n tools/build-markw-sd
+bash -n tools/markw-kernel
+bash -n device/markw/sd-image
 echo "ok - scripts parse"
-for t in tests/pr-check tests/kernel-pr-check tests/install-phone tests/phone-provision tests/initramfs-grow tests/images-layout tests/device-overlays tests/simplefb-trigger tests/storage-guard tests/usb-product tests/boot-method tests/flame-probe packages/omamobile-firstboot/test/all packages/omamobile-device-felix/test/all; do
+for t in tests/pr-check tests/kernel-pr-check tests/install-phone tests/phone-provision tests/initramfs-grow tests/images-layout tests/device-overlays tests/simplefb-trigger tests/storage-guard tests/usb-product tests/boot-method tests/flame-probe tests/markw-probe packages/omamobile-firstboot/test/all packages/omamobile-device-felix/test/all packages/omamobile-device-markw/test/all; do
   echo "# $t"
   "$t"
 done

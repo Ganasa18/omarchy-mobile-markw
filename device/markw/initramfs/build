@@ -1,0 +1,128 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Runs inside tools/build-markw-probe's disposable aarch64 Alpine container.
+set -eu
+apk add --no-cache gcc musl-dev cpio dtc python3 gzip kmod zstd xz
+
+[ "$(fdtget /input/markw.dtb / model)" = 'Xiaomi Redmi 4 Prime' ] || {
+    echo 'Not a Xiaomi Redmi 4 Prime device tree' >&2; exit 1;
+}
+case " $(fdtget /input/markw.dtb / compatible) " in
+    *' xiaomi,markw qcom,msm8953 '*) ;;
+    *) echo 'Not an msm8953-xiaomi-markw device tree' >&2; exit 1 ;;
+esac
+# lk2nd picks an appended DTB by these, as CAF lk does (dev_tree_appended).
+fdtget /input/markw.dtb / qcom,msm-id >/dev/null \
+    && fdtget /input/markw.dtb / qcom,board-id >/dev/null \
+    || { echo 'DTB lacks qcom,msm-id or qcom,board-id' >&2; exit 1; }
+gzip -t /input/kernel || { echo 'Expected a gzip-compressed ARM64 Image' >&2; exit 1; }
+gzip -dc /input/kernel > /tmp/Image
+# lk2nd on MSM8953 ignores the header's addresses (ABOOT_IGNORE_BOOT_HEADER_ADDRS):
+# the kernel goes to DDR start, 2 MiB aligned, plus text_offset, and the DTB
+# to DDR + 0x3400000, so the decompressed kernel must end below that.
+python3 - <<'PY'
+from pathlib import Path
+import struct
+import sys
+with Path('/tmp/Image').open('rb') as stream:
+    header = stream.read(64)
+if header[56:60] != b'ARM\x64':
+    sys.exit('Kernel has no ARM64 Image header')
+text_offset, image_size = struct.unpack('<QQ', header[8:24])
+if not image_size or text_offset + image_size > 0x3400000:
+    sys.exit('Kernel image_size overlaps lk2nd\'s DTB address (DDR + 0x3400000)')
+PY
+release=$(strings /tmp/Image | sed -n 's/^Linux version \([^ ]*\) .*/\1/p' | head -1)
+rm /tmp/Image
+[ -n "$release" ] || { echo 'Kernel release not found in the Image' >&2; exit 1; }
+
+# Resolve the gadget functions and the PON reboot-mode driver against the
+# kernel's own modules, in load order. Nothing else is loaded.
+modroot=/tmp/modroot
+mkdir -p "$modroot/lib/modules"
+cp -a /input/modules "$modroot/lib/modules/$release"
+depmod -b "$modroot" "$release"
+order=/tmp/modules.order
+: > "$order"
+for want in usb_f_ncm usb_f_acm qcom_pon; do
+    modprobe -d "$modroot" -S "$release" --show-depends "$want" > /tmp/deps \
+        || { echo "Module $want not found for $release" >&2; exit 1; }
+    sed -n 's/^insmod \([^ ]*\).*/\1/p' /tmp/deps | while read -r path; do
+        grep -qxF "$path" "$order" || echo "$path" >> "$order"
+    done
+done
+
+stage=/tmp/rootfs
+mkdir -p "$stage"
+apk --root "$stage" --initdb --no-cache \
+    --repositories-file /etc/apk/repositories --keys-dir /etc/apk/keys add \
+    alpine-baselayout busybox dropbear iproute2 util-linux busybox-extras e2fsprogs e2fsprogs-extra
+install -m755 /src/device/markw/initramfs/init "$stage/init"
+mkdir -p "$stage/root/.ssh" "$stage/proc" "$stage/sys" "$stage/dev" "$stage/run"
+cp /input/key.pub "$stage/root/.ssh/authorized_keys"
+chmod 700 "$stage/root/.ssh"
+chmod 600 "$stage/root/.ssh/authorized_keys"
+# The Arch root on the microSD card (tools/build-markw-sd); none means M1.
+if [ -n "${ROOT_UUID:-}" ]; then
+    echo "$ROOT_UUID" > "$stage/etc/omamobile-sd-root"
+fi
+gcc -Os -static -o "$stage/sbin/reboot-to" \
+    /src/packages/omamobile-device-cheetah/src/reboot-to.c
+
+# Busybox insmod takes uncompressed modules only.
+mkdir -p "$stage/lib/modules" "$stage/etc"
+: > "$stage/etc/omamobile-modules"
+while read -r path; do
+    name=$(basename "$path"); name=${name%.zst}; name=${name%.xz}; name=${name%.gz}
+    case $path in
+        *.zst) zstd -qdc "$path" > "$stage/lib/modules/$name" ;;
+        *.xz) xz -dc "$path" > "$stage/lib/modules/$name" ;;
+        *.gz) gzip -dc "$path" > "$stage/lib/modules/$name" ;;
+        *) cp "$path" "$stage/lib/modules/$name" ;;
+    esac
+    [ "$(modinfo -F vermagic "$stage/lib/modules/$name" | cut -d ' ' -f1)" = "$release" ] \
+        || { echo "$name does not match the kernel release" >&2; exit 1; }
+    echo "$name" >> "$stage/etc/omamobile-modules"
+done < "$order"
+
+# No vendor firmware enters the probe and remote processors stay disabled.
+# The charger driver owns USB role switching; the probe forces peripheral.
+cp /input/markw.dtb /out/markw.dtb
+usb=/soc@0/usb@7000000
+fdtput -t s /out/markw.dtb "$usb" dr_mode peripheral
+fdtput -d /out/markw.dtb "$usb" usb-role-switch
+fdtput -d /out/markw.dtb "$usb" role-switch-default-mode 2>/dev/null || true
+for node in remoteproc@4080000 remoteproc@c200000; do
+    fdtput -t s /out/markw.dtb "/soc@0/$node" status disabled
+done
+# WCNSS (Wi-Fi, Bluetooth) stays enabled: its firmware comes from the root,
+# copied from the phone's own modem and persist partitions, never the probe.
+# Without it, or while its modules are blacklisted, the node does nothing.
+fdtput -t s /out/markw.dtb /soc@0/remoteproc@a204000 status okay
+# lk2nd enables the FT5336 at 0x38 from the panel name, but the NT35596
+# EBBG unit tested on 2026-10-27 has an Atmel maXTouch at 0x4a (0x38 NAKs).
+# Enable both: the one that isn't fitted fails its probe and stays out.
+fdtput -t s /out/markw.dtb /soc@0/i2c@78b7000/touchscreen@4a status okay
+(cd "$stage" && find . -print0 | cpio --null --quiet -o -H newc --owner=0:0) \
+    | gzip -n -9 > /out/initramfs.cpio.gz
+# lk2nd's fastboot boot takes a header v0 image whose kernel carries the
+# appended DTB. The addresses are the usual CAF ones; lk2nd overrides them.
+cat /input/kernel /out/markw.dtb > /tmp/Image.gz-dtb
+# systemd.firstboot=off: the root image ships machine-id "uninitialized", so
+# systemd's own first-boot wizard would wait for answers on /dev/console
+# (ttyMSM0, unreachable here); omamobile-firstboot does that setup instead.
+# The first Arch boot on 2026-10-27 stopped there, after "Update is Completed".
+# plymouth.enable=0 keeps systemd's status lines on the panel during bring-up.
+python3 /mkbootimg/mkbootimg.py --header_version 0 \
+    --base 0x80000000 --kernel_offset 0x8000 --ramdisk_offset 0x1000000 \
+    --tags_offset 0x100 --pagesize 2048 \
+    --kernel /tmp/Image.gz-dtb --ramdisk /out/initramfs.cpio.gz \
+    --cmdline 'console=tty0 console=ttyMSM0,115200n8 rdinit=/init clk_ignore_unused pd_ignore_unused panic=10 printk.devkmsg=on systemd.firstboot=off plymouth.enable=0' \
+    -o /out/boot.img
+size=$(stat -c %s /out/boot.img)
+# A conservative cap on the image lk2nd's fastboot has to download.
+[ "$size" -le 33554432 ] || { rm /out/boot.img; echo 'Probe exceeds 32 MiB' >&2; exit 1; }
+cp "$stage/etc/omamobile-modules" /out/modules.list
+echo "$release" > /out/kernel.release
+echo "${ROOT_UUID:-none}" > /out/root-uuid
+(cd /out && sha256sum boot.img markw.dtb initramfs.cpio.gz > SHA256SUMS)

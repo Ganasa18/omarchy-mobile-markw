@@ -1,0 +1,34 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Stage omamobile-device-markw into DESTDIR. Nothing is enabled that would
+# start a remote processor, the radio, the charger, or a camera (zram swap is
+# the one service it enables).
+#   ./install DESTDIR [BUILDDIR]
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+destination=${1:?Usage: ./install DESTDIR [BUILDDIR]}
+build=${2:-build}
+[[ $destination == /* && $destination != "/" ]] || { echo "Use an absolute staging directory" >&2; exit 1; }
+install -Dm755 "$build/reboot-to" "$destination/usr/bin/reboot-to"
+install -Dm644 vendor/udev/rules.d/10-omamobile-storage.rules \
+  "$destination/usr/lib/udev/rules.d/10-omamobile-storage.rules"
+install -Dm644 vendor/systemd/network/20-usb-gadget.network \
+  "$destination/usr/lib/systemd/network/20-usb-gadget.network"
+install -Dm644 vendor/systemd/logind.conf.d/10-omamobile-power-key.conf \
+  "$destination/usr/lib/systemd/logind.conf.d/10-omamobile-power-key.conf"
+install -Dm644 vendor/NetworkManager/conf.d/10-omamobile-usb.conf \
+  "$destination/usr/lib/NetworkManager/conf.d/10-omamobile-usb.conf"
+install -Dm755 vendor/omamobile-zram "$destination/usr/lib/omamobile/omamobile-zram"
+install -Dm644 vendor/systemd/system/omamobile-zram.service \
+  "$destination/usr/lib/systemd/system/omamobile-zram.service"
+install -d "$destination/usr/lib/systemd/system/swap.target.wants"
+ln -sf ../omamobile-zram.service \
+  "$destination/usr/lib/systemd/system/swap.target.wants/omamobile-zram.service"
+install -Dm644 vendor/sysctl.d/90-omamobile-zram.conf \
+  "$destination/usr/lib/sysctl.d/90-omamobile-zram.conf"
+install -Dm644 device.conf \
+  "$destination/usr/share/omamobile/device.conf"
+install -Dm644 etc/omamobile-mirrorlist \
+  "$destination/etc/pacman.d/omamobile-mirrorlist"
+install -Dm644 LICENSE "$destination/usr/share/licenses/omamobile-device-markw/LICENSE"
+install -Dm644 version "$destination/usr/share/omamobile/device-markw/version"

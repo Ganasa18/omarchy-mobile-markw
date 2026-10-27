@@ -1,0 +1,187 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Boot the Redmi 4 Prime (markw) into Linux for debugging, and back to its
+# stock Android (MIUI). Runs on the laptop; writes nothing to the phone.
+#
+#   tools/markw-debug status       where the phone is: MIUI, fastboot, lk2nd,
+#                                  the initramfs or Arch (read-only)
+#   tools/markw-debug boot         MIUI or fastboot -> lk2nd -> probe -> Arch
+#                                  on the microSD card
+#   tools/markw-debug stay         the same, but stop in the initramfs (SSH
+#                                  up, eMMC read-only, the card's root
+#                                  writable) to repair an Arch that can't be
+#                                  reached
+#   tools/markw-debug smoke        tools/phone-smoke on the phone (read-only)
+#   tools/markw-debug logs         dmesg and this boot's journal into logs/
+#   tools/markw-debug miui         back to MIUI: a plain restart, from Arch,
+#                                  the initramfs or fastboot
+#   tools/markw-debug fastboot     to the stock bootloader's fastboot
+#   tools/markw-debug poweroff     power off from Linux
+#
+# Options: -y (don't ask before a reboot or a boot), --lk2nd IMG and
+# --probe IMG (default ~/android/markw/lk2nd-msm8953.img and
+# ~/android/markw/probe-m3/boot.img; also MARKW_LK2ND and MARKW_PROBE).
+#
+# Nothing is flashed: lk2nd and the probe live in RAM only, so any restart
+# that isn't steered to them lands in MIUI. If nothing answers (Arch hung,
+# USB gone), hold Volume Down + Power for 30-40 s: the phone restarts into
+# MIUI. Linux doesn't charge the battery yet (smbchg "Charger error").
+# The host needs 172.16.42.2/24 on the USB NCM adapter: Arch runs no DHCP
+# server on usb0 (device/markw/NOTES.md, 2026-10-27).
+set -euo pipefail
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+lk2nd=${MARKW_LK2ND:-$HOME/android/markw/lk2nd-msm8953.img}
+probe=${MARKW_PROBE:-$HOME/android/markw/probe-m3/boot.img}
+yes=0 cmd=""
+die() { echo "markw-debug: $*" >&2; exit 1; }
+say() { echo "==> $*"; }
+while (($#)); do
+  case $1 in
+    -y|--yes) yes=1 ;;
+    --lk2nd) lk2nd=${2:?}; shift ;;
+    --probe) probe=${2:?}; shift ;;
+    -h|--help) sed -n '3,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*) die "unknown option: $1" ;;
+    *) [[ -z $cmd ]] || die "one command at a time"; cmd=$1 ;;
+  esac
+  shift
+done
+[[ -n $cmd ]] || { sed -n '3,32p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+
+confirm() {
+  ((yes)) && return 0
+  printf '%s\nContinue? [y/N] ' "$1"
+  local answer; read -r answer
+  [[ $answer == [yY]* ]] || die "stopped; nothing was done"
+}
+
+ssh_phone() { "$ROOT/tools/phone-ssh" --fresh "$@"; }
+
+# miui, fastboot, lk2nd, initramfs, arch or none
+state() {
+  if fastboot devices 2>/dev/null | grep -q fastboot; then
+    if fastboot getvar product 2>&1 | grep -q 'product: lk2nd'; then echo lk2nd; else echo fastboot; fi
+  elif adb devices 2>/dev/null | grep -q $'\tdevice$'; then
+    echo miui
+  else
+    case $(ssh_phone 'cat /proc/1/comm' 2>/dev/null) in
+      systemd) echo arch ;;
+      init|sh) echo initramfs ;;
+      *) echo none ;;
+    esac
+  fi
+}
+
+wait_for() {  # wait_for STATE... (up to $timeout s)
+  local t=0 s
+  while ((t < ${timeout:-120})); do
+    s=$(state)
+    for want in "$@"; do [[ $s == "$want" ]] && return 0; done
+    sleep 3; t=$((t + 3))
+  done
+  return 1
+}
+
+# The probe's own command line (boot image header v0, 512 bytes at 64)
+probe_cmdline() { dd if="$probe" bs=1 skip=64 count=512 status=none | tr -d '\0'; }
+
+boot_linux() {  # boot_linux [extra kernel arguments]
+  [[ -f $lk2nd ]] || die "no lk2nd image at $lk2nd"
+  [[ -f $probe ]] || die "no probe at $probe (tools/build-markw-probe --root-uuid ...)"
+  local s; s=$(state)
+  case $s in
+    arch|initramfs) die "the phone already runs Linux ($s); 'miui' or 'fastboot' first" ;;
+    none) die "no phone found over adb, fastboot or SSH (cable? USB debugging on?)" ;;
+  esac
+  confirm "The phone restarts into fastboot, then lk2nd and the probe load into RAM
+and Linux starts${1:+ with: $1}. The screen goes dark, then shows boot text.
+Nothing is written to the phone's storage."
+  if [[ $s == miui ]]; then
+    say "MIUI -> fastboot"; adb reboot bootloader
+    timeout=90 wait_for fastboot lk2nd || die "fastboot did not appear"
+    s=$(state)
+  fi
+  if [[ $s == fastboot ]]; then
+    say "fastboot -> lk2nd (RAM)"; fastboot boot "$lk2nd"
+    timeout=60 wait_for lk2nd || die "lk2nd did not answer; 'fastboot reboot' returns to MIUI"
+  fi
+  say "lk2nd -> probe (RAM)"
+  if [[ -n ${1:-} ]]; then
+    fastboot --cmdline "$(probe_cmdline) $1" boot "$probe"
+  else
+    fastboot boot "$probe"
+  fi
+  say "waiting for SSH at 172.16.42.1 (Arch takes about 1-2 min)"
+  if timeout=300 wait_for arch initramfs; then
+    say "phone: $(state)"
+  else
+    die "no SSH yet. Check the host has 172.16.42.2/24 on the USB adapter; if the
+screen is stuck, Volume Down + Power for 30-40 s returns to MIUI"
+  fi
+}
+
+case $cmd in
+  status)
+    s=$(state)
+    echo "phone: $s"
+    if [[ $s == arch || $s == initramfs ]]; then
+      ssh_phone 'uname -r; uptime; b=/sys/class/power_supply/qcom-battery; [ -r $b/capacity ] && echo "battery: $(cat $b/capacity)% $(cat $b/status)"'
+    fi
+    ;;
+  boot) boot_linux ;;
+  stay) boot_linux omamobile.stay ;;
+  smoke)
+    [[ $(state) == arch ]] || die "the phone isn't in Arch"
+    ssh_phone 'bash -s -- --here' < "$ROOT/tools/phone-smoke"
+    ;;
+  logs)
+    s=$(state); [[ $s == arch || $s == initramfs ]] || die "the phone isn't in Linux"
+    mkdir -p "$ROOT/logs"; stamp=$(date +%Y%m%d-%H%M%S)
+    ssh_phone dmesg > "$ROOT/logs/markw-dmesg-$stamp.txt"
+    if [[ $s == arch ]]; then
+      ssh_phone 'journalctl -b --no-pager' > "$ROOT/logs/markw-journal-$stamp.txt"
+    fi
+    say "saved in logs/ (gitignored); check for identifiers before quoting any line"
+    ls -1 "$ROOT"/logs/markw-*-"$stamp".txt
+    ;;
+  miui)
+    s=$(state)
+    case $s in
+      miui) say "already in MIUI" ;;
+      arch)
+        confirm "Arch shuts down and the phone restarts into MIUI."
+        ssh_phone 'systemctl reboot' || true ;;
+      initramfs)
+        confirm "The phone restarts into MIUI."
+        ssh_phone '(sleep 1; sync; reboot-to normal) >/dev/null 2>&1 &' || true ;;
+      fastboot|lk2nd)
+        confirm "The phone restarts into MIUI."
+        fastboot reboot ;;
+      *) die "no phone found; hold Volume Down + Power for 30-40 s to restart into MIUI" ;;
+    esac
+    if [[ $s != miui ]]; then
+      say "waiting for MIUI (adb needs USB debugging on and the phone unlocked)"
+      timeout=180 wait_for miui && say "phone: miui" \
+        || say "adb doesn't see the phone yet; MIUI may still be starting"
+    fi
+    ;;
+  fastboot)
+    s=$(state)
+    case $s in
+      arch) confirm "Arch shuts down and the phone restarts into fastboot."
+            ssh_phone 'systemctl reboot --reboot-argument=bootloader' || true ;;
+      initramfs) confirm "The phone restarts into fastboot."
+            ssh_phone '(sleep 1; reboot-to bootloader) >/dev/null 2>&1 &' || true ;;
+      miui) confirm "The phone restarts into fastboot."; adb reboot bootloader ;;
+      fastboot|lk2nd) say "already in fastboot ($s)"; exit 0 ;;
+      *) die "no phone found" ;;
+    esac
+    timeout=90 wait_for fastboot lk2nd && say "phone: $(state)" || die "fastboot did not appear"
+    ;;
+  poweroff)
+    s=$(state); [[ $s == arch ]] || die "poweroff is for Arch (phone: $s)"
+    confirm "Arch shuts down and the phone powers off. Power key starts MIUI again."
+    ssh_phone 'systemctl poweroff' || true
+    ;;
+  *) die "unknown command: $cmd (see --help)" ;;
+esac

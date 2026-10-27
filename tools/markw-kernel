@@ -1,0 +1,96 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Lay out postmarketOS's MSM8953 kernel package as a kernel output directory
+# for the Redmi 4 Prime; never connects to a phone.
+#
+# Usage: tools/markw-kernel [--apk FILE | --url URL] [--sha256 HEX] --out DIR
+#
+# Default: linux-postmarketos-qcom-msm8953 7.1.3-r2 from postmarketOS's
+# master mirror, checked against the SHA-256 pinned below (the package this
+# port was first built and inspected with; see device/markw/BRINGUP-M1.md).
+# A newer package needs --sha256 from a source you trust.
+#
+# DIR gets what the other tools expect, the way bin/omamobile kernel and
+# modules leave a kernel build:
+#   Image.gz                             --kernel for tools/build-markw-probe
+#   dtbs/qcom/msm8953-xiaomi-markw.dtb   --dtb
+#   lib/modules/RELEASE/                 --modules
+#   include/config/kernel.release        tools/build-rootfs (KERNEL_OUT=DIR)
+#   modules-RELEASE.tar.zst              tools/build-rootfs
+#   SOURCE                               package name, URL and SHA-256
+set -euo pipefail
+apk="" url="" sha="" out=""
+PINNED_URL=https://mirror.postmarketos.org/postmarketos/master/aarch64/linux-postmarketos-qcom-msm8953-7.1.3-r2.apk
+PINNED_SHA256=a38fd1b23a073a5567523e1e19dab24d345f8baedbeb33ed10e704f4b43b4c70
+die() { echo "error: $*" >&2; exit 1; }
+while (($#)); do
+  case $1 in
+    --apk) apk=${2:?}; shift ;;
+    --url) url=${2:?}; shift ;;
+    --sha256) sha=${2:?}; shift ;;
+    --out) out=${2:?}; shift ;;
+    -h|--help) sed -n '3,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) die "unknown argument: $1" ;;
+  esac
+  shift
+done
+[[ -n $out ]] || die 'supply --out DIR'
+[[ -z $apk || -z $url ]] || die 'give --apk or --url, not both'
+[[ -n $apk || -n $url ]] || url=$PINNED_URL
+# A local --apk is checked against the pinned package unless told otherwise.
+[[ -n $url && $url != "$PINNED_URL" ]] || sha=${sha:-$PINNED_SHA256}
+[[ -n $sha ]] || die 'supply --sha256 for anything but the pinned package'
+[[ $sha =~ ^[0-9a-f]{64}$ ]] || die '--sha256 must be 64 lower-case hex digits'
+for tool in tar sha256sum; do
+  command -v "$tool" >/dev/null || die "$tool is required"
+done
+[[ ! -e $out/Image.gz ]] || die "$out already holds a kernel; choose a fresh directory"
+mkdir -p "$out"
+# The kernel ships modules whose names differ only in case (xt_TCPMSS.ko
+# and xt_tcpmss.ko): a case-insensitive file system (NTFS, default macOS
+# APFS) would silently keep one of them.
+probe=$out/.omamobile-case-$$ PROBE=$out/.OMAMOBILE-CASE-$$
+echo lower > "$probe"
+echo upper > "$PROBE"
+case_ok=0
+[[ $(cat "$probe") == lower && $(cat "$PROBE") == upper ]] && case_ok=1
+rm -f "$probe" "$PROBE"
+((case_ok)) || die "$out is on a case-insensitive file system; use a Linux one"
+work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
+if [[ -n $url ]]; then
+  command -v curl >/dev/null || die 'curl is required'
+  curl -fsSL -o "$work/kernel.apk" "$url" || die "download failed: $url"
+  apk=$work/kernel.apk
+fi
+[[ -f $apk ]] || die "no $apk"
+[[ $(sha256sum < "$apk" | cut -d' ' -f1) == "$sha" ]] || die "$apk does not match SHA-256 $sha"
+
+command -v zstd >/dev/null || die 'zstd is required'
+# An apk is concatenated gzip tar streams (signature, control, data).
+mkdir "$work/x"
+tar -xzf "$apk" -C "$work/x" 2>/dev/null || true
+x=$work/x
+[[ -f $x/boot/vmlinuz && -d $x/usr/lib/modules ]] || die 'not a kernel package (no boot/vmlinuz or usr/lib/modules)'
+dtb=$x/boot/dtbs/qcom/msm8953-xiaomi-markw.dtb
+[[ -f $dtb ]] || die 'the package has no qcom/msm8953-xiaomi-markw.dtb'
+mapfile -t releases < <(ls "$x/usr/lib/modules")
+((${#releases[@]} == 1)) || die "expected one module release, found: ${releases[*]}"
+release=${releases[0]}
+[[ $release =~ ^[0-9A-Za-z._+-]+$ ]] || die "odd kernel release '$release'"
+[[ -f $x/usr/lib/modules/$release/modules.order ]] || die "no modules.order for $release"
+
+cp "$x/boot/vmlinuz" "$out/Image.gz"
+mkdir -p "$out/dtbs/qcom" "$out/lib/modules" "$out/include/config"
+cp "$dtb" "$out/dtbs/qcom/"
+cp -r "$x/usr/lib/modules/$release" "$out/lib/modules/"
+echo "$release" > "$out/include/config/kernel.release"
+# Paths in the tarball are relative to /usr/lib/modules: RELEASE/kernel/...
+tar -C "$out/lib/modules" --owner=0 --group=0 --numeric-owner -cf - "$release" \
+  | zstd -q -19 -T0 -f -o "$out/modules-$release.tar.zst"
+{
+  echo "package: $(basename "${url:-$apk}")"
+  [[ -n $url ]] && echo "url: $url"
+  echo "sha256: $sha"
+  echo "release: $release"
+} > "$out/SOURCE"
+echo "Kernel $release in $out (no phone was accessed)"

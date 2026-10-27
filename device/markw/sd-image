@@ -1,0 +1,76 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Runs inside tools/build-markw-sd's disposable Debian container:
+#   /input/rootfs.img.zst   the root image (read-only)
+#   /input/owner            firstboot.conf and authorized_keys (read-only)
+#   /out                    markw-sd.img, its .sha256 and root-uuid
+#   CARD_BYTES              the partition spans this much of the card (0: the image)
+# The card image is built in place in /out, one copy: /out may be a Windows
+# drive without sparse files, and the container's own /tmp lives in Docker's
+# virtual disk (on Windows, C:), which a second 9 GiB copy once filled.
+set -euo pipefail
+die() { echo "error: $*" >&2; exit 1; }
+apt-get update -qq >/dev/null
+apt-get install -y -qq --no-install-recommends e2fsprogs zstd fdisk uuid-runtime >/dev/null
+
+start=2048                                   # 1 MiB, in 512-byte sectors
+disk=/out/markw-sd.img.part
+rm -f "$disk" /out/markw-sd.img /out/markw-sd.img.sha256 /out/root-uuid
+# The root file system goes straight to its place in the card image; the
+# e2fsprogs tools then open it through an offset (name?offset=BYTES).
+zstd -q -dc /input/rootfs.img.zst | dd of="$disk" bs=1M seek=1 iflag=fullblock conv=sparse status=none
+img="$disk?offset=$((start * 512))"
+[[ $(dumpe2fs -h "$img" 2>/dev/null | sed -n 's/^Filesystem volume name: *//p') == omamobile-root ]] \
+  || die 'not an Omarchy Mobile root image (label omamobile-root)'
+
+debugfs -w -f - "$img" >/dev/null 2>&1 <<'EOF' || true
+mkdir /etc/omamobile
+rm /etc/omamobile/firstboot.conf
+write /input/owner/firstboot.conf /etc/omamobile/firstboot.conf
+sif /etc/omamobile/firstboot.conf mode 0100600
+sif /etc/omamobile/firstboot.conf uid 0
+sif /etc/omamobile/firstboot.conf gid 0
+mkdir /root
+mkdir /root/.ssh
+sif /root/.ssh mode 040700
+sif /root/.ssh uid 0
+sif /root/.ssh gid 0
+rm /root/.ssh/authorized_keys
+write /input/owner/authorized_keys /root/.ssh/authorized_keys
+sif /root/.ssh/authorized_keys mode 0100600
+sif /root/.ssh/authorized_keys uid 0
+sif /root/.ssh/authorized_keys gid 0
+EOF
+cmp -s <(debugfs -R 'cat /etc/omamobile/firstboot.conf' "$img" 2>/dev/null) /input/owner/firstboot.conf \
+  || die 'writing firstboot.conf into the image copy failed'
+cmp -s <(debugfs -R 'cat /root/.ssh/authorized_keys' "$img" 2>/dev/null) /input/owner/authorized_keys \
+  || die 'writing authorized_keys into the image copy failed'
+
+# Every card gets its own UUID: the initramfs opens exactly that partition.
+e2fsck -f -p "$img" >/dev/null || die 'the image copy does not check clean'
+uuid=$(uuidgen -r)
+tune2fs -U "$uuid" "$img" >/dev/null
+e2fsck -fn "$img" >/dev/null 2>&1 || die 'the image copy does not check clean after the writes'
+[[ $(blkid -p -O $((start * 512)) -s UUID -o value "$disk") == "$uuid" ]] || die 'the new UUID did not stick'
+
+info=$(dumpe2fs -h "$img" 2>/dev/null)
+fs_bytes=$(( $(sed -n 's/^Block count: *//p' <<<"$info") * $(sed -n 's/^Block size: *//p' <<<"$info") ))
+sectors=$(( (fs_bytes + 511) / 512 ))
+if ((CARD_BYTES)); then
+  card_sectors=$(( CARD_BYTES / 512 - start ))
+  ((card_sectors >= sectors)) || die "--card-size is smaller than the root image ($((fs_bytes >> 20)) MiB)"
+  sectors=$card_sectors
+fi
+data=$(( start * 512 + fs_bytes ))
+(( $(stat -c %s "$disk") == data )) || die "the card image is $(stat -c %s "$disk") bytes, expected $data"
+# sfdisk wants the partition inside the file: lay the table out in a sparse
+# file of the full size here, then copy only its first MiB into the image.
+table=/tmp/markw-sd-table.img
+truncate -s $(( (start + sectors) * 512 )) "$table"
+printf 'label: dos\nstart=%d, size=%d, type=83\n' "$start" "$sectors" | sfdisk -q "$table"
+dd if="$table" of="$disk" bs=512 count="$start" conv=notrunc status=none
+rm -f "$table"
+mv "$disk" /out/markw-sd.img
+(cd /out && sha256sum markw-sd.img > markw-sd.img.sha256)
+echo "$uuid" > /out/root-uuid
+echo "partition: start 1 MiB, $(( sectors / 2048 )) MiB; root file system $(( fs_bytes >> 20 )) MiB; UUID $uuid"

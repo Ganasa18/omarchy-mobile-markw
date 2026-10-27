@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: MIT
+# Omarchy Mobile storage guard on the Redmi 4 Prime, continued in Arch. The
+# initramfs marks the whole eMMC (user area, boot0, boot1) read-only and
+# leaves only the microSD card's root partition writable, removing the card's
+# whole-disk node. udev would recreate those nodes, so make them inaccessible
+# and keep desktop tools away from every Android partition. The card is
+# matched by its MMC type, not its number: mmcblk0 and mmcblk1 can swap.
+SUBSYSTEM=="block", KERNEL=="mmcblk*", ATTRS{type}=="MMC", MODE="0000", ENV{UDISKS_IGNORE}="1"
+SUBSYSTEM=="block", KERNEL=="mmcblk*", ENV{DEVTYPE}=="disk", ATTRS{type}=="SD", MODE="0000", ENV{UDISKS_IGNORE}="1"

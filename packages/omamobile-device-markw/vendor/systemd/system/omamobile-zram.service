@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: MIT
+# Compressed swap in RAM. markw has 3 GB, and Omarchy's session with a
+# browser left about 775 MB available with no swap at all: under pressure
+# the kernel dropped file pages and read them back from the microSD card,
+# so apps launched slowly (2026-10-27). Half the RAM, zstd (the kernel's
+# default backend), ahead of any swap on the card.
+[Unit]
+Description=Compressed swap in RAM (zram)
+DefaultDependencies=no
+Before=swap.target shutdown.target
+Conflicts=shutdown.target
+ConditionPathExists=/sys/block/zram0
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/omamobile/omamobile-zram start
+ExecStop=/usr/lib/omamobile/omamobile-zram stop
+
+[Install]
+WantedBy=swap.target

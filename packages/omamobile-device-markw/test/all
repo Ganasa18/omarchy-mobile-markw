@@ -1,0 +1,95 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Tests for omamobile-device-markw. reboot-to is compiled from
+# src/reboot-to.c in this directory, so a copied package still builds.
+# Do not execute reboot-to.
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
+fail() { printf 'not ok - %s\n' "$1" >&2; exit 1; }
+pass() { printf 'ok - %s\n' "$1"; }
+tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+
+bash -n build || fail "build parses"
+bash -n install || fail "install parses"
+pass "scripts parse"
+
+grep -q '\.\./\.\.' build install && fail "build or install reaches outside the package directory"
+pass "build and install stay inside the package directory"
+
+if [[ -f ../omamobile-device-cheetah/src/reboot-to.c ]]; then
+  cmp -s src/reboot-to.c ../omamobile-device-cheetah/src/reboot-to.c \
+    || fail "reboot-to.c drifted from the cheetah package"
+  pass "reboot-to.c matches the cheetah source"
+  cmp -s etc/omamobile-mirrorlist ../omamobile-device-cheetah/etc/omamobile-mirrorlist \
+    || fail "the mirrorlist drifted from the cheetah package"
+  pass "the mirrorlist matches the cheetah package"
+  cmp -s vendor/systemd/logind.conf.d/10-omamobile-power-key.conf \
+    ../omamobile-device-cheetah/vendor/systemd/logind.conf.d/10-omamobile-power-key.conf \
+    || fail "the power-key drop-in drifted from the cheetah package"
+  pass "the power-key drop-in matches the cheetah package"
+  cmp -s omamobile-device-markw.install \
+    ../omamobile-device-cheetah/omamobile-device-cheetah.install \
+    || fail "the pacman install script drifted from the cheetah package"
+  pass "the pacman install script matches the cheetah package"
+fi
+grep -q 'omamobile-keyring' PKGBUILD || fail "pacman needs omamobile-keyring"
+grep -q '^install=omamobile-device-markw.install$' PKGBUILD \
+  || fail "the pacman install script is not named"
+pass "pacman gets the keyring, the mirrorlist, and the install script"
+if [[ -f ../../device/markw/device.conf ]]; then
+  cmp -s device.conf ../../device/markw/device.conf \
+    || fail "device.conf drifted from the descriptor"
+  pass "device.conf matches the descriptor"
+fi
+
+./build "$tmp/build" || fail "reboot-to compiles"
+[[ -x $tmp/build/reboot-to ]] || fail "reboot-to is not executable"
+pass "reboot-to compiles"
+
+./install "$tmp/root" "$tmp/build"
+for f in usr/bin/reboot-to \
+         usr/lib/udev/rules.d/10-omamobile-storage.rules \
+         usr/lib/systemd/network/20-usb-gadget.network \
+         usr/lib/systemd/logind.conf.d/10-omamobile-power-key.conf \
+         usr/lib/NetworkManager/conf.d/10-omamobile-usb.conf \
+         usr/lib/systemd/system/omamobile-zram.service \
+         usr/lib/sysctl.d/90-omamobile-zram.conf \
+         usr/share/omamobile/device.conf \
+         usr/share/omamobile/device-markw/version \
+         usr/share/licenses/omamobile-device-markw/LICENSE \
+         etc/pacman.d/omamobile-mirrorlist; do
+  [[ -f $tmp/root/$f ]] || fail "install stages $f"
+done
+rules="$tmp/root/usr/lib/udev/rules.d/10-omamobile-storage.rules"
+grep -q 'ATTRS{type}=="MMC", MODE="0000", ENV{UDISKS_IGNORE}="1"' "$rules" \
+  || fail "every eMMC node is made inaccessible, matched by card type"
+grep -q 'ENV{DEVTYPE}=="disk", ATTRS{type}=="SD", MODE="0000"' "$rules" \
+  || fail "the microSD whole-disk node is made inaccessible"
+grep -v '^#' "$rules" | grep -q 'mmcblk[0-9]' && fail "the rule must not rely on mmcblk numbering"
+grep -q 'Address=172.16.42.1/24' "$tmp/root/usr/lib/systemd/network/20-usb-gadget.network" \
+  || fail "usb0 keeps the initramfs address"
+awk '/^\[Route\]/{r=1} r && /^Metric=/{m=$0} END{exit m == "Metric=1000" ? 0 : 1}' \
+  "$tmp/root/usr/lib/systemd/network/20-usb-gadget.network" \
+  || fail "the host's gateway is only a fallback behind Wi-Fi (metric 1000)"
+grep -q '^\[Network\]' "$tmp/root/usr/lib/systemd/network/20-usb-gadget.network" \
+  && ! awk '/^\[Network\]/{n=1;next} /^\[/{n=0} n && /^Gateway=/{f=1} END{exit !f}' \
+    "$tmp/root/usr/lib/systemd/network/20-usb-gadget.network" \
+  || fail "no metric-0 gateway in [Network]"
+[[ -x $tmp/root/usr/lib/omamobile/omamobile-zram ]] || fail "the zram helper is executable"
+[[ -L $tmp/root/usr/lib/systemd/system/swap.target.wants/omamobile-zram.service ]] \
+  || fail "zram swap starts with swap.target"
+sh -n vendor/omamobile-zram || fail "the zram helper parses"
+power="$tmp/root/usr/lib/systemd/logind.conf.d/10-omamobile-power-key.conf"
+grep -q '^HandlePowerKey=ignore$' "$power" \
+  || fail "a short press must not power the phone off"
+grep -q '^PACKAGE=omamobile-device-markw$' "$tmp/root/usr/share/omamobile/device.conf" \
+  || fail "the installed descriptor is markw"
+grep -q '^MONITOR_SCALE=2$' "$tmp/root/usr/share/omamobile/device.conf" \
+  || fail "the descriptor carries the panel's output scale"
+for absent in usr/bin/omamobile-boot-success usr/bin/omamobile-bootctl \
+              usr/lib/systemd/system/omamobile-boot-success.service \
+              usr/bin/omamobile-wifi-start usr/bin/omamobile-charge-guard \
+              usr/bin/omamobile-camera-start usr/lib/firmware; do
+  [[ ! -e $tmp/root/$absent ]] || fail "install includes $absent"
+done
+pass "install stages the udev rule, the USB link, and the mirrorlist, and nothing that starts hardware or ships firmware"
