@@ -19,6 +19,8 @@
 # and omamobile-alarm-build:<hash> (keyrings, repositories, base-devel).
 
 ALARM_URL=${ALARM_URL:-http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz}
+# ALARM_MIRROR: optional mirror base URL (http://ca.us.mirror.archlinuxarm.org)
+# put first in the container's mirrorlist; see tools/lib/alarm-setup
 # Arch Linux ARM Build System <builder@archlinuxarm.org>
 ALARM_KEY=68B3537F39A313B3E574D06777193F152BDBE6A6
 ALARM_KEYSERVER=${ALARM_KEYSERVER:-hkps://keyserver.ubuntu.com}
@@ -35,16 +37,19 @@ OMARCHY_KEYRING_DIR=${OMARCHY_KEYRING_DIR:-/usr/share/pacman/keyrings}
 alarm_say() { printf '\e[1m==> %s\e[0m\n' "$*"; }
 alarm_die() { printf '\e[31merror:\e[0m %s\n' "$*" >&2; exit 1; }
 
-# Debian/Arch: the qemu-aarch64 node is enough. NixOS: aarch64-linux must be
-# enabled and its flags: line must contain F, or the container cannot run it.
+# Debian/Arch: the qemu-aarch64 node is enough. NixOS (aarch64-linux) and
+# Docker Desktop's WSL 2 VM (aarch64): the node must be enabled and its flags:
+# line must contain F, or the container cannot run it.
 alarm_require_binfmt() {
-  local node=/proc/sys/fs/binfmt_misc/aarch64-linux
+  local node
   if [[ -e /proc/sys/fs/binfmt_misc/qemu-aarch64 ]]; then
     return 0
   fi
-  if [[ -e $node ]] && grep -qx enabled "$node" && grep -q '^flags:.*F' "$node"; then
-    return 0
-  fi
+  for node in /proc/sys/fs/binfmt_misc/{aarch64-linux,aarch64}; do
+    if [[ -e $node ]] && grep -qx enabled "$node" && grep -q '^flags:.*F' "$node"; then
+      return 0
+    fi
+  done
   alarm_die "no usable aarch64 binfmt handler: install qemu-user-static-binfmt, or enable boot.binfmt.emulatedSystems with boot.binfmt.preferStaticEmulators so aarch64-linux is enabled and its flags: line contains F"
 }
 
@@ -103,13 +108,13 @@ alarm_build_image() {
   cp "$OMARCHY_KEYRING_DIR"/omarchy{.gpg,-trusted,-revoked} "$ctx/"
   cp "$root"/packages/omamobile-keyring/omamobile{.gpg,-trusted,-revoked} "$ctx/"
   cp "$root/tools/lib/alarm-setup" "$ctx/setup"
-  hash=$( (echo "$base $OMARCHY_CHANNEL $(id -u)"; cat "$ctx"/*) | sha256sum | cut -c1-16)
+  hash=$( (echo "$base $OMARCHY_CHANNEL $(id -u) ${ALARM_MIRROR:-}"; cat "$ctx"/*) | sha256sum | cut -c1-16)
   tag=omamobile-alarm-build:$hash
   if ! docker image inspect "$tag" >/dev/null 2>&1; then
     alarm_say "Preparing the build image $tag (keyrings, base-devel)" >&2
     name=omamobile-alarm-setup-$$
     docker run --platform linux/arm64 --name "$name" -v "$ctx:/setup:ro" -v "$ALARM_CACHE/pkg:/var/cache/pacman/pkg" \
-      -e OMARCHY_CHANNEL="$OMARCHY_CHANNEL" -e BUILDER_UID="$(id -u)" -e BUILDER_GID="$(id -g)" \
+      -e OMARCHY_CHANNEL="$OMARCHY_CHANNEL" -e ALARM_MIRROR="${ALARM_MIRROR:-}" -e BUILDER_UID="$(id -u)" -e BUILDER_GID="$(id -g)" \
       "$base" bash /setup/setup >&2 || { docker rm -f "$name" >/dev/null 2>&1; rm -rf "$ctx"; alarm_die "build image setup failed"; }
     docker commit "$name" "$tag" >/dev/null
     docker rm "$name" >/dev/null
