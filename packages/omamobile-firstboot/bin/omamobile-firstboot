@@ -13,7 +13,8 @@
 #   2. hostname, time zone, locale (omamobile-setup-system);
 #   3. the user: groups wheel, audio, video, input; the password hash;
 #      root stays locked; sudo for wheel, as Omarchy does;
-#   4. the SSH key for root and the user, sshd on;
+#   4. the SSH key for root and the user, sshd on, and ufw's rule for SSH on
+#      usb0 (before Omarchy's leaves turn ufw on);
 #   5. Omarchy's system setup leaves (install/{config,hardware,login,
 #      post-install}), minus the few that don't fit a phone (SKIP below);
 #   6. the services the phone needs, and ufw with SSH allowed on usb0 only;
@@ -301,6 +302,18 @@ s_omarchy_system() {
   return 0
 }
 
+# SSH over the USB link, before Omarchy's firewall leaf turns ufw on at once:
+# a rule added only after it never loaded on markw (NOTES 2026-10-27).
+# ufw's IPv6 rules need xt_hl and ip6t_rt; on a kernel without them
+# (postmarketOS msm8953) every ufw command fails, so ufw filters IPv4 only.
+s_firewall_usb() {
+  if ! modprobe -n -q xt_hl || ! modprobe -n -q ip6t_rt; then
+    echo "    the kernel lacks xt_hl or ip6t_rt: ufw filters IPv4 only (IPV6=no)"
+    sed -i 's/^IPV6=.*/IPV6=no/' "$ROOT/etc/default/ufw"
+  fi
+  ufw allow in on usb0 to any port 22 proto tcp
+}
+
 # The services a phone needs whatever Omarchy's leaves did, and the firewall:
 # Omarchy's rules plus SSH on the USB link (NOTES 2026-10-12, firewall).
 s_services() {
@@ -429,6 +442,7 @@ step "pacman keyring" optional s_keyring
 step "hostname, time zone, locale" optional s_identity
 step "user ${U}" essential s_user
 step "SSH keys" essential s_ssh
+step "SSH on the USB link" essential s_firewall_usb
 step "Omarchy system setup" optional s_omarchy_system
 step "services and firewall" essential s_services
 step "Wi-Fi" optional s_wifi
