@@ -17,9 +17,10 @@ import qs.Commons as Commons
 // keyboard" button until the keyboard unfolds again or another window takes
 // focus (markw, 2026-10-27).
 //
-// The button's window is anchored to the bottom-right corner with normal
-// exclusion, so the compositor places it right above the area the keyboard
-// reserves; the window is the button, so it takes no other touches.
+// The open keyboard's button is anchored to the bottom-right corner with
+// normal exclusion, so the compositor places it right above the area the
+// keyboard reserves. The folded one ignores exclusive zones and sits in the
+// dock's strip. Each window is the button, so it takes no other touches.
 // hypr/phone.lua lets it work over the lock screen too (above_lock 2).
 Item {
   id: root
@@ -38,7 +39,7 @@ Item {
 
   // `shell call omamobile.keyboard state ''`
   function state() {
-    return JSON.stringify({ keyboard: oskOpen, folded: userHidden, watcher: oskWatch.running, button: button.visible })
+    return JSON.stringify({ keyboard: oskOpen, folded: userHidden, watcher: oskWatch.running, button: button.visible || foldedButton.visible })
   }
 
   // `shell call omamobile.keyboard hideKeyboard ''` / `showKeyboard ''` /
@@ -135,11 +136,43 @@ Item {
   }
 
   readonly property int size: Math.max(44, Style.space(44))
+  // The folded button fits in the dock's gesture strip (28 px).
+  readonly property int foldedHeight: Math.max(22, Style.space(22))
 
+  component ButtonFace: Item {
+    anchors.fill: parent
+
+    Rectangle {
+      anchors.fill: parent
+      radius: Math.min(height / 2, Style.cornerRadius + 6)
+      color: tap.pressed ? Qt.darker(Commons.Color.bar.background, 1.3) : Commons.Color.bar.background
+      opacity: 0.92
+      border.width: 1
+      border.color: Qt.rgba(Commons.Color.bar.text.r, Commons.Color.bar.text.g, Commons.Color.bar.text.b, 0.25)
+    }
+
+    Text {
+      anchors.centerIn: parent
+      textFormat: Text.PlainText
+      // nf-md-keyboard_close, or nf-md-keyboard while folded
+      text: String.fromCodePoint(root.oskOpen ? 0xF030F : 0xF030C)
+      color: Commons.Color.bar.text
+      font.family: Style.font.family
+      font.pixelSize: Math.round(Math.min(root.size * 0.5, parent.height * 0.8))
+    }
+
+    MouseArea {
+      id: tap
+      anchors.fill: parent
+      onClicked: root.oskOpen ? root.hideKeyboard() : root.showKeyboard()
+    }
+  }
+
+  // Above the open keyboard's top-right corner.
   PanelWindow {
     id: button
 
-    visible: root.oskOpen || root.userHidden
+    visible: root.oskOpen
     anchors { bottom: true; right: true }
     margins { right: Style.space(8); bottom: Style.space(6) }
     implicitWidth: root.size + Style.space(8)
@@ -150,33 +183,26 @@ Item {
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
 
-    Item {
-      anchors.fill: parent
+    ButtonFace {}
+  }
 
-      Rectangle {
-        anchors.fill: parent
-        radius: Math.min(height / 2, Style.cornerRadius + 6)
-        color: tap.pressed ? Qt.darker(Commons.Color.bar.background, 1.3) : Commons.Color.bar.background
-        opacity: 0.92
-        border.width: 1
-        border.color: Qt.rgba(Commons.Color.bar.text.r, Commons.Color.bar.text.g, Commons.Color.bar.text.b, 0.25)
-      }
+  // Folded, it sits in the right end of the dock's strip, not over the app:
+  // above the dock it covered the corner where dialogs put OK and Close
+  // (LibreOffice's Tip of the Day, markw, 2026-10-29).
+  PanelWindow {
+    id: foldedButton
 
-      Text {
-        anchors.centerIn: parent
-        textFormat: Text.PlainText
-        // nf-md-keyboard_close, or nf-md-keyboard while folded
-        text: String.fromCodePoint(root.oskOpen ? 0xF030F : 0xF030C)
-        color: Commons.Color.bar.text
-        font.family: Style.font.family
-        font.pixelSize: Math.round(root.size * 0.5)
-      }
+    visible: !root.oskOpen && root.userHidden
+    anchors { bottom: true; right: true }
+    margins { right: Style.space(8); bottom: Style.space(3) }
+    implicitWidth: root.size + Style.space(8)
+    implicitHeight: root.foldedHeight
+    exclusionMode: ExclusionMode.Ignore
+    color: "transparent"
+    WlrLayershell.namespace: "omamobile-osk-hide"
+    WlrLayershell.layer: WlrLayer.Overlay
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
 
-      MouseArea {
-        id: tap
-        anchors.fill: parent
-        onClicked: root.oskOpen ? root.hideKeyboard() : root.showKeyboard()
-      }
-    }
+    ButtonFace {}
   }
 }
