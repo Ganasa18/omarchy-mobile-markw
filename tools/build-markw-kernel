@@ -1,0 +1,84 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Build the Redmi 4 Prime's own kernel: postmarketOS's MSM8953 source with
+# device/markw/kernel/patches and markw.config; never connects to a phone.
+#
+# Usage: tools/build-markw-kernel --config FILE --out DIR \
+#          [--source TARBALL | --url URL] [--sha256 HEX]
+#
+# --config is the base config, plain or gzipped: the running phone's
+# /proc/config.gz under postmarketOS's kernel, or that package's config.
+# Default source: msm8953-mainline/linux tag v7.1.3-r0 (the tree of
+# linux-postmarketos-qcom-msm8953 7.1.3), checked against the SHA-256
+# pinned below. Another tarball needs --sha256 from a source you trust.
+#
+# DIR must be on a case-sensitive Linux file system and gets the layout of
+# tools/markw-kernel (Image.gz, dtbs/qcom/msm8953-xiaomi-markw.dtb,
+# lib/modules/RELEASE, include/config/kernel.release,
+# modules-RELEASE.tar.zst, SOURCE), plus the merged config and the source
+# tree in DIR/build. About 4 GB; an x86_64 or arm64 Docker host.
+set -euo pipefail
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+config="" out="" source="" url="" sha=""
+PINNED_URL=https://codeload.github.com/msm8953-mainline/linux/tar.gz/refs/tags/v7.1.3-r0
+PINNED_SHA256=28b3382958229d4efb119ba57bf5bcb8d8b2f0f32558ef6295d9f03b98dc4faf
+die() { echo "error: $*" >&2; exit 1; }
+while (($#)); do
+  case $1 in
+    --config) config=${2:?}; shift ;;
+    --out) out=${2:?}; shift ;;
+    --source) source=${2:?}; shift ;;
+    --url) url=${2:?}; shift ;;
+    --sha256) sha=${2:?}; shift ;;
+    -h|--help) sed -n '3,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) die "unknown argument: $1" ;;
+  esac
+  shift
+done
+[[ -n $config && -f $config ]] || die 'supply --config FILE'
+[[ -n $out ]] || die 'supply --out DIR'
+[[ -z $source || -z $url ]] || die 'give --source or --url, not both'
+[[ -n $source || -n $url ]] || url=$PINNED_URL
+[[ -n $url && $url != "$PINNED_URL" ]] || sha=${sha:-$PINNED_SHA256}
+[[ -n $sha ]] || die 'supply --sha256 for anything but the pinned source'
+[[ $sha =~ ^[0-9a-f]{64}$ ]] || die '--sha256 must be 64 lower-case hex digits'
+command -v docker >/dev/null || die 'Docker is required'
+command -v python3 >/dev/null || die 'Python 3 is required'
+[[ ! -e $out/Image.gz ]] || die "$out already holds a kernel; choose a fresh directory"
+mkdir -p "$out"
+probe=$out/.omamobile-case-$$ PROBE=$out/.OMAMOBILE-CASE-$$
+echo lower > "$probe"
+echo upper > "$PROBE"
+case_ok=0
+[[ $(cat "$probe") == lower && $(cat "$PROBE") == upper ]] && case_ok=1
+rm -f "$probe" "$PROBE"
+((case_ok)) || die "$out is on a case-insensitive file system; use a Linux one"
+
+absolute() { python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$1"; }
+out=$(absolute "$out") config=$(absolute "$config")
+if [[ -n $url ]]; then
+  command -v curl >/dev/null || die 'curl is required'
+  source=$out/source.tar.gz
+  [[ -f $source ]] || curl -fsSL --retry 3 -o "$source" "$url" || die "download failed: $url"
+fi
+[[ -f $source ]] || die "no $source"
+source=$(absolute "$source")
+[[ $(sha256sum < "$source" | cut -d' ' -f1) == "$sha" ]] || die "$source does not match SHA-256 $sha"
+for path in "$ROOT" "$config" "$source" "$out"; do
+  [[ $path != *,* ]] || die 'Docker bind paths cannot contain commas'
+done
+
+docker run --rm --platform "linux/$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')" \
+  --mount "type=bind,source=$ROOT,target=/src,readonly" \
+  --mount "type=bind,source=$source,target=/input/source.tar.gz,readonly" \
+  --mount "type=bind,source=$config,target=/input/config,readonly" \
+  --mount "type=bind,source=$out,target=/out" \
+  alpine:3.22 sh /src/device/markw/kernel/build
+release=$(cat "$out/include/config/kernel.release")
+{
+  echo "source: ${url:-$(basename "$source")}"
+  echo "sha256: $sha"
+  echo "patches: $(cd "$ROOT/device/markw/kernel/patches" && ls *.patch | tr '\n' ' ')"
+  echo "release: $release"
+} > "$out/SOURCE"
+echo "Kernel $release in $out (no phone was accessed)"

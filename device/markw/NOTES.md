@@ -3,6 +3,36 @@
 
 Findings from real hardware, newest first. Plan: [ENGINEERING-PLAN.md](ENGINEERING-PLAN.md); first-light runbook: [BRINGUP-M1.md](BRINGUP-M1.md).
 
+## 2026-10-28: Wi-Fi from the package, Bluetooth, keyboard after screen-off (7.1.3-msm8953)
+
+- **Wi-Fi needs no hand steps on a new card.** The probe DTB leaves WCNSS
+  `okay`, and `omamobile-markw-firmware` (device-markw 0.1.2) copies the
+  Pronto firmware and this phone's `WCNSS_qcom_wlan_nv.bin` before udev
+  loads the drivers. Nothing in the image blacklists the WCNSS modules. The
+  hand-made bring-up blacklist is out of `/etc/modprobe.d` (kept as
+  `/var/tmp/omamobile-wcnss-bringup.conf.disabled`), and `wlan0` connects
+  at every boot.
+- **The firmware copy, tested on the phone:** the root has no `cmp`, so
+  `--check` first reported every file as changed; it now compares with
+  `sha256sum`. Only `a506_zap.elf` was missing. One run copied it, and a
+  second run and the unit under systemd copied nothing.
+- **Bluetooth comes up with Wi-Fi.** `btqcomsmd` binds the WCNSS `bluetooth`
+  SMD node, giving `hci0` (manufacturer 0x001d, HCI version 0x08: 4.2).
+  `bluetoothd` is active, the controller powers on, and rfkill blocks
+  nothing. A 12 s scan saw 5 devices (counted only). The public address
+  isn't a known shared firmware default; whether it stays the same across
+  boots is not yet checked. Pairing is not yet tested.
+- **The floating show-keyboard button was gone after the screen went off
+  and on.** The lock folds squeekboard, the button stayed only after a
+  fold by its own tap, and the lock's focus change cleared it.
+  omamobile-shell 0.2.19 keeps it after any fold, until another app takes
+  focus. Confirmed by the owner, also after a restart.
+- **The keyboard over the lock after the screensaver:** omamobile-omarchy
+  0.1.8 (patches 0006 and 0007) turns squeekboard back on and unfolds it,
+  also when a touch locks through the idle service. Both apply with
+  `--fuzz=0` on Omarchy 4.0.6-1 and are applied on the phone, but haven't
+  been tried with the screensaver yet.
+
 ## 2026-10-27: lock screen keys, app switcher and Wi-Fi preparation (7.1.3-msm8953)
 
 - **The power button woke the lock without the keyboard.** After the power
