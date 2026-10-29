@@ -86,12 +86,29 @@ while read -r path; do
 done < "$order"
 
 # No vendor firmware enters the probe and remote processors stay disabled.
-# The charger driver owns USB role switching; the probe forces peripheral.
+# The charger driver owns USB role switching. USB_ROLE=peripheral (the
+# default) forces peripheral and drops the role switch, as flame does;
+# USB_ROLE=otg keeps the kernel's own wiring: the charger reads the ID pin,
+# turns on OTG VBUS and switches DWC3 to host for an OTG adapter, and back to
+# peripheral for the laptop (role-switch-default-mode stays peripheral until
+# the charger takes over).
 cp /input/markw.dtb /out/markw.dtb
 usb=/soc@0/usb@7000000
-fdtput -t s /out/markw.dtb "$usb" dr_mode peripheral
-fdtput -d /out/markw.dtb "$usb" usb-role-switch
-fdtput -d /out/markw.dtb "$usb" role-switch-default-mode 2>/dev/null || true
+case ${USB_ROLE:-peripheral} in
+    peripheral)
+        fdtput -t s /out/markw.dtb "$usb" dr_mode peripheral
+        fdtput -d /out/markw.dtb "$usb" usb-role-switch
+        fdtput -d /out/markw.dtb "$usb" role-switch-default-mode 2>/dev/null || true
+        ;;
+    otg)
+        fdtget /out/markw.dtb "$usb" usb-role-switch >/dev/null 2>&1 \
+            || { echo 'The DTB has no usb-role-switch on DWC3' >&2; exit 1; }
+        [ "$(fdtget /out/markw.dtb "$usb" role-switch-default-mode)" = peripheral ] \
+            || { echo 'DWC3 must start as peripheral' >&2; exit 1; }
+        fdtput -d /out/markw.dtb "$usb" dr_mode 2>/dev/null || true
+        ;;
+    *) echo "USB_ROLE must be peripheral or otg" >&2; exit 1 ;;
+esac
 for node in remoteproc@4080000 remoteproc@c200000; do
     fdtput -t s /out/markw.dtb "/soc@0/$node" status disabled
 done

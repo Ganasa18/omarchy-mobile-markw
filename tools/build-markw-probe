@@ -5,8 +5,11 @@
 # Usage: tools/build-markw-probe --kernel Image.gz \
 #          --dtb msm8953-xiaomi-markw.dtb --modules lib/modules/RELEASE \
 #          --ssh-key ~/.ssh/id_ed25519.pub --mkbootimg /path/to/mkbootimg.py \
-#          --out /path/to/output [--root-uuid UUID]
+#          --out /path/to/output [--root-uuid UUID] [--usb-role otg]
 #
+# --usb-role otg keeps the kernel's USB role switch, so an OTG adapter
+# turns the port into a host (the charger supplies VBUS); the default,
+# peripheral, keeps the port a gadget whatever is plugged in.
 # Without --root-uuid the probe keeps every disk read-only and stops at SSH
 # (M1). With it, the initramfs switches to the Arch root on the microSD
 # partition whose ext4 file system has that UUID (tools/build-markw-sd).
@@ -19,7 +22,7 @@
 # Boot this image from a RAM-loaded lk2nd's fastboot, never flash it.
 set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-kernel="" dtb="" modules="" key="" mkbootimg="" out="" root_uuid=""
+kernel="" dtb="" modules="" key="" mkbootimg="" out="" root_uuid="" usb_role=peripheral
 die() { echo "error: $*" >&2; exit 1; }
 while (($#)); do
   case $1 in
@@ -30,7 +33,8 @@ while (($#)); do
     --mkbootimg) mkbootimg=${2:?}; shift ;;
     --out) out=${2:?}; shift ;;
     --root-uuid) root_uuid=${2:?}; shift ;;
-    -h|--help) sed -n '3,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --usb-role) usb_role=${2:?}; shift ;;
+    -h|--help) sed -n '3,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
   shift
@@ -44,6 +48,7 @@ done
 [[ -n $out ]] || die 'supply --out DIR'
 [[ -z $root_uuid || $root_uuid =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] \
   || die '--root-uuid must be a lower-case file system UUID'
+[[ $usb_role == peripheral || $usb_role == otg ]] || die '--usb-role must be peripheral or otg'
 
 # Normalize paths portably (macOS readlink lacks -f on older releases), so
 # relative paths and spaces survive Docker's bind mount parsing.
@@ -78,6 +83,6 @@ docker run --rm --platform linux/arm64 \
   --mount "type=bind,source=$key,target=/input/key.pub,readonly" \
   --mount "type=bind,source=$(dirname "$mkbootimg"),target=/mkbootimg,readonly" \
   --mount "type=bind,source=$out,target=/out" \
-  -e ROOT_UUID="$root_uuid" \
+  -e ROOT_UUID="$root_uuid" -e USB_ROLE="$usb_role" \
   alpine:3.22 sh /src/device/markw/initramfs/build
 echo "Built $out/boot.img (lk2nd RAM-loaded image${root_uuid:+, root UUID $root_uuid}; no phone was accessed)"
