@@ -1,0 +1,67 @@
+<!-- SPDX-License-Identifier: MIT -->
+# markw: audio (runbook)
+
+Status: probe `probe-m6-adsp` built on the laptop (2026-10-29), not booted
+yet. Kernel `7.1.3-msm8953-oma1`.
+
+## Facts
+
+- Audio on MSM8953 goes through the LPASS ADSP (QDSP6): the sound card
+  `sound-card@c051000` (`qcom,msm8953-qdsp6-sndcard`, driver
+  `snd_soc_apq8016_sbc`, model `xiaomi-markw`) needs the APR services
+  q6core, q6afe, q6asm and q6adm, which live on the ADSP's SMD edge
+  (`remoteproc@c200000`, `qcom,msm8953-adsp-pil`, driver `qcom_q6v5_pas`).
+  The DT also carries the voice services (q6mvm, q6cvs, q6cvp).
+- The codec is the PMIC's WCD (`snd_soc_msm8916_analog`, `-digital`); the
+  loudspeaker amplifier is an AW8738 (`snd_soc_aw8738`). All these modules
+  load today and wait: there is no sound card without the ADSP.
+- The ADSP firmware is `adsp.mdt` and `adsp.b00`-`b13` in the modem
+  partition's `image/`. `omamobile-markw-firmware` (device-markw 0.1.3)
+  copies it read-only into `/usr/lib/firmware/updates`; it never enters the
+  repository.
+- Until now every probe disabled the ADSP node. `tools/build-markw-probe
+  --adsp` enables it; nothing else changes (the modem stays off).
+- There is no UCM profile for `xiaomi-markw` in alsa-ucm-conf 1.2.16:
+  routing comes after the DSP is proven (step 5).
+
+## Build (laptop only)
+
+```sh
+K=~/android/markw/kernel-oma1
+tools/build-markw-probe --kernel $K/Image.gz \
+  --dtb $K/dtbs/qcom/msm8953-xiaomi-markw.dtb \
+  --modules $K/lib/modules/7.1.3-msm8953-oma1 \
+  --ssh-key ~/.ssh/id_ed25519.pub --mkbootimg ~/mkbootimg/mkbootimg.py \
+  --root-uuid <ROOT-UUID> --usb-role otg --adsp \
+  --out ~/android/markw/probe-m6-adsp
+```
+
+The USB role stays `otg` as in `probe-m5-oma1`, so the ADSP node is the
+only change against the running probe.
+
+## Runbook
+
+Every step is the owner's call. Stop at the first failed Pass. The eMMC is
+never written: the probe boots from RAM, the firmware copy mounts the modem
+partition read-only, and the only writes are on the microSD root.
+
+| # | Step | Expect / Pass | Stop if | Rollback | Risk |
+| --- | --- | --- | --- | --- | --- |
+| 0 | Read-only: `omamobile-markw-firmware --check` on the phone; `fdtget markw.dtb /soc@0/remoteproc@c200000 status` on the laptop | "all firmware in place"; `okay` (and `remoteproc@4080000` `disabled`) | firmware missing; modem enabled | — | none |
+| 1 | Blacklist the ADSP driver for the first boot: `/etc/modprobe.d/omamobile-adsp-bringup.conf` with `blacklist qcom_q6v5_pas` | `modprobe -c` lists it | — | delete the file | none |
+| 2 | Boot the probe: `MARKW_PROBE=~/android/markw/probe-m6-adsp/boot.img ./DEBUGING_RUN.sh --restart` | lock screen shows; SSH answers; `remoteproc@c200000` status `okay` in `/proc/device-tree`; `qcom_q6v5_pas` not loaded; no sound card yet | no SSH in 3 min | hold Power about 10 s (MIUI), then boot `probe-m5-oma1` | low |
+| 3 | Start the DSP by hand under a log stream: `dmesg -w` to the laptop, then `modprobe qcom_q6v5_pas` | `remoteproc… is now up`; APR services probe (`q6core`, `q6afe`, `q6asm`, `q6adm`); `/proc/asound/cards` lists `xiaomi-markw` | an oops, a hang, or the remoteproc crashing in a loop | reboot (no `rmmod`); keep the blacklist | medium |
+| 4 | Drop the blacklist and boot again | the card comes up on its own at boot; `aplay -l` lists the MultiMedia PCMs | no card | put the blacklist back | low |
+| 5 | Routing: a hand-written mixer path for the loudspeaker (`speaker-test -c1 -l1` at low volume), then the earpiece, the headset and the microphones; then a UCM profile and a package | a tone from the loudspeaker; PipeWire sees a sink | no sound with the path set | `alsactl` defaults; mute | low |
+
+Volume stays low through step 5: the AW8738 has no speaker protection, so
+no step plays above a quiet level.
+
+## Results
+
+- **Step 0: pass** (2026-10-29, running `7.1.3-msm8953-oma1` from
+  `probe-m5-oma1`): the firmware copy took 15 files (`adsp.mdt`,
+  `adsp.b00`-`b13`), `--check` reports everything in place. The m6 DTB has
+  `remoteproc@c200000` okay, `remoteproc@4080000` disabled,
+  `remoteproc@a204000` okay, DWC3 default role peripheral.
+- **Step 1: pass** (2026-10-29): `modprobe -c` lists the blacklist.
