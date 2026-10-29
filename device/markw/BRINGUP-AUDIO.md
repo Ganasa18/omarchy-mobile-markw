@@ -65,3 +65,31 @@ no step plays above a quiet level.
   `remoteproc@c200000` okay, `remoteproc@4080000` disabled,
   `remoteproc@a204000` okay, DWC3 default role peripheral.
 - **Step 1: pass** (2026-10-29): `modprobe -c` lists the blacklist.
+- **Step 2: pass** (2026-10-29, `probe-m6-adsp`, `7.1.3-msm8953-oma1`):
+  node `okay`, `qcom_q6v5_pas` not loaded, no card. Only the known
+  `clk-rcg2` boot warning (postmarketOS's kernel has it too).
+- **Step 3: pass** (2026-10-29): `modprobe qcom_q6v5_pas` gave `remote
+  processor adsp is now up`, seven APR services, and the card
+  `xiaomi-markw` (PCMs MultiMedia1, MultiMedia3, VoiceMMode1, a Headset
+  Jack input). No oops; Wi-Fi stayed up, although WCNSS logged
+  `unexpected response to sysmon event` as the ADSP came up. Log:
+  `logs/markw-adsp-step3.log`.
+- **Step 5, loudspeaker path found** (2026-10-29, ahead of step 4, at
+  -14 dB digital): the AW8738 is fed from the codec's **LINEOUT** (RX3):
+
+  ```
+  PRI_MI2S_RX Audio Mixer MultiMedia1  1
+  RX3 MIX1 INP1                        RX1
+  LINEOUT                              Switch
+  LINEOUT Ext                          Switch
+  RX3 Digital Volume                   70   (84 = 0 dB)
+  ```
+
+  then `aplay -D hw:0,0`, S16_LE 48 kHz stereo. The owner heard path A
+  (LINEOUT) and not B (`SPK DAC Switch`, RX3) or C (HPHR via `RDAC2 MUX`
+  RX2), each tested alone; every path powered its own PA in DAPM. Quiet
+  at this level, as expected.
+- **DT gap:** the card's `audio-routing` has no `"Speaker Amp IN",
+  "LINEOUT_OUT"` pair, so DAPM keeps `Speaker Amp DRV` (the AW8738's
+  enable GPIO) on all the time, playing or not. Add the route before the
+  UCM profile, so the amplifier follows playback.
