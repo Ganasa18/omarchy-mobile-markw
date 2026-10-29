@@ -109,9 +109,15 @@ case ${USB_ROLE:-peripheral} in
         ;;
     *) echo "USB_ROLE must be peripheral or otg" >&2; exit 1 ;;
 esac
-for node in remoteproc@4080000 remoteproc@c200000; do
-    fdtput -t s /out/markw.dtb "/soc@0/$node" status disabled
-done
+# The modem stays off. The LPASS ADSP (audio) stays off unless ADSP=1: its
+# firmware comes from the root like WCNSS's, and device/markw/BRINGUP-AUDIO.md
+# blacklists qcom_q6v5_pas for the first boot with the node enabled.
+fdtput -t s /out/markw.dtb /soc@0/remoteproc@4080000 status disabled
+case ${ADSP:-0} in
+    0) fdtput -t s /out/markw.dtb /soc@0/remoteproc@c200000 status disabled ;;
+    1) fdtput -t s /out/markw.dtb /soc@0/remoteproc@c200000 status okay ;;
+    *) echo "ADSP must be 0 or 1" >&2; exit 1 ;;
+esac
 # WCNSS (Wi-Fi, Bluetooth) stays enabled: its firmware comes from the root,
 # copied from the phone's own modem and persist partitions, never the probe.
 # Without it, or while its modules are blacklisted, the node does nothing.
