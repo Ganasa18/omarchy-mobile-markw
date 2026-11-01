@@ -348,6 +348,7 @@ wallpaper, swiped sideways, with page dots above the dock.
 | Clock | 2x1-4x3 | Time and date, Qt formats in its settings |
 | Weather | 2x1-4x2 | Off until turned on with a place; then Open-Meteo (below) |
 | Battery | 1x1-4x2 | UPower's display device: level, charging, time left |
+| This phone | 2x1-4x3 | Omarchy Mobile, the OS (`/etc/os-release`), the device and SoC (`device.conf`), the battery (UPower, plus temperature, voltage and health from `power_supply`); at 3 rows also kernel, memory and uptime. Read when it appears and every 5 min while home is on top; nothing animates. Under the clock in the default layout |
 | Media | 3x1-4x2 | MPRIS: cover, title, artist; previous, play/pause, next |
 | Calendar | 2x2-4x4 | The next 7 days from khal when it's installed, else the month |
 | Note | 1x1-4x6 | Your text, kept in `home.json`; tap to edit |

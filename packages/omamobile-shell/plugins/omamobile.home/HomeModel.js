@@ -29,7 +29,8 @@ var REGISTRY = {
   weather: { name: "Weather",        icon: "󰖐", min: [2, 1], max: [4, 2], size: [4, 1], network: true,
              config: { enabled: false, useLocation: true, place: "", latitude: null, longitude: null, units: "celsius" } },
   battery: { name: "Battery",        icon: "󰁹", min: [1, 1], max: [4, 2], size: [2, 1], network: false, config: {} },
-  media:   { name: "Media",          icon: "󰝚", min: [3, 1], max: [4, 2], size: [4, 1], network: false, config: {} },
+  system:  { name: "This phone",     icon: "󰄜", min: [2, 1], max: [4, 3], size: [4, 2], network: false, config: {} },
+  media:  { name: "Media",          icon: "󰝚", min: [3, 1], max: [4, 2], size: [4, 1], network: false, config: {} },
   agenda:  { name: "Calendar",       icon: "󰃭", min: [2, 2], max: [4, 4], size: [4, 3], network: false, config: {} },
   notes:   { name: "Note",           icon: "󰎚", min: [1, 1], max: [4, 6], size: [2, 2], network: false, config: { text: "" } },
   toggles: { name: "Quick toggles",  icon: "󰔡", min: [2, 1], max: [4, 2], size: [4, 1], network: false, config: {} },
@@ -37,7 +38,7 @@ var REGISTRY = {
              config: { title: "", text: "", command: "", interval: 300, tap: "" } }
 }
 
-var WIDGET_ORDER = ["clock", "weather", "battery", "media", "agenda", "notes", "toggles", "command"]
+var WIDGET_ORDER = ["clock", "weather", "battery", "system", "media", "agenda", "notes", "toggles", "command"]
 
 // Built-ins from Simon Schubert's omarchy-widgets
 // (https://github.com/SimonSchubert/omarchy-widgets, widgets/simonschubert/;
@@ -352,6 +353,12 @@ function defaultLayout(availableApps, grid) {
   layout.pages[0].items.push({ id: takeId(layout, "w"), kind: "widget", type: "clock",
                                x: 0, y: 0, w: Math.min(clock.size[0], grid.columns), h: clock.size[1],
                                config: copy(clock.config) })
+  // What the phone is and runs, under the clock, where there is room.
+  var system = REGISTRY.system
+  if (clock.size[1] + system.size[1] < grid.rows)
+    layout.pages[0].items.push({ id: takeId(layout, "w"), kind: "widget", type: "system",
+                                 x: 0, y: clock.size[1], w: Math.min(system.size[0], grid.columns), h: system.size[1],
+                                 config: {} })
   var x = 0
   for (var i = 0; i < DEFAULT_APPS.length && x < grid.columns; i++) {
     if (!have[DEFAULT_APPS[i]]) continue
@@ -797,6 +804,55 @@ function commandText(output, maxLines) {
   return lines.slice(0, Math.max(1, maxLines || 1)).join("\n")
 }
 
+// The "This phone" widget: one read of what the phone is and runs, as
+// key=value lines. The battery's level and state come live from UPower in
+// the widget; this adds what UPower doesn't carry (temperature, voltage,
+// health, design capacity), from the first power supply of type Battery.
+var SYSTEM_COMMAND = [
+  "sed -n 's/^PRETTY_NAME=/os=/p' /etc/os-release 2>/dev/null",
+  "echo \"kernel=$(cat /proc/sys/kernel/osrelease 2>/dev/null)\"",
+  "sed -n 's/^NAME=/device=/p; s/^SOC=/soc=/p; s/^CODENAME=/codename=/p' /usr/share/omamobile/device.conf 2>/dev/null",
+  "sed -n 's/^MemTotal: *\\([0-9]*\\) kB$/memkb=\\1/p' /proc/meminfo 2>/dev/null",
+  "echo \"uptime=$(cut -d' ' -f1 /proc/uptime 2>/dev/null)\"",
+  "for d in /sys/class/power_supply/*; do [ \"$(cat \"$d/type\" 2>/dev/null)\" = Battery ] || continue;"
+    + " for k in temp voltage_now health charge_full_design; do echo \"$k=$(cat \"$d/$k\" 2>/dev/null)\"; done; break; done"
+].join("; ")
+
+function systemInfo(text) {
+  var raw = {}
+  String(text || "").split("\n").forEach(function(line) {
+    var at = line.indexOf("=")
+    if (at <= 0) return
+    var key = line.slice(0, at).trim(), value = line.slice(at + 1).trim()
+    if (/^".*"$/.test(value) || /^'.*'$/.test(value)) value = value.slice(1, -1)
+    if (!(key in raw)) raw[key] = value
+  })
+  function num(k) { var n = Number(raw[k]); return raw[k] !== undefined && raw[k] !== "" && isFinite(n) ? n : null }
+  var temp = num("temp"), volt = num("voltage_now"), design = num("charge_full_design")
+  var mem = num("memkb"), up = num("uptime")
+  return {
+    os: raw.os || "",
+    kernel: raw.kernel || "",
+    device: raw.device || "",
+    soc: raw.soc ? raw.soc.toUpperCase() : "",
+    codename: raw.codename || "",
+    // power_supply units: tenths of a degree, microvolts, microamp-hours.
+    temperature: temp === null ? null : Math.round(temp) / 10,
+    voltage: volt === null || volt <= 0 ? null : Math.round(volt / 10000) / 100,
+    health: raw.health && raw.health !== "Unknown" ? raw.health : "",
+    designMah: design === null || design <= 0 ? null : Math.round(design / 1000),
+    memoryGb: mem === null ? null : Math.round(mem / 1048576),
+    uptime: up === null ? null : Math.floor(up)
+  }
+}
+
+// "3 d 4 h", "4 h 12 min", "12 min".
+function uptimeText(seconds) {
+  if (seconds === null || seconds === undefined || !(seconds >= 0)) return ""
+  var d = Math.floor(seconds / 86400), h = Math.floor(seconds % 86400 / 3600), m = Math.floor(seconds % 3600 / 60)
+  return d > 0 ? d + " d " + h + " h" : h > 0 ? h + " h " + m + " min" : m + " min"
+}
+
 // Every launch from the home screen goes through omamobile-launch (bin/):
 // one app per screen, as on Android. Apps by desktop id; commands (a
 // widget's host.launch, a text widget's tap) and links as argv.
@@ -835,6 +891,7 @@ if (typeof module !== "undefined") {
     addPage: addPage, removePage: removePage, movePage: movePage, setHome: setHome, setGrid: setGrid,
     weatherText: weatherText, geocodeUrl: geocodeUrl, forecastUrl: forecastUrl,
     parseGeocode: parseGeocode, parseForecast: parseForecast, parseAgenda: parseAgenda, AGENDA_ARGV: AGENDA_ARGV,
-    monthGrid: monthGrid, commandText: commandText
+    monthGrid: monthGrid, commandText: commandText,
+    SYSTEM_COMMAND: SYSTEM_COMMAND, systemInfo: systemInfo, uptimeText: uptimeText
   }
 }

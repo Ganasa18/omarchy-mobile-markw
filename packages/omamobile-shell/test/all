@@ -115,6 +115,9 @@ pass "PIN or password"
 python3 -c 'import json; assert {"id": "omamobile.home"} in json.load(open("profile/shell.json"))["plugins"]' \
   || fail "the phone profile enables the home screens"
 grep -c 'add_plugin omamobile.home' bin/omamobile-setup-user >/dev/null || fail "existing users get the home screens"
+grep -c "grep -qx 'LOW_MOTION=1' /usr/share/omamobile/device.conf" bin/omamobile-setup-user >/dev/null \
+  && grep -c '^hl.config({ animations = { enabled = false } })$' bin/omamobile-setup-user >/dev/null \
+  || fail "a descriptor's LOW_MOTION=1 turns Hyprland's animations off"
 if command -v node >/dev/null; then
   for type in $(node -e 'console.log(Object.keys(require("./plugins/omamobile.home/HomeModel.js").REGISTRY).filter((t) => !t.startsWith("owl:")).join(" "))'); do
     [[ -f plugins/omamobile.home/${type^}Widget.qml ]] || fail "widget $type has ${type^}Widget.qml"

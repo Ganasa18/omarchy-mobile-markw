@@ -5,7 +5,7 @@
   "version": "0.1.1",
   "author": "Omarchy Mobile",
   "license": "MIT",
-  "description": "Android-style home screens on the wallpaper: pages of app shortcuts and widgets (clock, weather, battery, media, calendar, notes, quick toggles, your own text or command), swiped sideways. Long-press for edit mode to add, move, resize and remove them, and to manage pages.",
+  "description": "Android-style home screens on the wallpaper: pages of app shortcuts and widgets (clock, weather, battery, this phone, media, calendar, notes, quick toggles, your own text or command), swiped sideways. Long-press for edit mode to add, move, resize and remove them, and to manage pages.",
   "kinds": [
     "panel"
   ],

@@ -263,6 +263,34 @@ test("command output", () => {
   assert.strictEqual(M.commandText("", 3), "")
 })
 
+test("this phone: the system read, in display units", () => {
+  const i = M.systemInfo([
+    'os="Arch Linux ARM"', "kernel=7.1.3-msm8953-oma2", 'device="Xiaomi Redmi 4 Prime"', "soc=msm8953",
+    "codename=markw", "memkb=2875392", "uptime=15720.41",
+    "temp=312", "voltage_now=4118000", "health=Good", "charge_full_design=4100000", "os=ignored"
+  ].join("\n"))
+  assert.deepStrictEqual(i, { os: "Arch Linux ARM", kernel: "7.1.3-msm8953-oma2", device: "Xiaomi Redmi 4 Prime",
+    soc: "MSM8953", codename: "markw", temperature: 31.2, voltage: 4.12, health: "Good", designMah: 4100,
+    memoryGb: 3, uptime: 15720 })
+  // A phone without a battery reading, or an empty read, still draws.
+  const none = M.systemInfo("temp=\nvoltage_now=\nhealth=Unknown\n")
+  assert.strictEqual(none.temperature, null)
+  assert.strictEqual(none.voltage, null)
+  assert.strictEqual(none.health, "")
+  assert.strictEqual(M.systemInfo("").os, "")
+  assert.strictEqual(M.uptimeText(15720), "4 h 22 min")
+  assert.strictEqual(M.uptimeText(3 * 86400 + 7200), "3 d 2 h")
+  assert.strictEqual(M.uptimeText(null), "")
+})
+
+test("the default layout puts this phone under the clock", () => {
+  const l = M.defaultLayout([], grid)
+  const s = l.pages[0].items.find((i) => i.type === "system")
+  assert.ok(s && s.x === 0 && s.y === M.REGISTRY.clock.size[1])
+  const short = M.defaultLayout([], { columns: 4, rows: 4 })
+  assert.ok(!short.pages[0].items.some((i) => i.type === "system"))
+})
+
 test("the clock follows the system's 12- or 24-hour choice", () => {
   assert.strictEqual(M.systemTimeFormat("ddd MMM d  h:mm AP"), "h:mm AP")
   assert.strictEqual(M.systemTimeFormat("hh:mm ap"), "h:mm AP")

@@ -1348,7 +1348,7 @@ Item {
 
         // -- the rest
         Label {
-          visible: settingsFlick.item && ["battery", "media", "agenda", "toggles"].indexOf(settingsFlick.item.type) >= 0
+          visible: settingsFlick.item && ["battery", "system", "media", "agenda", "toggles"].indexOf(settingsFlick.item.type) >= 0
           width: parent.width
           text: !settingsFlick.item ? "" : settingsFlick.item.type === "agenda"
             ? "Events come from khal (the local calendar vdirsyncer syncs), when it's installed. Without it, the month is shown."

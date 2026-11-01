@@ -121,6 +121,20 @@ hl.config({ cursor = { invisible = true, hide_on_touch = true } })
 LUA
 fi
 
+# Low motion, seeded once when the device descriptor asks (LOW_MOTION=1):
+# Hyprland's window and workspace animations off. Each one redraws the
+# screen for its whole length; markw's battery is worth more than them.
+# Omarchy already leaves blur and shadows off.
+if omarchy-done ensure omamobile-low-motion; then
+  if grep -qx 'LOW_MOTION=1' /usr/share/omamobile/device.conf 2>/dev/null; then
+    cat >>~/.config/hypr/looknfeel.lua <<'LUA'
+
+-- Omarchy Mobile: this phone asks for low motion (device.conf LOW_MOTION=1)
+hl.config({ animations = { enabled = false } })
+LUA
+  fi
+fi
+
 # On-screen keyboard: squeekboard shows itself when a text field takes focus
 # (Hyprland relays text-input-v3 to its input-method-v2). Started from
 # Omarchy's user autostart file, once.
