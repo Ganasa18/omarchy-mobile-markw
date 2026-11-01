@@ -75,3 +75,32 @@ package.
 ## Results
 
 - 2026-11-01: first attempt failed (above).
+- **Step 0: pass** (2026-11-01): oma2 modules on the root, `depmod` fine.
+- **Step 1: pass** (`probe-m7-oma2`, `7.1.3-msm8953-oma2`): `pm_test` lists
+  `none core processors platform devices freezer`.
+- **Step 2 (freezer): pass**: tasks froze in 0.03 s and thawed after 5 s.
+- **Step 3 (devices): pass**: devices suspended in 0.95 s and resumed in
+  0.14 s, no driver error; Wi-Fi reconnected (ping fine), touch present.
+  wcn36xx logs `ERROR SMD_EVENT (312) not supported` on suspend, and the
+  charger re-detects USB on resume (`USB role none -> device`).
+- **Step 4 (platform): pass**: late and noirq stages a few ms each.
+
+So every driver survives suspend; the failure is in the s2idle loop or
+the wake from it. Suspect: the lockup detectors, set to panic in oma1
+(`BOOTPARAM_SOFTLOCKUP_PANIC`, `BOOTPARAM_HARDLOCKUP_PANIC`). A panic
+reboots into MIUI with `panic=10`, which matches a reset with no trace.
+- **Step 5: pass** (2026-11-01): `rtcwake -m freeze -s 30` with
+  `kernel.watchdog=0`: "Timekeeping suspended for 30.371 seconds", woken
+  by IRQ 71 `pm8xxx_rtc_alarm`, Wi-Fi and touch fine after.
+- **Step 6: pass**: asleep with a 120 s backup alarm, the owner pressed
+  power after about 14 s: woken by IRQ 68 `pm8941_pwrkey`, screen on.
+- **The lockup detectors are not the cause**: the same 30 s s2idle with
+  `kernel.watchdog=1` resumed fine, and so did one entered with the panel
+  on (`dpms=On`).
+- **Soak: 10 of 10** cycles of 20 s s2idle plus 5 s awake, all woken by
+  the RTC; `suspend_stats` 18 successes, 0 failures on oma2.
+
+The oma1 failure stays unexplained: the only kernel difference is
+`PM_DEBUG`, which adds the test hooks and messages. Keep the next
+suspends attended and look at `suspend_stats/fail` and the journal after
+each; boot oma2 (`probe-m7-oma2`) from now on.

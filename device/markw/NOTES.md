@@ -3,6 +3,39 @@
 
 Findings from real hardware, newest first. Plan: [ENGINEERING-PLAN.md](ENGINEERING-PLAN.md); first-light runbook: [BRINGUP-M1.md](BRINGUP-M1.md).
 
+## 2026-11-01: power key bounce, idle power, s2idle (7.1.3-msm8953-oma2)
+
+- **The power key bounces.** Held, `pm8941_pwrkey` reports a release and a
+  new press about 20 ms apart (the DT debounce is 15625 us). Hyprland
+  passes both on, so omamobile-keys locked the phone on the false release
+  and the hold never reached the system menu. omamobile-shell 0.2.21
+  voids a release followed by a press within 80 ms. A raised PMIC
+  debounce in the DT would also work; not tried.
+- **Idle wakeups with the panel off**, per second: `sugov:0` 435 (schedutil
+  switching the clock about 90 times a second, as cpufreq-dt reports a
+  1 ms transition latency and the rate limit was 1.5 ms), quickshell
+  about 63-107, `rcu_preempt` about 95, SD writeback kworkers about 80.
+  A 20 ms schedutil rate limit (device-markw 0.1.5) cut sugov to 15 and
+  the switches to 5. Idle sits at 652.8 MHz either way.
+- **Omarchy turns Wi-Fi power save off** in
+  `/etc/NetworkManager/conf.d/omarchy-wifi-powersave.conf`. NetworkManager
+  reads `/etc` after `/usr/lib`, so a `/usr/lib` drop-in can't override it;
+  device-markw 0.1.4 ships `/etc/.../zz-omamobile-wifi-powersave.conf`.
+  wcn36xx with power save: ping averages about 50 ms, SSH and pacman fine.
+- **The idle cycle kept the panel on for about 5 minutes** (screensaver
+  animation at 150 s, lock at 300 s, blank 10 s later). `shell.json`
+  `"idle": {"screensaver": 0, "lock": 60}` is read live, without a shell
+  restart.
+- **s2idle works on oma2:** every `pm_test` stage passes, a real s2idle
+  wakes on the PMIC RTC alarm (IRQ 71) and on the power key (IRQ 68),
+  and 10 of 10 soak cycles passed. wcn36xx logs `ERROR SMD_EVENT (312) not
+  supported` at each suspend, harmless so far. The first attempt, on
+  oma1, never resumed and rebooted into MIUI with an empty pstore; neither
+  the lockup detectors nor a lit panel reproduce it. Details:
+  [BRINGUP-SUSPEND.md](BRINGUP-SUSPEND.md).
+- **A crash loses its ramoops record**: the reboot goes to MIUI from the
+  eMMC, and the record is gone when the probe boots again.
+
 ## 2026-10-28: Wi-Fi from the package, Bluetooth, keyboard after screen-off (7.1.3-msm8953)
 
 - **Wi-Fi needs no hand steps on a new card.** The probe DTB leaves WCNSS
