@@ -333,6 +333,36 @@ def window_for_app(app_id, clients=None):
     return find_window(clients, classes, host), entry
 
 
+# ---------------------------------------------------------------- recent apps
+
+# The launcher's Recent row reads this: desktop ids, most recent first.
+RECENT_MAX = 8
+
+
+def recent_path():
+    base = os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local/state")
+    return os.path.join(base, "omamobile", "recent-apps")
+
+
+def remember(app_id):
+    """Put app_id first in the recent list. Best effort: never stops a launch."""
+    path = recent_path()
+    try:
+        with open(path) as f:
+            old = [line.strip() for line in f if line.strip()]
+    except OSError:
+        old = []
+    ids = [app_id] + [i for i in old if i != app_id]
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            f.write("\n".join(ids[:RECENT_MAX]) + "\n")
+        os.replace(tmp, path)
+    except OSError as error:
+        warn("recent apps not saved: %s" % error)
+
+
 # ---------------------------------------------------------------- commands
 
 
@@ -343,6 +373,7 @@ def cmd_app(args):
     if len(args) != 1 or not app_id_arg(args[0]):
         return usage()
     app_id = app_id_arg(args[0])
+    remember(app_id)
     if not new:
         window, _entry = window_for_app(app_id)
         if window and norm_address(window.get("address")):

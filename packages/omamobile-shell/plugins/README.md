@@ -15,7 +15,7 @@ logical at scale 3).
 | --- | --- | --- |
 | `omamobile.bar` | `bar` | Status bar: clock, connectivity, battery; tap or pull down for quick settings |
 | `omamobile.quicksettings` | `panel` (keepLoaded) | Pull-down sheet: up to 19 tiles the user arranges, brightness and volume; Wi-Fi picker and Bluetooth panel |
-| `omamobile.launcher` | `panel` (keepLoaded) | Home bar: app search, app grid and coding-agent prompt in one input |
+| `omamobile.launcher` | `panel` (keepLoaded) | Home bar: app search, recent apps and the app list, and coding-agent prompt in one input |
 | `omamobile.home` | `panel` (keepLoaded) | Home screens: pages of apps and widgets on the wallpaper, with an edit mode |
 | `omamobile.fingerprint` | `panel` (keepLoaded) | Fingerprint target over the sensor during verification, desktop guard, and the enrollment screen |
 | `omamobile.keyboard` | `panel` (keepLoaded) | A hide button right above the on-screen keyboard while it is up (also over the lock) |
@@ -237,11 +237,13 @@ The home surface, after Omalauncher: one bar along the bottom of the screen.
 * **Dock (always on screen).** A search pill, "Search apps or ask Claude…",
   in a bar-coloured strip that reserves its height so windows tile above it.
   Tapping it opens the drawer.
-* **Drawer.** The app grid (4 columns of 44 px icons with names) under the
-  status bar, with the one input at the bottom, focused. Typing filters the
-  grid; while searching, results stack upward from the input so the best match
-  sits by your thumb, highlighted.
-* **Ask the agent.** Any text also offers an "Ask Claude" row above the input.
+* **Drawer.** "Apps", the one input under it (focused), a Recent row (the
+  last apps `omamobile-launch` started, from
+  `~/.local/state/omamobile/recent-apps`, one row of `columns`), then every
+  app as a list: icon, name, and its generic name on the right ("Web
+  Browser") when that says more than the name. Typing filters the list; the
+  best match is on top, highlighted.
+* **Ask the agent.** Any text also offers an "Ask Claude" row under the input.
   Text that reads as a prompt (3+ words, ends in `?`, `.` or `!`, or matches no
   app) makes that row the primary action: it is highlighted, the input glyph
   turns into the agent, and Enter asks the agent instead of launching the top

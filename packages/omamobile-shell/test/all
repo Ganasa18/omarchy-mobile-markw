@@ -206,6 +206,10 @@ eq(L.promptArgv("  fix it  "), ["omamobile-launch", "cmd", "--", "omarchy-agent-
 eq(H.appLaunchArgv("foot"), ["omamobile-launch", "app", "foot"])
 eq(H.commandLaunchArgv(["a", 1]), ["omamobile-launch", "cmd", "--", "a", "1"])
 eq(H.urlLaunchArgv("https://x"), ["omamobile-launch", "url", "https://x"])
+eq(L.recentIds("foot\n\nchromium\r\nfoot\n"), ["foot", "chromium"])
+eq(L.recentIds(""), [])
+eq(L.sideText("Chromium", "Web Browser"), "Web Browser")
+eq(L.sideText("Files", " files "), "")
 ' || fail "launch argv"
 fi
 pass "one app per screen"

@@ -78,6 +78,24 @@ function promptArgv(prompt) {
 
 var PICK_AGENT_ARGV = ["omarchy", "menu", "summon", "setup.default.agent"]
 
+// omamobile-launch's recent list: one desktop id per line, most recent
+// first. Blank lines and repeats are dropped.
+function recentIds(fileText) {
+  var out = []
+  String(fileText || "").split(/\r?\n/).forEach(function(line) {
+    var id = line.trim()
+    if (id && out.indexOf(id) < 0) out.push(id)
+  })
+  return out
+}
+
+// The dim text on the right of a list row: the generic name ("Web Browser"),
+// unless it only repeats the name.
+function sideText(name, genericName) {
+  var g = String(genericName || "").trim()
+  return g && g.toLowerCase() !== String(name || "").trim().toLowerCase() ? g : ""
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     mergedSettings: mergedSettings,
@@ -89,6 +107,8 @@ if (typeof module !== "undefined") {
     LAUNCH: LAUNCH,
     appArgv: appArgv,
     promptArgv: promptArgv,
-    PICK_AGENT_ARGV: PICK_AGENT_ARGV
+    PICK_AGENT_ARGV: PICK_AGENT_ARGV,
+    recentIds: recentIds,
+    sideText: sideText
   }
 }
