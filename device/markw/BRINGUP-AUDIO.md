@@ -148,11 +148,22 @@ blacklist still in place (the DSP started by hand, as in step 3). Step 4
   Speaker, Headphones, Mic and Headset.
 - **Step 8: pass** (DAPM): through UCM, `RX3 Digital Volume` 70 and
   `speaker-test` 440 Hz: `Speaker Amp DRV` On while playing, Off about 6 s
-  after. Heard by ear: waiting for the owner.
+  after. The owner heard it (`speaker-test` plays S16_LE).
 - **Step 9: pass**: after restarting PipeWire, `wpctl` shows the sink
   "Built-in Audio Speaker" (port Speaker, active) and the source "Built-in
   Audio Microphone"; a 1 s `pw-play` tone at -12 dBFS turned the amplifier
   on. No oops or xrun in the streamed log (`logs/markw-audio-m8.log`).
+- **Silent in S24_LE** (2026-11-01, m8 and m7): after the first tones every
+  PipeWire tone was silent, at any level, with the amplifier enabled
+  (`gpio96` high), the whole DAPM chain On and the codec registers as while
+  playing. On `probe-m7-oma2` (no route, amplifier on while the card is up)
+  `speaker-test` straight to `hw:0,0` played and `pw-play` stayed silent, in
+  the same boot. PipeWire opened the PCM as S24_LE (MMAP, period 480);
+  `speaker-test` uses S16_LE. Pinning the card's nodes to S16LE in
+  WirePlumber (`51-xiaomi-markw.conf`, device-markw 0.1.10) made `pw-play`
+  audible. The early PipeWire tone that played came before the sink had
+  settled on its format. The route was never the fault; it gets a fresh
+  test on `probe-m8-audio` with the rule in place.
 
 Headphones and both microphones are checked after step 9, one at a time,
 with `arecord -D hw:0,1 -f S16_LE -r 48000 -d 3` and playing the file back.

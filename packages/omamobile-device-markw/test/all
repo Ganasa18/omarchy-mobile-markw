@@ -129,6 +129,13 @@ sed -n "s/.*Digital Volume' \([0-9]*\)\".*/\1/p" "$hifi" | awk '$1 >= 84 { bad =
   || fail "a digital volume reaches 0 dB"
 grep -c 'PlaybackMixerElem\|PlaybackVolume' "$hifi" >/dev/null && fail "PipeWire must not own the hardware gain"
 pass "the UCM profile: speaker on the line output, gains below 0 dB"
+wp=$tmp/root/usr/share/wireplumber/wireplumber.conf.d/51-xiaomi-markw.conf
+[[ -f $wp ]] || fail "install stages the WirePlumber rule"
+grep -q 'audio.format = "S16LE"' "$wp" || fail "the WirePlumber rule pins S16LE"
+grep -q 'platform-c051000.sound-card' "$wp" || fail "the WirePlumber rule matches the markw card"
+[[ $(tr -cd '{' <"$wp" | wc -c) == $(tr -cd '}' <"$wp" | wc -c) &&
+   $(tr -cd '[' <"$wp" | wc -c) == $(tr -cd ']' <"$wp" | wc -c) ]] || fail "the WirePlumber rule has unbalanced brackets"
+pass "the WirePlumber rule: the markw card plays S16LE"
 for absent in usr/bin/omamobile-boot-success usr/bin/omamobile-bootctl \
               usr/lib/systemd/system/omamobile-boot-success.service \
               usr/bin/omamobile-wifi-start usr/bin/omamobile-charge-guard \

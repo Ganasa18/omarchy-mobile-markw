@@ -42,6 +42,8 @@ install -Dm644 vendor/ucm2/conf.d/xiaomi-markw/xiaomi-markw.conf \
   "$destination/usr/share/alsa/ucm2/conf.d/xiaomi-markw/xiaomi-markw.conf"
 install -Dm644 vendor/ucm2/Xiaomi/markw/HiFi.conf \
   "$destination/usr/share/alsa/ucm2/Xiaomi/markw/HiFi.conf"
+# PipeWire plays the card in S16_LE: in S24_LE the speaker stays silent.
+install -Dm644 vendor/wireplumber/wireplumber.conf.d/51-xiaomi-markw.conf   "$destination/usr/share/wireplumber/wireplumber.conf.d/51-xiaomi-markw.conf"
 install -Dm644 vendor/tmpfiles.d/omamobile-schedutil.conf \
   "$destination/usr/lib/tmpfiles.d/omamobile-schedutil.conf"
 install -Dm644 vendor/sysctl.d/90-omamobile-zram.conf \
