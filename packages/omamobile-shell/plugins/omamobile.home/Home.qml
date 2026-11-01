@@ -1063,7 +1063,8 @@ Item {
         // space or tapping the dots.
         interactive: !root.editing && root.sheet === ""
         flickDeceleration: 4000
-        cacheBuffer: width * 2
+        // The margins make the width negative before the window has a size.
+        cacheBuffer: Math.max(0, width * 2)
         model: root.layout.pages.length
         onCurrentIndexChanged: root.currentPage = currentIndex
 
