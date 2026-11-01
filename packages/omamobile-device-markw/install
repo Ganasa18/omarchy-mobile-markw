@@ -32,6 +32,8 @@ install -Dm644 vendor/systemd/system/omamobile-zram.service \
 install -d "$destination/usr/lib/systemd/system/swap.target.wants"
 ln -sf ../omamobile-zram.service \
   "$destination/usr/lib/systemd/system/swap.target.wants/omamobile-zram.service"
+install -Dm644 vendor/tmpfiles.d/omamobile-schedutil.conf \
+  "$destination/usr/lib/tmpfiles.d/omamobile-schedutil.conf"
 install -Dm644 vendor/sysctl.d/90-omamobile-zram.conf \
   "$destination/usr/lib/sysctl.d/90-omamobile-zram.conf"
 install -Dm644 device.conf \

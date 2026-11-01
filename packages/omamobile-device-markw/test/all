@@ -55,6 +55,7 @@ for f in usr/bin/reboot-to \
          etc/NetworkManager/conf.d/zz-omamobile-wifi-powersave.conf \
          usr/lib/systemd/system/omamobile-zram.service \
          usr/lib/sysctl.d/90-omamobile-zram.conf \
+         usr/lib/tmpfiles.d/omamobile-schedutil.conf \
          usr/share/omamobile/device.conf \
          usr/share/omamobile/device-markw/version \
          usr/share/licenses/omamobile-device-markw/LICENSE \
@@ -90,6 +91,9 @@ grep -q 'mount -o ro ' vendor/omamobile-markw-firmware || fail "Android partitio
 grep -qF '/ro") != 1' vendor/omamobile-markw-firmware || fail "a partition that isn't read-only is never mounted"
 grep -qF "copy modem . image/adsp.mdt 'image/adsp.b??'" vendor/omamobile-markw-firmware \
   || fail "the audio DSP firmware is copied from the modem partition"
+grep -qx 'w /sys/devices/system/cpu/cpufreq/schedutil/rate_limit_us - - - - 20000' \
+  "$tmp/root/usr/lib/tmpfiles.d/omamobile-schedutil.conf" \
+  || fail "schedutil changes the clock at most every 20 ms"
 grep -qx 'wifi.powersave=3' "$tmp/root/etc/NetworkManager/conf.d/zz-omamobile-wifi-powersave.conf" \
   || fail "Wi-Fi power save is on"
 power="$tmp/root/usr/lib/systemd/logind.conf.d/10-omamobile-power-key.conf"
