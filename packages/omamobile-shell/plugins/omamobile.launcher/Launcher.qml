@@ -100,6 +100,7 @@ Item {
   // Words in the drawer are set in a sans, as on the home screen; the
   // shell's own font stays for glyphs.
   readonly property string textFont: "Adwaita Sans"
+  readonly property bool darkSheet: Commons.Color.menu.background.hslLightness < 0.5
 
   // The Recent row: what omamobile-launch last started, one row of what is
   // still installed and shown.
@@ -362,7 +363,10 @@ Item {
     // one holds exclusive focus, and that includes the on-screen keyboard.
     WlrLayershell.keyboardFocus: root.opened ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
 
-    onVisibleChanged: if (visible) Qt.callLater(function() { input.forceActiveFocus() })
+    // The keyboard comes up only to type: on a tap in the input, or when the
+    // drawer opens with text already in it. Opened by a swipe, the list shows
+    // whole, as in the design.
+    onVisibleChanged: if (visible && root.hasQuery) Qt.callLater(function() { input.forceActiveFocus() })
 
     Rectangle {
       id: sheet
@@ -378,7 +382,7 @@ Item {
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.leftMargin: Style.spacing.xxl
+        anchors.leftMargin: 22
         anchors.rightMargin: Style.spacing.sm
         height: root.touch + Style.spacing.lg
 
@@ -389,7 +393,7 @@ Item {
           text: root.hasQuery ? (root.apps.length === 1 ? "1 app" : root.apps.length + " apps") : "Apps"
           color: root.foreground
           font.family: root.textFont
-          font.pixelSize: Style.font.display
+          font.pixelSize: 34
           font.weight: Font.Bold
         }
 
@@ -416,12 +420,18 @@ Item {
         TextField {
           id: input
           anchors.fill: parent
-          anchors.leftMargin: Style.spacing.xxl
-          anchors.rightMargin: Style.spacing.xxl
+          anchors.leftMargin: 22
+          anchors.rightMargin: 22
           anchors.topMargin: Style.spacing.sm
           anchors.bottomMargin: Style.spacing.sm
           verticalAlignment: TextInput.AlignVCenter
-          font.pixelSize: Style.font.title
+          font.family: root.textFont
+          font.pixelSize: 16
+          // A filled, borderless field, as in the design.
+          background: Rectangle {
+            radius: 16
+            color: root.darkSheet ? Qt.rgba(1, 1, 1, input.activeFocus ? 0.11 : 0.07) : Qt.rgba(0, 0, 0, input.activeFocus ? 0.08 : 0.05)
+          }
           leftPadding: Style.spacing.controlPaddingX + Style.font.iconLarge + Style.spacing.xl
           placeholderText: root.hasAgent ? "Search apps or ask " + root.agentName + "…" : "Search apps and commands"
           foreground: root.foreground
@@ -436,7 +446,7 @@ Item {
 
           Text {
             anchors.left: parent.left
-            anchors.leftMargin: Style.spacing.controlPaddingX + Border.left(input._borderSpec)
+            anchors.leftMargin: Style.spacing.controlPaddingX
             anchors.verticalCenter: parent.verticalCenter
             textFormat: Text.PlainText
             text: root.promptMode ? "󰚩" : "󰍉"
@@ -454,8 +464,8 @@ Item {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: inputRow.bottom
-        anchors.leftMargin: Style.spacing.xxl
-        anchors.rightMargin: Style.spacing.xxl
+        anchors.leftMargin: 22
+        anchors.rightMargin: 22
         anchors.topMargin: Style.spacing.sm
         height: visible ? Math.max(root.touch, Style.space(52)) : 0
         radius: Style.cornerRadius
@@ -552,8 +562,8 @@ Item {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         anchors.topMargin: Style.spacing.md
-        anchors.leftMargin: Style.spacing.xxl
-        anchors.rightMargin: Style.spacing.xxl
+        anchors.leftMargin: 22
+        anchors.rightMargin: 22
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         model: root.apps
@@ -665,9 +675,9 @@ Item {
     textFormat: Text.PlainText
     color: Qt.darker(root.foreground, 1.4)
     font.family: root.textFont
-    font.pixelSize: Style.font.caption + 1
+    font.pixelSize: 13
     font.weight: Font.DemiBold
-    font.letterSpacing: 1
+    font.letterSpacing: 0.6
   }
 
   // One app in the list: icon, name, and its generic name on the right.
@@ -715,7 +725,7 @@ Item {
       text: root.appLibrary && row.entry ? root.appLibrary.entryName(row.entry) : ""
       color: row.highlighted ? Commons.Color.menu.selectedText : root.foreground
       font.family: root.textFont
-      font.pixelSize: Style.font.title
+      font.pixelSize: 16
       elide: Text.ElideRight
     }
 
@@ -728,7 +738,7 @@ Item {
       text: root.appLibrary && row.entry ? LauncherModel.sideText(root.appLibrary.entryName(row.entry), root.appLibrary.entrySubtext(row.entry)) : ""
       color: Qt.darker(root.foreground, 1.6)
       font.family: root.textFont
-      font.pixelSize: Style.font.body
+      font.pixelSize: 13
       elide: Text.ElideRight
     }
 

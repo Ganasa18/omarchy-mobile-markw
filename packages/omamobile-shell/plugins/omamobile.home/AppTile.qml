@@ -34,7 +34,8 @@ Item {
     id: icon
     anchors.horizontalCenter: parent.horizontalCenter
     y: Math.round((tile.height - height - 7 - name.implicitHeight) / 2)
-    width: Math.min(64, Math.max(36, Math.min(tile.width * 0.6, tile.height - name.implicitHeight - 9)))
+    // The design's proportion: a 64 px icon on a 113 px row.
+    width: Math.min(64, Math.max(36, Math.min(tile.width * 0.6, tile.height * 0.57)))
     height: width
     fillMode: Image.PreserveAspectFit
     asynchronous: true
