@@ -167,6 +167,12 @@ blacklist still in place (the DSP started by hand, as in step 3). Step 4
   `Speaker Amp DRV` Off and `gpio96` low; a 5 s `pw-play` tone in S16_LE
   set `gpio96` high, the owner heard it, and `gpio96` was low again after.
   The amplifier now draws nothing while nothing plays.
+- **Step 4: pass** (2026-11-01, `probe-m8-audio`): the blacklist is gone
+  (a copy is in `/var/tmp/omamobile-adsp-bringup.conf.bak` on the phone).
+  The ADSP came up on its own 28 s into boot, the card appeared, and
+  PipeWire had the speaker sink and the microphone source without a
+  restart; `systemctl is-system-running` reports running, no failed units.
+  The `qcom-venus` probe error (-22) at boot predates this and is unrelated.
 
 Headphones and both microphones are checked after step 9, one at a time,
 with `arecord -D hw:0,1 -f S16_LE -r 48000 -d 3` and playing the file back.
