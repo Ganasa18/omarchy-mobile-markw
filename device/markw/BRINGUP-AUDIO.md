@@ -161,8 +161,8 @@ blacklist still in place (the DSP started by hand, as in step 3). Step 4
   the same boot. PipeWire opened the PCM as S24_LE (MMAP, period 480);
   `speaker-test` uses S16_LE. Pinning the card's nodes to S16LE in
   WirePlumber (`51-xiaomi-markw.conf`, device-markw 0.1.10) made `pw-play`
-  audible. The early PipeWire tone that played came before the sink had
-  settled on its format. The route was never the fault; it gets a fresh
+  audible. Why the first PipeWire tone on m8 played anyway is not known;
+  its format wasn't read. The route was never the fault; it gets a fresh
   test on `probe-m8-audio` with the rule in place.
 
 Headphones and both microphones are checked after step 9, one at a time,
