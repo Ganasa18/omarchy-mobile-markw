@@ -69,6 +69,7 @@ Item {
     fingerprint.refresh()
     keyboard.refresh()
     clockFormatRead.running = true
+    if (!systemRead.running) systemRead.running = true
   }
 
   // Host-initiated close (`shell hide`).
@@ -491,6 +492,33 @@ Item {
     }
   }
 
+
+  // What the phone is and runs, and the battery's temperature, for the
+  // header: one short read on open, no polling (the level itself is UPower's).
+  property string systemLine: ""
+  property string batteryTemp: ""
+
+  Process {
+    id: systemRead
+    command: ["sh", "-c",
+      "sed -n 's/^NAME=\"\\{0,1\\}\\([^\"]*\\)\"\\{0,1\\}$/device=\\1/p' /usr/share/omamobile/device.conf 2>/dev/null; "
+      + "sed -n 's/^NAME=\"\\{0,1\\}\\([^\"]*\\)\"\\{0,1\\}$/os=\\1/p; s/^VERSION_ID=\"\\{0,1\\}\\([^\"]*\\)\"\\{0,1\\}$/version=\\1/p' /etc/os-release 2>/dev/null; "
+      + "for d in /sys/class/power_supply/*; do [ \"$(cat \"$d/type\" 2>/dev/null)\" = Battery ] || continue; echo \"temp=$(cat \"$d/temp\" 2>/dev/null)\"; break; done"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var v = {}
+        String(text || "").split("\n").forEach(function(line) {
+          var at = line.indexOf("=")
+          if (at > 0 && !(line.slice(0, at) in v)) v[line.slice(0, at)] = line.slice(at + 1).trim()
+        })
+        var os = [v.os || "", v.version || ""].filter(function(s) { return !!s }).join(" ")
+        root.systemLine = [v.device || "", os].filter(function(s) { return !!s }).join(" · ")
+        var t = Number(v.temp)
+        root.batteryTemp = v.temp && isFinite(t) ? Math.round(t / 10) + " °C" : ""
+      }
+    }
+  }
 
   SystemClock {
     id: clock
@@ -1195,20 +1223,46 @@ Item {
               font.family: Style.font.family
               font.pixelSize: Style.font.body
             }
+
+            // The device and the OS: "Xiaomi Redmi 4 Prime · Omarchy 4.0.6".
+            Text {
+              visible: root.systemLine.length > 0
+              width: Math.max(0, parent.parent.width - headerBattery.width - Style.spacing.lg)
+              textFormat: Text.PlainText
+              text: root.systemLine
+              color: Qt.darker(root.foreground, 1.4)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+              elide: Text.ElideRight
+            }
           }
 
-          Text {
+          Column {
             id: headerBattery
             visible: root.hasBattery
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            textFormat: Text.PlainText
-            text: root.hasBattery
-              ? (UPower.onBattery ? "󰁹 " : "󰂄 ") + Math.round(root.battery.percentage * 100) + "%"
-              : ""
-            color: root.foreground
-            font.family: Style.font.family
-            font.pixelSize: Style.font.title
+            spacing: Style.spacing.xxs
+
+            Text {
+              anchors.right: parent.right
+              textFormat: Text.PlainText
+              text: root.hasBattery
+                ? (UPower.onBattery ? "󰁹 " : "󰂄 ") + Math.round(root.battery.percentage * 100) + "%"
+                : ""
+              color: root.foreground
+              font.family: Style.font.family
+              font.pixelSize: Style.font.title
+            }
+            Text {
+              anchors.right: parent.right
+              visible: root.batteryTemp.length > 0
+              textFormat: Text.PlainText
+              text: root.batteryTemp
+              color: Qt.darker(root.foreground, 1.4)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+            }
           }
         }
 
