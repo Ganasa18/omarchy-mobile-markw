@@ -10,7 +10,12 @@ for program in bin/*; do
 done
 while IFS= read -r -d '' file; do
   install -Dm644 "$file" "$destination/usr/share/omamobile/shell/$file"
-done < <(find plugins profile hypr branding -type f -print0)
+done < <(find plugins profile hypr branding themes -type f -print0)
+# The Clean themes' pastel app icons, an icon theme of its own that falls
+# back to Yaru for every app it doesn't draw.
+while IFS= read -r -d '' file; do
+  install -Dm644 "$file" "$destination/usr/share/icons/${file#icons/}"
+done < <(find icons -type f -print0)
 # Your own home-screen widgets: the contract, the template Create copies,
 # and examples to copy (never loaded from here).
 install -Dm644 widgets/WIDGETS.md "$destination/usr/share/omamobile/shell/WIDGETS.md"

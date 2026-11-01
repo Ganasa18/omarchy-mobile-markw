@@ -317,6 +317,33 @@ tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 [[ -x $tmp/root/usr/bin/omamobile-setup-user && -f $tmp/root/usr/share/omamobile/shell/profile/shell.json ]] \
   || fail "install stages the setup script and the profile"
 [[ -f $tmp/root/usr/share/applications/omamobile-agent.desktop ]] || fail "install stages the AI Agent shortcut"
+# The Clean themes, light and dark: what Omarchy's theme-set needs, every
+# palette key the bundled themes carry, their pastel icon theme, and
+# setup-user links them and makes them the two sides of the Dark theme tile.
+for theme in omamobile-clean:light omamobile-clean-dark:dark; do
+  clean=$tmp/root/usr/share/omamobile/shell/themes/${theme%%:*}
+  for f in colors.toml icons.theme hyprland.lua preview.png; do
+    [[ -f $clean/$f ]] || fail "install stages ${theme%%:*}/$f"
+  done
+  ls "$clean"/backgrounds/*.png >/dev/null 2>&1 || fail "${theme%%:*} has a wallpaper"
+  for key in mode accent selection muted background dark_background darker_background lighter_background \
+             foreground dark_foreground light_foreground bright_foreground red yellow orange green cyan blue magenta brown \
+             bright_red bright_yellow bright_green bright_cyan bright_blue bright_magenta; do
+    grep -qE "^$key = \"[^\"]+\"$" "$clean/colors.toml" || fail "${theme%%:*} sets $key"
+  done
+  grep -qx "mode = \"${theme#*:}\"" "$clean/colors.toml" || fail "${theme%%:*} is a ${theme#*:} theme"
+  [[ $(cat "$clean/icons.theme") == Omamobile-Pastel ]] || fail "${theme%%:*} uses the pastel icons"
+done
+icons=$tmp/root/usr/share/icons/Omamobile-Pastel
+grep -qx 'Inherits=Yaru-blue,Adwaita,hicolor' "$icons/index.theme" || fail "the pastel icons fall back to Yaru"
+for app in chromium foot org.gnome.Nautilus btop mpv omacam omacalc org.gnome.Maps; do
+  [[ -f $icons/scalable/apps/$app.svg ]] || fail "a pastel icon for $app"
+done
+grep -c 'ln -s "$share/themes/$theme" ~/.config/omarchy/themes/$theme' bin/omamobile-setup-user >/dev/null \
+  && grep -c 'echo omamobile-clean >~/.local/state/omamobile/theme-light' bin/omamobile-setup-user >/dev/null \
+  && grep -c 'echo omamobile-clean-dark >~/.local/state/omamobile/theme-dark' bin/omamobile-setup-user >/dev/null \
+  || fail "setup-user links the Clean themes and makes them the light and dark sides"
+pass "the Clean themes and their pastel icons"
 if command -v desktop-file-validate >/dev/null; then
   desktop-file-validate "$tmp/root/usr/share/applications/omamobile-agent.desktop" || fail "AI Agent desktop entry validates"
 fi

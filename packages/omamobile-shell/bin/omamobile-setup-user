@@ -121,6 +121,19 @@ hl.config({ cursor = { invisible = true, hide_on_touch = true } })
 LUA
 fi
 
+# Omarchy Mobile Clean, a light and a dark pastel theme for phones: linked
+# into the user's themes once (so Omarchy's picker lists them and package
+# updates reach them), and made the two sides of quick settings' Dark theme
+# tile unless the user already chose them.
+if omarchy-done ensure omamobile-clean-theme; then
+  mkdir -p ~/.config/omarchy/themes ~/.local/state/omamobile
+  for theme in omamobile-clean omamobile-clean-dark; do
+    [[ -e ~/.config/omarchy/themes/$theme ]] || ln -s "$share/themes/$theme" ~/.config/omarchy/themes/$theme
+  done
+  [[ -s ~/.local/state/omamobile/theme-light ]] || echo omamobile-clean >~/.local/state/omamobile/theme-light
+  [[ -s ~/.local/state/omamobile/theme-dark ]] || echo omamobile-clean-dark >~/.local/state/omamobile/theme-dark
+fi
+
 # Low motion, seeded once when the device descriptor asks (LOW_MOTION=1):
 # Hyprland's window and workspace animations off. Each one redraws the
 # screen for its whole length; markw's battery is worth more than them.
