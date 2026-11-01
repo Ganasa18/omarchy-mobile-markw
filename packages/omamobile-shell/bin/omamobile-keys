@@ -30,9 +30,18 @@ window=500
 hold=0.6
 # Volume down waits this long for power before it lowers the volume.
 volume_wait=0.15
+# A release followed by a new press within this many milliseconds is a
+# bounce of the same press. markw's power key reports a release and a press
+# about 20 ms apart while held (its PMIC debounces 15.6 ms), so the release
+# locked the phone and the hold never reached the system menu (2026-11-01).
+bounce=80
 
 recent() {
-  [[ -f $state/$1 ]] && (($(now) - $(<"$state/$1") <= window))
+  recent_ms "$1" "$window"
+}
+
+recent_ms() {
+  [[ -f $state/$1 ]] && (($(now) - $(<"$state/$1") <= $2))
 }
 
 locked() {
@@ -127,6 +136,11 @@ short_press() {
 
 case "${1:-}" in
   power-down)
+    # The key bounced: the press goes on, and the pending release is void.
+    if recent_ms power-release "$bounce"; then
+      rm -f "$state/power-release"
+      exit 0
+    fi
     rm -f "$state/chord" "$state/long"
     press=$(now)
     echo "$press" >"$state/power"
@@ -176,6 +190,12 @@ case "${1:-}" in
     fi
     ;;
   power-up)
+    # Act only if no new press follows: a bounce takes this release back.
+    release=$(now)
+    echo "$release" >"$state/power-release"
+    sleep "$(printf '0.%03d' "$bounce")"
+    [[ $(cat "$state/power-release" 2>/dev/null) == "$release" ]] || exit 0
+    rm -f "$state/power-release"
     if [[ -f $state/chord ]]; then
       rm -f "$state/chord"
     elif [[ -f $state/long ]]; then
