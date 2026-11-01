@@ -103,6 +103,8 @@ grep -q '^PACKAGE=omamobile-device-markw$' "$tmp/root/usr/share/omamobile/device
   || fail "the installed descriptor is markw"
 grep -q '^MONITOR_SCALE=2$' "$tmp/root/usr/share/omamobile/device.conf" \
   || fail "the descriptor carries the panel's output scale"
+grep -q '^LOW_MOTION=1$' "$tmp/root/usr/share/omamobile/device.conf" \
+  || fail "the descriptor asks for low motion"
 for absent in usr/bin/omamobile-boot-success usr/bin/omamobile-bootctl \
               usr/lib/systemd/system/omamobile-boot-success.service \
               usr/bin/omamobile-wifi-start usr/bin/omamobile-charge-guard \
