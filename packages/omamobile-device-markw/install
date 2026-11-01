@@ -18,6 +18,8 @@ install -Dm644 vendor/systemd/logind.conf.d/10-omamobile-power-key.conf \
   "$destination/usr/lib/systemd/logind.conf.d/10-omamobile-power-key.conf"
 install -Dm644 vendor/NetworkManager/conf.d/10-omamobile-usb.conf \
   "$destination/usr/lib/NetworkManager/conf.d/10-omamobile-usb.conf"
+install -Dm644 vendor/NetworkManager/conf.d/zz-omamobile-wifi-powersave.conf \
+  "$destination/etc/NetworkManager/conf.d/zz-omamobile-wifi-powersave.conf"
 install -Dm755 vendor/omamobile-zram "$destination/usr/lib/omamobile/omamobile-zram"
 install -Dm755 vendor/omamobile-markw-firmware "$destination/usr/lib/omamobile/omamobile-markw-firmware"
 install -Dm644 vendor/systemd/system/omamobile-markw-firmware.service \

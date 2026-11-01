@@ -10,7 +10,7 @@ license=(MIT)
 depends=(bash systemd omamobile-keyring)
 provides=(omamobile-device)
 conflicts=(omamobile-device)
-backup=(etc/pacman.d/omamobile-mirrorlist)
+backup=(etc/pacman.d/omamobile-mirrorlist etc/NetworkManager/conf.d/zz-omamobile-wifi-powersave.conf)
 install=omamobile-device-markw.install
 makedepends=(gcc)
 
