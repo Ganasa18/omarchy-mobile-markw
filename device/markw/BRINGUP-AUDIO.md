@@ -162,8 +162,11 @@ blacklist still in place (the DSP started by hand, as in step 3). Step 4
   `speaker-test` uses S16_LE. Pinning the card's nodes to S16LE in
   WirePlumber (`51-xiaomi-markw.conf`, device-markw 0.1.10) made `pw-play`
   audible. Why the first PipeWire tone on m8 played anyway is not known;
-  its format wasn't read. The route was never the fault; it gets a fresh
-  test on `probe-m8-audio` with the rule in place.
+  its format wasn't read.
+- **Route proven** (2026-11-01, `probe-m8-audio` with the rule): at idle
+  `Speaker Amp DRV` Off and `gpio96` low; a 5 s `pw-play` tone in S16_LE
+  set `gpio96` high, the owner heard it, and `gpio96` was low again after.
+  The amplifier now draws nothing while nothing plays.
 
 Headphones and both microphones are checked after step 9, one at a time,
 with `arecord -D hw:0,1 -f S16_LE -r 48000 -d 3` and playing the file back.
