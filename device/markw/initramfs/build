@@ -118,6 +118,22 @@ case ${ADSP:-0} in
     1) fdtput -t s /out/markw.dtb /soc@0/remoteproc@c200000 status okay ;;
     *) echo "ADSP must be 0 or 1" >&2; exit 1 ;;
 esac
+# The AW8738 follows the codec's line output (BRINGUP-AUDIO.md step 5), so
+# DAPM powers it only while LINEOUT plays. Kernel patch 0002 adds the same
+# route; a DTB built before it gets it here, and an unknown list stops.
+card=/soc@0/sound-card@c051000
+routes='AMIC1 MIC BIAS External1 AMIC2 MIC BIAS Internal2 AMIC3 MIC BIAS External1 MM_DL1 MultiMedia1 Playback MM_DL3 MultiMedia3 Playback MM_DL4 MultiMedia4 Playback MultiMedia2 Capture MM_UL2'
+case $(fdtget -t s /out/markw.dtb "$card" audio-routing) in
+    "$routes Speaker Amp IN LINEOUT_OUT") ;;
+    "$routes")
+        fdtput -t s /out/markw.dtb "$card" audio-routing \
+            AMIC1 'MIC BIAS External1' AMIC2 'MIC BIAS Internal2' \
+            AMIC3 'MIC BIAS External1' MM_DL1 'MultiMedia1 Playback' \
+            MM_DL3 'MultiMedia3 Playback' MM_DL4 'MultiMedia4 Playback' \
+            'MultiMedia2 Capture' MM_UL2 'Speaker Amp IN' LINEOUT_OUT
+        ;;
+    *) echo "Unknown audio-routing on $card" >&2; exit 1 ;;
+esac
 # WCNSS (Wi-Fi, Bluetooth) stays enabled: its firmware comes from the root,
 # copied from the phone's own modem and persist partitions, never the probe.
 # Without it, or while its modules are blacklisted, the node does nothing.

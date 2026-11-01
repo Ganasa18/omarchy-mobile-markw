@@ -36,6 +36,12 @@ ln -sf ../omamobile-zram.service \
 install -Dm755 vendor/omamobile-autosuspend "$destination/usr/lib/omamobile/omamobile-autosuspend"
 install -Dm644 vendor/systemd/system/omamobile-autosuspend.service \
   "$destination/usr/lib/systemd/system/omamobile-autosuspend.service"
+# The sound card's UCM profile (device/markw/BRINGUP-AUDIO.md); the card
+# itself needs the ADSP, so without it this does nothing.
+install -Dm644 vendor/ucm2/conf.d/xiaomi-markw/xiaomi-markw.conf \
+  "$destination/usr/share/alsa/ucm2/conf.d/xiaomi-markw/xiaomi-markw.conf"
+install -Dm644 vendor/ucm2/Xiaomi/markw/HiFi.conf \
+  "$destination/usr/share/alsa/ucm2/Xiaomi/markw/HiFi.conf"
 install -Dm644 vendor/tmpfiles.d/omamobile-schedutil.conf \
   "$destination/usr/lib/tmpfiles.d/omamobile-schedutil.conf"
 install -Dm644 vendor/sysctl.d/90-omamobile-zram.conf \
