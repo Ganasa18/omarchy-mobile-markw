@@ -86,6 +86,30 @@ if omarchy-done ensure omamobile-monitor-scale; then
   sed -i "s/^local omarchy_monitor_scale = .*/local omarchy_monitor_scale = ${scale:-3}/" ~/.config/hypr/monitors.lua
 fi
 
+# Idle timeouts, seeded once: the device descriptor's IDLE_SCREENSAVER and
+# IDLE_LOCK (seconds, 0 turns one off), else Omarchy's defaults. markw turns
+# the screensaver off and locks after a minute, for its battery.
+if omarchy-done ensure omamobile-idle; then
+  idle_screensaver=$(sed -n 's/^IDLE_SCREENSAVER=\([0-9][0-9]*\)$/\1/p' /usr/share/omamobile/device.conf 2>/dev/null)
+  idle_lock=$(sed -n 's/^IDLE_LOCK=\([0-9][0-9]*\)$/\1/p' /usr/share/omamobile/device.conf 2>/dev/null)
+  if [[ -n $idle_screensaver || -n $idle_lock ]]; then
+    python3 - "$config/shell.json" "$idle_screensaver" "$idle_lock" <<'PY2'
+import json, sys
+path, screensaver, lock = sys.argv[1:]
+with open(path) as f:
+    config = json.load(f)
+idle = config.setdefault("idle", {})
+if screensaver:
+    idle["screensaver"] = int(screensaver)
+if lock:
+    idle["lock"] = int(lock)
+with open(path, "w") as f:
+    json.dump(config, f, indent=2)
+    f.write("\n")
+PY2
+  fi
+fi
+
 # Touch phone: no pointer on screen (it still hides on touch if a USB mouse is
 # attached and the user turns it back on). Added once to the user's override
 # file, Omarchy's place for local Hyprland settings.
