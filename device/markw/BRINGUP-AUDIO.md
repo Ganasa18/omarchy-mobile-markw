@@ -131,6 +131,16 @@ call and plays only at the fixed -14 dB, or quieter.
 | 8 | Speaker through UCM: `alsaucm -c hw:0 set _verb HiFi set _enadev Speaker`, then `speaker-test -D hw:0,0 -c2 -t sine -f 440 -l1`. Read `Speaker Amp DRV` in `/sys/kernel/debug/asoc/xiaomi-markw/dapm/` during and after | a quiet tone; `DRV` On while playing and Off after | silence; DRV stays on after | `alsaucm … set _disdev Speaker`; `alsactl init` | low |
 | 9 | PipeWire: `systemctl --user restart wireplumber pipewire`, then `wpctl status` and a short `pw-play` from the user session | a sink named after the card with a Speaker port; the tone plays | no sink, or a sink with no ports | remove the UCM files and restart PipeWire | low |
 
+To keep one change per boot, steps 6-8 run on `probe-m8-audio` with the
+blacklist still in place (the DSP started by hand, as in step 3). Step 4
+(dropping the blacklist) is the boot after that.
+
+- **Step 6, laptop: pass** (2026-11-01): `probe-m8-audio` is `probe-m7-oma2`
+  rebuilt with the route. The DTB grew 28 bytes and its `audio-routing`
+  now ends `Speaker Amp IN`, `LINEOUT_OUT`; the initramfs files are
+  identical to m7's. The two UCM files are on the phone's root (no card yet,
+  so nothing reads them).
+
 Headphones and both microphones are checked after step 9, one at a time,
 with `arecord -D hw:0,1 -f S16_LE -r 48000 -d 3` and playing the file back.
 Any device that fails comes out of the profile until it's fixed.
