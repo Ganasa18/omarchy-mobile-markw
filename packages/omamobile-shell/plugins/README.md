@@ -345,10 +345,10 @@ wallpaper, swiped sideways, with page dots above the dock.
 
 | Widget | Sizes | What it shows |
 | --- | --- | --- |
-| Clock | 2x1-4x3 | Time and date, Qt formats in its settings |
+| Clock | 2x1-4x3 | Time and date, Qt formats in its settings; on a card (the day, the time, the date) unless **On a card** is off, then on the wallpaper |
 | Weather | 2x1-4x2 | Off until turned on with a place; then Open-Meteo (below) |
-| Battery | 1x1-4x2 | UPower's display device: level, charging, time left |
-| This phone | 2x1-4x3 | Omarchy Mobile, the OS (`/etc/os-release`'s name and version, and the distribution under it: Arch Linux ARM on an ARM phone), the device and SoC (`device.conf`), the battery (UPower, plus temperature, voltage and health from `power_supply`); at 3 rows also kernel, memory and uptime. Read when it appears and every 5 min while home is on top; nothing animates. Under the clock in the default layout |
+| Battery | 1x1-4x2 | UPower's display device: level, charging, time left; the battery's temperature from `power_supply` every 5 min |
+| This phone | 2x1-4x3 | Omarchy Mobile, the OS (`/etc/os-release`'s name and version, and the distribution under it: Arch Linux ARM on an ARM phone), and uptime, then the device, SoC, kernel and boot path (`device.conf`'s `NAME`, `SOC_NAME` or `SOC`, and `BOOT_LABEL`, or memory without one); at 3 rows also memory and the battery (UPower, plus temperature and health from `power_supply`). Read when it appears and every 5 min while home is on top; nothing animates. Under the clock in the default layout |
 | Media | 3x1-4x2 | MPRIS: cover, title, artist; previous, play/pause, next |
 | Calendar | 2x2-4x4 | The next 7 days from khal when it's installed, else the month |
 | Note | 1x1-4x6 | Your text, kept in `home.json`; tap to edit |
@@ -372,6 +372,11 @@ An unreadable file is left alone and the default is shown; the next edit
 saves the old file as `home.json.bad` first. The first start puts a clock and
 the first four of a short list of installed apps on page 1, and the media and
 battery widgets on page 2.
+
+Dock. Under the pages, one row of apps (`"dock"` in `home.json`, desktop ids,
+at most one per column), as on any phone's home screen; the first start puts
+a terminal, Chromium and Files there. In edit mode a cross takes an app out
+and an empty slot opens the app list to add one.
 
 Why a layer surface and not Hyprland workspaces. Each page could be an empty
 workspace with a widget layer per workspace, and Hyprland would animate the

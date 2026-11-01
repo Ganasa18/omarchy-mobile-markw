@@ -25,9 +25,9 @@ var LIMITS = { minColumns: 3, maxColumns: 6, minRows: 4, maxRows: 8, maxPages: 1
 // internet and stay off until the user turns them on in their settings.
 var REGISTRY = {
   clock:   { name: "Clock",          icon: "󰥔", min: [2, 1], max: [4, 3], size: [4, 2], network: false,
-             config: { timeFormat: "", dateFormat: "dddd d MMMM" } },
+             config: { timeFormat: "", dateFormat: "dddd d MMMM", card: true, align: "" } },
   weather: { name: "Weather",        icon: "󰖐", min: [2, 1], max: [4, 2], size: [4, 1], network: true,
-             config: { enabled: false, useLocation: true, place: "", latitude: null, longitude: null, units: "celsius" } },
+             config: { enabled: false, useLocation: true, place: "", latitude: null, longitude: null, units: "celsius", card: false } },
   battery: { name: "Battery",        icon: "󰁹", min: [1, 1], max: [4, 2], size: [2, 1], network: false, config: {} },
   system:  { name: "This phone",     icon: "󰄜", min: [2, 1], max: [4, 3], size: [4, 2], network: false, config: {} },
   media:  { name: "Media",          icon: "󰝚", min: [3, 1], max: [4, 2], size: [4, 1], network: false, config: {} },
@@ -192,6 +192,9 @@ function portPlacements(raw) {
 
 // What a fresh home gets, before the user changes anything: a clock and the
 // first of these apps that are installed along the bottom row.
+// The dock under the pages: the first of these that are installed, one row.
+var DEFAULT_DOCK = ["foot", "Alacritty", "chromium", "org.gnome.Nautilus", "org.omarchy.settings", "omarchy-menu"]
+
 var DEFAULT_APPS = ["chromium", "Alacritty", "org.gnome.Nautilus", "omarchy-menu", "org.omarchy.settings",
                     "foot", "org.gnome.Calculator", "btop", "nvim", "localsend"]
 
@@ -334,7 +337,7 @@ function pageShift(px, w, grid) {
 // ---------------------------------------------------------------- the layout
 
 function emptyLayout(grid) {
-  return { version: VERSION, grid: { columns: grid.columns, rows: grid.rows }, home: 0, nextId: 1, pages: [{ items: [] }] }
+  return { version: VERSION, grid: { columns: grid.columns, rows: grid.rows }, home: 0, nextId: 1, pages: [{ items: [] }], dock: [] }
 }
 
 function takeId(layout, prefix) {
@@ -365,6 +368,11 @@ function defaultLayout(availableApps, grid) {
     layout.pages[0].items.push({ id: takeId(layout, "a"), kind: "app", app: DEFAULT_APPS[i],
                                  x: x, y: grid.rows - 1, w: 1, h: 1 })
     x += 1
+  }
+  for (var d = 0; d < DEFAULT_DOCK.length && layout.dock.length < grid.columns; d++) {
+    // One terminal: foot, or Alacritty without it.
+    if (DEFAULT_DOCK[d] === "Alacritty" && have.foot) continue
+    if (have[DEFAULT_DOCK[d]]) layout.dock.push(DEFAULT_DOCK[d])
   }
   layout.pages.push({ items: [] })
   var battery = REGISTRY.battery, media = REGISTRY.media
@@ -426,7 +434,24 @@ function normalize(raw, catalog) {
     layout = placeOn(layout, homeless[h].page, homeless[h].item)
 
   layout.home = clampInt(raw.home, 0, layout.pages.length - 1, 0)
+  layout.dock = cleanDock(raw.dock, grid)
   return layout
+}
+
+// The dock: desktop ids, at most one row, each once.
+function cleanDock(raw, grid) {
+  var out = []
+  ;(Array.isArray(raw) ? raw : []).forEach(function(id) {
+    var value = typeof id === "string" ? normalizeAppId(id) : ""
+    if (value && out.indexOf(value) < 0 && out.length < grid.columns) out.push(value)
+  })
+  return out
+}
+
+function setDock(layout, ids) {
+  var next = copy(layout)
+  next.dock = cleanDock(ids, next.grid)
+  return next
 }
 
 function cleanItem(raw, grid, catalog) {
@@ -503,6 +528,7 @@ function serialize(layout) {
                   return o
                 }) }
               }) }
+  if (layout.dock && layout.dock.length > 0) out.dock = layout.dock.slice()
   return JSON.stringify(out, null, 2) + "\n"
 }
 
@@ -812,7 +838,7 @@ var SYSTEM_COMMAND = [
   "sed -n 's/^NAME=/osname=/p; s/^VERSION_ID=/osversion=/p; s/^ID=/osid=/p; s/^ID_LIKE=/oslike=/p' /etc/os-release 2>/dev/null",
   "echo \"machine=$(uname -m)\"",
   "echo \"kernel=$(cat /proc/sys/kernel/osrelease 2>/dev/null)\"",
-  "sed -n 's/^NAME=/device=/p; s/^SOC=/soc=/p; s/^CODENAME=/codename=/p' /usr/share/omamobile/device.conf 2>/dev/null",
+  "sed -n 's/^NAME=/device=/p; s/^SOC=/soc=/p; s/^SOC_NAME=/socname=/p; s/^BOOT_LABEL=/boot=/p; s/^CODENAME=/codename=/p' /usr/share/omamobile/device.conf 2>/dev/null",
   "sed -n 's/^MemTotal: *\\([0-9]*\\) kB$/memkb=\\1/p' /proc/meminfo 2>/dev/null",
   "echo \"uptime=$(cut -d' ' -f1 /proc/uptime 2>/dev/null)\"",
   "for d in /sys/class/power_supply/*; do [ \"$(cat \"$d/type\" 2>/dev/null)\" = Battery ] || continue;"
@@ -843,7 +869,9 @@ function systemInfo(text) {
     machine: raw.machine || "",
     kernel: raw.kernel || "",
     device: raw.device || "",
-    soc: raw.soc ? raw.soc.toUpperCase() : "",
+    // The descriptor's marketing name when it has one ("Snapdragon 625").
+    soc: raw.socname || (raw.soc ? raw.soc.toUpperCase() : ""),
+    boot: raw.boot || "",
     codename: raw.codename || "",
     // power_supply units: tenths of a degree, microvolts, microamp-hours.
     temperature: temp === null ? null : Math.round(temp) / 10,
@@ -882,7 +910,7 @@ function urlLaunchArgv(url) {
 if (typeof module !== "undefined") {
   module.exports = {
     LAUNCH: LAUNCH, appLaunchArgv: appLaunchArgv, commandLaunchArgv: commandLaunchArgv, urlLaunchArgv: urlLaunchArgv,
-    VERSION: VERSION, GRID: GRID, LIMITS: LIMITS, REGISTRY: REGISTRY, DEFAULT_APPS: DEFAULT_APPS,
+    VERSION: VERSION, GRID: GRID, LIMITS: LIMITS, REGISTRY: REGISTRY, DEFAULT_APPS: DEFAULT_APPS, DEFAULT_DOCK: DEFAULT_DOCK,
     WIDGET_ORDER: WIDGET_ORDER, PORTED: PORTED, PORTED_ORDER: PORTED_ORDER,
     OWL_BUILTINS: OWL_BUILTINS, OWL_ORDER: OWL_ORDER, PORT_COMMANDS: PORT_COMMANDS, PORT_LOCATION: PORT_LOCATION, PORT_STATE: PORT_STATE,
     owlTypeFor: owlTypeFor, isOwlType: isOwlType, owlStoreId: owlStoreId, portCapabilities: portCapabilities,
@@ -897,6 +925,7 @@ if (typeof module !== "undefined") {
     findItem: findItem, missingApps: missingApps,
     placeOn: placeOn, addWidget: addWidget, addApp: addApp, removeItem: removeItem,
     moveItem: moveItem, resizeItem: resizeItem, setConfig: setConfig,
+    setDock: setDock, cleanDock: cleanDock,
     addPage: addPage, removePage: removePage, movePage: movePage, setHome: setHome, setGrid: setGrid,
     weatherText: weatherText, geocodeUrl: geocodeUrl, forecastUrl: forecastUrl,
     parseGeocode: parseGeocode, parseForecast: parseForecast, parseAgenda: parseAgenda, AGENDA_ARGV: AGENDA_ARGV,

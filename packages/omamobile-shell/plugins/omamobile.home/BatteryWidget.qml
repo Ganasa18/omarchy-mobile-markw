@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: MIT
 import QtQuick
 import Quickshell
+import Quickshell.Io
 import Quickshell.Services.UPower
 import qs.Commons
 import qs.Commons as Commons
 
-// Battery level, charging state and time left, from UPower's display device.
+// Battery level, charging state, time left and temperature. The level and
+// state are UPower's display device (live); the temperature is one read of
+// the battery's power_supply node when the widget appears and every five
+// minutes while the home screen is on top. Nothing animates.
 Item {
   id: widget
 
@@ -29,66 +33,97 @@ Item {
   readonly property string detail: !present ? "No battery"
     : full ? "Full"
     : charging ? (duration(seconds) ? "Full in " + duration(seconds) : "Charging")
-    : (duration(seconds) ? duration(seconds) + " left" : "On battery")
+    : (duration(seconds) ? duration(seconds) + " left" : "Discharging")
 
-  readonly property color levelColor: percent >= 0 && percent <= 15 && !charging ? Commons.Color.urgent : Commons.Color.accent
-  readonly property bool compact: width < 100
-
-  Row {
-    anchors.centerIn: parent
-    spacing: Style.spacing.xl
-    visible: !widget.compact
-
-    // A battery outline filled to the level.
-    Item {
-      width: 22
-      height: 40
-      anchors.verticalCenter: parent.verticalCenter
-
-      Rectangle {
-        anchors.horizontalCenter: parent.horizontalCenter
-        width: 10; height: 4; y: 0
-        radius: 1
-        color: widget.home ? widget.home.dimForeground : "white"
-      }
-      Rectangle {
-        id: shell
-        y: 4; width: parent.width; height: parent.height - 4
-        radius: 4
-        color: "transparent"
-        border.width: 2
-        border.color: widget.home ? widget.home.dimForeground : "white"
-
-        Rectangle {
-          anchors.bottom: parent.bottom
-          anchors.horizontalCenter: parent.horizontalCenter
-          anchors.bottomMargin: 4
-          width: parent.width - 8
-          height: Math.max(0, (parent.height - 8) * Math.max(0, widget.percent) / 100)
-          radius: 2
-          color: widget.levelColor
-        }
+  // Tenths of a degree, from the first power_supply of type Battery.
+  property real temperature: NaN
+  Process {
+    id: tempRead
+    command: ["sh", "-c", "for d in /sys/class/power_supply/*; do [ \"$(cat \"$d/type\" 2>/dev/null)\" = Battery ] && { cat \"$d/temp\" 2>/dev/null; break; }; done"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var n = parseInt(String(text || "").trim(), 10)
+        widget.temperature = isFinite(n) ? n / 10 : NaN
       }
     }
+  }
+  Component.onCompleted: tempRead.running = true
+  Timer {
+    interval: 300000
+    repeat: true
+    running: !(widget.home && widget.home.owlPaused)
+    onTriggered: if (!tempRead.running) tempRead.running = true
+  }
 
-    Column {
-      anchors.verticalCenter: parent.verticalCenter
-      spacing: Style.spacing.xxs
+  readonly property string line: detail + (isNaN(temperature) ? "" : " · " + temperature.toFixed(0) + " °C")
+  readonly property color levelColor: percent >= 0 && percent <= 15 && !charging ? Commons.Color.urgent
+    : home && home.okColor ? home.okColor : Commons.Color.accent
+  readonly property color fg: home ? home.foreground : "white"
+  readonly property color dim: home ? home.dimForeground : "white"
+  readonly property string textFont: home && home.textFont ? home.textFont : Style.font.family
+  readonly property bool compact: width < 100
 
+  // A label, the number, the level bar and what the battery is doing.
+  Column {
+    visible: !widget.compact
+    anchors.verticalCenter: parent.verticalCenter
+    x: Style.spacing.xl
+    width: widget.width - Style.spacing.xl * 2
+    spacing: Style.spacing.sm
+
+    Text {
+      visible: widget.height >= 110
+      textFormat: Text.PlainText
+      text: "BATTERY"
+      color: widget.dim
+      font.family: widget.textFont
+      font.pixelSize: Style.font.caption + 1
+      font.weight: Font.DemiBold
+      font.letterSpacing: 1
+    }
+    Row {
+      spacing: Style.spacing.xs
       Text {
+        id: number
         textFormat: Text.PlainText
-        text: (widget.percent >= 0 ? widget.percent + "%" : "–") + (widget.charging && !widget.full ? " 󱐋" : "")
-        color: widget.home ? widget.home.foreground : "white"
-        font.family: Style.font.family
-        font.pixelSize: Style.font.displayLarge
+        text: widget.percent >= 0 ? String(widget.percent) : "–"
+        color: widget.fg
+        font.family: widget.textFont
+        font.pixelSize: Math.max(Style.font.display, Math.min(widget.height * 0.3, 48))
+        font.weight: Font.DemiBold
       }
       Text {
+        anchors.baseline: number.baseline
         textFormat: Text.PlainText
-        text: widget.detail
-        color: widget.home ? widget.home.dimForeground : "white"
-        font.family: Style.font.family
-        font.pixelSize: Style.font.body
+        text: "%"
+        color: widget.dim
+        font.family: widget.textFont
+        font.pixelSize: Style.font.heading
       }
+      Text {
+        anchors.baseline: number.baseline
+        visible: widget.charging && !widget.full
+        textFormat: Text.PlainText
+        text: " 󱐋"
+        color: widget.levelColor
+        font.family: Style.font.family
+        font.pixelSize: Style.font.heading
+      }
+    }
+    Rectangle {
+      width: parent.width; height: 6; radius: 3
+      color: Qt.rgba(widget.fg.r, widget.fg.g, widget.fg.b, 0.15)
+      Rectangle { width: parent.width * Math.max(0, widget.percent) / 100; height: parent.height; radius: 3; color: widget.levelColor }
+    }
+    Text {
+      width: parent.width
+      textFormat: Text.PlainText
+      text: widget.line
+      color: widget.dim
+      font.family: widget.textFont
+      font.pixelSize: Style.font.body
+      elide: Text.ElideRight
     }
   }
 
@@ -102,8 +137,8 @@ Item {
       anchors.horizontalCenter: parent.horizontalCenter
       textFormat: Text.PlainText
       text: widget.percent >= 0 ? widget.percent + "%" : "–"
-      color: widget.home ? widget.home.foreground : "white"
-      font.family: Style.font.family
+      color: widget.fg
+      font.family: widget.textFont
       font.pixelSize: Style.font.heading
     }
     Rectangle {

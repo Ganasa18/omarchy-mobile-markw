@@ -59,7 +59,7 @@ Item {
     // nothing like a blur or a drop shadow would.
     style: Text.Outline
     styleColor: Util.alpha(Commons.Color.menu.background, 0.55)
-    font.family: Style.font.family
+    font.family: tile.home && tile.home.textFont ? tile.home.textFont : Style.font.family
     font.pixelSize: Style.font.caption + 1
     elide: Text.ElideRight
     maximumLineCount: 1

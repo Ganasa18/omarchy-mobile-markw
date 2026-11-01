@@ -48,7 +48,54 @@ Item {
   // "align": "left" puts it at the start of its cell (beside a weather widget).
   readonly property int alignment: config.align === "left" ? Text.AlignLeft : Text.AlignHCenter
 
+  readonly property string textFont: home && home.textFont ? home.textFont : Style.font.family
+
+  // On a card ("card": true): the day as a small label, the time, the date,
+  // all from the start edge.
   Column {
+    visible: !widget.bare
+    anchors.verticalCenter: parent.verticalCenter
+    x: Style.spacing.xl
+    width: widget.width - Style.spacing.xl * 2
+    spacing: Style.spacing.xs
+
+    Text {
+      width: parent.width
+      visible: widget.height >= 110
+      textFormat: Text.PlainText
+      text: Qt.formatDateTime(clock.date, "dddd").toUpperCase()
+      color: widget.home ? widget.home.dimForeground : "white"
+      font.family: widget.textFont
+      font.pixelSize: Style.font.caption + 1
+      font.weight: Font.DemiBold
+      font.letterSpacing: 1
+      elide: Text.ElideRight
+    }
+    Text {
+      width: parent.width
+      textFormat: Text.PlainText
+      text: Qt.formatDateTime(clock.date, widget.timeFormat)
+      color: widget.home ? widget.home.foreground : "white"
+      font.family: widget.textFont
+      font.pixelSize: Math.max(Style.font.display, Math.min(widget.height * 0.36, widget.width * 0.3))
+      font.weight: Font.Light
+      fontSizeMode: Text.HorizontalFit
+      minimumPixelSize: Style.font.title
+    }
+    Text {
+      width: parent.width
+      visible: widget.height >= 80
+      textFormat: Text.PlainText
+      text: Qt.formatDateTime(clock.date, widget.config.dateFormat && widget.config.dateFormat !== "dddd d MMMM" ? widget.config.dateFormat : "d MMMM")
+      color: widget.home ? widget.home.dimForeground : "white"
+      font.family: widget.textFont
+      font.pixelSize: Style.font.body + 1
+      elide: Text.ElideRight
+    }
+  }
+
+  Column {
+    visible: widget.bare
     anchors.verticalCenter: parent.verticalCenter
     x: Style.spacing.xxl
     width: widget.width - Style.spacing.xxl * 2

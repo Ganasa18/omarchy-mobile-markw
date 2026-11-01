@@ -7,7 +7,7 @@ import qs.Commons
 import qs.Commons as Commons
 import "HomeModel.js" as HomeModel
 
-// This phone: the OS, the device, the kernel and the battery. The level and
+// This phone: the OS, the device, its chip, kernel and boot path, and the battery. The level and
 // state are UPower's (live, no polling); the rest is one short shell read
 // (HomeModel.SYSTEM_COMMAND) when the widget appears and every five minutes
 // while the home screen is on top. Nothing animates: this sits on the home
@@ -27,7 +27,7 @@ Item {
   readonly property int percent: present ? Math.round(battery.percentage * 100) : -1
   readonly property bool charging: present && !UPower.onBattery
   readonly property bool full: present && battery.state === UPowerDeviceState.FullyCharged
-  readonly property color levelColor: percent >= 0 && percent <= 15 && !charging ? Commons.Color.urgent : Commons.Color.accent
+  readonly property color okColor: home && home.okColor ? home.okColor : Commons.Color.accent
 
   readonly property var cached: home && entry ? home.widgetCache(entry.id) : null
   property var info: HomeModel.systemInfo(cached ? cached.data : "")
@@ -59,119 +59,122 @@ Item {
     onTriggered: widget.refresh(true)
   }
 
-  readonly property bool tall: height >= 150
+  readonly property string textFont: home && home.textFont ? home.textFont : Style.font.family
+  // A third row (memory, battery) only on a card taller than the default.
+  readonly property bool tall: height >= 250
   readonly property string batteryLine: {
     if (!present) return "No battery"
-    var parts = [full ? "Full" : charging ? "Charging" : "On battery"]
+    var parts = [percent + "%", full ? "Full" : charging ? "Charging" : "On battery"]
     if (info.temperature !== null) parts.push(info.temperature.toFixed(0) + " °C")
-    if (info.voltage !== null) parts.push(info.voltage.toFixed(2) + " V")
     if (info.health) parts.push(info.health)
     return parts.join(" · ")
   }
+  readonly property string upText: HomeModel.uptimeText(info.uptime)
 
   Column {
     anchors.fill: parent
     anchors.margins: Style.spacing.xl
-    spacing: Style.spacing.md
+    spacing: Style.spacing.lg
 
-    // Title row: the system, the device, the battery number.
+    // The system's mark, its name and base, and how long it has been up.
     Row {
       width: parent.width
       spacing: Style.spacing.lg
 
+      Rectangle {
+        id: mark
+        width: 44; height: 44
+        radius: 12
+        color: Qt.rgba(widget.fg.r, widget.fg.g, widget.fg.b, 0.85)
+        Text {
+          anchors.centerIn: parent
+          textFormat: Text.PlainText
+          text: "󰆧"
+          color: widget.home ? widget.home.cardSolid : "black"
+          font.family: Style.font.family
+          font.pixelSize: 22
+        }
+      }
       Column {
-        width: parent.width - pct.width - parent.spacing
+        anchors.verticalCenter: parent.verticalCenter
+        width: parent.width - mark.width - pill.width - parent.spacing * 2
         spacing: Style.spacing.xxs
         Text {
           width: parent.width
           textFormat: Text.PlainText
           text: "Omarchy Mobile"
           color: widget.fg
-          font.family: Style.font.family
+          font.family: widget.textFont
           font.pixelSize: Style.font.title
-          font.bold: true
+          font.weight: Font.DemiBold
           elide: Text.ElideRight
         }
         Text {
           width: parent.width
           textFormat: Text.PlainText
-          text: widget.info.device || "…"
-          color: widget.fg
-          font.family: Style.font.family
-          font.pixelSize: Style.font.body
-          elide: Text.ElideRight
-        }
-        Text {
-          width: parent.width
-          visible: text.length > 0
-          textFormat: Text.PlainText
-          text: [widget.info.os, widget.info.base].filter(function(s) { return !!s }).join(" · ")
+          text: [widget.info.os, widget.info.base].filter(function(s) { return !!s }).join(" · ") || "…"
           color: widget.dim
-          font.family: Style.font.family
+          font.family: widget.textFont
           font.pixelSize: Style.font.body
           elide: Text.ElideRight
         }
       }
-      Text {
-        id: pct
+      Rectangle {
+        id: pill
         anchors.verticalCenter: parent.verticalCenter
-        textFormat: Text.PlainText
-        text: widget.percent >= 0 ? widget.percent + "%" : "–"
-        color: widget.fg
-        font.family: Style.font.family
-        font.pixelSize: Style.font.displayLarge
+        visible: widget.upText.length > 0
+        width: visible ? upLabel.implicitWidth + Style.spacing.lg * 2 : 0
+        height: upLabel.implicitHeight + Style.spacing.sm * 2
+        radius: height / 2
+        color: Qt.rgba(widget.okColor.r, widget.okColor.g, widget.okColor.b, 0.16)
+        Text {
+          id: upLabel
+          anchors.centerIn: parent
+          textFormat: Text.PlainText
+          text: "Up " + widget.upText
+          color: widget.okColor
+          font.family: widget.textFont
+          font.pixelSize: Style.font.caption + 1
+          font.weight: Font.DemiBold
+        }
       }
     }
 
-    // The level bar and what the battery is doing.
-    Rectangle {
-      width: parent.width; height: 6; radius: 3
-      color: Qt.rgba(widget.fg.r, widget.fg.g, widget.fg.b, 0.15)
-      Rectangle { width: parent.width * Math.max(0, widget.percent) / 100; height: parent.height; radius: 3; color: widget.levelColor }
-    }
-    Text {
-      width: parent.width
-      textFormat: Text.PlainText
-      text: widget.batteryLine
-      color: widget.dim
-      font.family: Style.font.family
-      font.pixelSize: Style.font.body
-      elide: Text.ElideRight
-    }
-
-    // Two by two: kernel, SoC, memory, uptime. Only when there is room.
+    // Two columns of facts.
     Grid {
-      visible: widget.tall
       width: parent.width
       columns: 2
-      rowSpacing: Style.spacing.sm
+      rowSpacing: Style.spacing.md
       columnSpacing: Style.spacing.lg
 
       Repeater {
+        // Without a boot label in the descriptor, memory takes its place.
+        readonly property var memory: ({ k: "Memory", v: widget.info.memoryGb !== null ? widget.info.memoryGb + " GB" : "" })
         model: [
-          { k: "Kernel", v: widget.info.kernel },
+          { k: "Device", v: widget.info.device },
           { k: "SoC", v: widget.info.soc },
-          { k: "Memory", v: widget.info.memoryGb !== null ? widget.info.memoryGb + " GB" : "" },
-          { k: "Up", v: HomeModel.uptimeText(widget.info.uptime) }
-        ]
+          { k: "Kernel", v: widget.info.kernel },
+          widget.info.boot ? { k: "Boot", v: widget.info.boot } : memory
+        ].concat(widget.tall ? (widget.info.boot ? [memory] : []).concat([{ k: "Battery", v: widget.batteryLine }]) : [])
         delegate: Column {
           required property var modelData
           width: (widget.width - 2 * Style.spacing.xl - Style.spacing.lg) / 2
+          spacing: 2
           Text {
             textFormat: Text.PlainText
             text: modelData.k
             color: widget.dim
-            font.family: Style.font.family
-            font.pixelSize: Style.font.caption
+            font.family: widget.textFont
+            font.pixelSize: Style.font.body
           }
           Text {
             width: parent.width
             textFormat: Text.PlainText
             text: modelData.v || "–"
             color: widget.fg
-            font.family: Style.font.family
-            font.pixelSize: Style.font.body
-            font.bold: true
+            font.family: widget.textFont
+            font.pixelSize: Style.font.body + 1
+            font.weight: Font.DemiBold
             elide: Text.ElideRight
           }
         }
