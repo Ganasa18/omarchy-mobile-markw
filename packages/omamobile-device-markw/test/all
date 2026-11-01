@@ -105,6 +105,13 @@ grep -q '^MONITOR_SCALE=2$' "$tmp/root/usr/share/omamobile/device.conf" \
   || fail "the descriptor carries the panel's output scale"
 grep -q '^LOW_MOTION=1$' "$tmp/root/usr/share/omamobile/device.conf" \
   || fail "the descriptor asks for low motion"
+grep -q '^AUTO_SUSPEND_DELAY=10$' "$tmp/root/usr/share/omamobile/device.conf" \
+  || fail "the descriptor sets the auto-suspend delay"
+[[ -x $tmp/root/usr/lib/omamobile/omamobile-autosuspend && -f $tmp/root/usr/lib/systemd/system/omamobile-autosuspend.service ]] \
+  || fail "install stages auto-suspend"
+! find "$tmp/root" -lname '*omamobile-autosuspend.service' | grep -c . >/dev/null \
+  || fail "auto-suspend ships disabled until it is proven"
+bash test/autosuspend.sh || fail "auto-suspend decisions"
 for absent in usr/bin/omamobile-boot-success usr/bin/omamobile-bootctl \
               usr/lib/systemd/system/omamobile-boot-success.service \
               usr/bin/omamobile-wifi-start usr/bin/omamobile-charge-guard \

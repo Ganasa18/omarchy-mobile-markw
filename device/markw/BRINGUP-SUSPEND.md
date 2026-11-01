@@ -100,6 +100,29 @@ reboots into MIUI with `panic=10`, which matches a reset with no trace.
 - **Soak: 10 of 10** cycles of 20 s s2idle plus 5 s awake, all woken by
   the RTC; `suspend_stats` 18 successes, 0 failures on oma2.
 
+## Auto-suspend (device-markw 0.1.7)
+
+`omamobile-autosuspend` suspends to idle once every screen has been off
+for `AUTO_SUSPEND_DELAY` seconds (10 on markw), from Hyprland's own
+`dpmsStatus`. It stays awake while the cable is in a computer (`usb0`
+carrier), while a USB device is plugged in (OTG), while sound plays, while
+Stay awake is on, and while anything holds a block sleep inhibitor. The
+package installs it disabled.
+
+Read-only check (2026-11-01, oma2, screen off, cable in the laptop):
+`omamobile-autosuspend --check` printed `awake: USB cable in a computer`,
+with no sleep inhibitor held.
+
+| # | Step | Expect / Pass | Stop if | Rollback | Risk |
+| --- | --- | --- | --- | --- | --- |
+| 8 | Install device-markw 0.1.7; `omamobile-autosuspend --check` with the screen on, then off | `screen on`, then `awake: USB cable in a computer` | anything else | — | low |
+| 9 | Start it by hand (`systemctl start omamobile-autosuspend`), unplug the cable, power key off; wait 30 s; power key on; plug in and read `journalctl -u omamobile-autosuspend` and `suspend_stats` | one "suspending" and one "resumed", `success` up by one, `fail` 0; screen and Wi-Fi back | no wake on the power key | Power held about 30 s, boot the probe again; `systemctl stop omamobile-autosuspend` | medium |
+| 10 | Same with music playing (`mpv` on a file), then with Stay awake on | "staying awake: sound playing", then "Stay awake is on"; no suspend | it suspends | as 9 | low |
+
+After 8-10 pass: `systemctl enable --now omamobile-autosuspend`, and a
+later package version enables it by default. Step 7 (the battery
+comparison) then measures the real gain.
+
 The oma1 failure stays unexplained: the only kernel difference is
 `PM_DEBUG`, which adds the test hooks and messages. Keep the next
 suspends attended and look at `suspend_stats/fail` and the journal after

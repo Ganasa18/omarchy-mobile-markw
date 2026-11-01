@@ -1,0 +1,102 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Suspend to idle once every screen has been off for AUTO_SUSPEND_DELAY
+# seconds (the device descriptor; 0 or unset does nothing), as a phone does.
+# The screen state is Hyprland's own (hyprctl monitors, dpmsStatus), asked
+# every few seconds while awake. It stays awake while:
+#   - the USB cable is in a computer (usb0 has a carrier: SSH and the
+#     laptop's tools need the phone),
+#   - a USB device is plugged into the phone (OTG: a serial adapter or a
+#     board being flashed),
+#   - something plays sound (an ALSA playback stream is running),
+#   - Omarchy's stay-awake indicator is on (quick settings' Stay awake),
+#   - anything holds a systemd sleep inhibitor in block mode.
+# The power key wakes the phone; after a resume it waits the full delay
+# again before the next suspend.
+#
+#   omamobile-autosuspend          run (the service)
+#   omamobile-autosuspend --check  print what it would do now, and exit
+set -u
+
+root=${OMAMOBILE_AUTOSUSPEND_ROOT:-}
+conf=$root/usr/share/omamobile/device.conf
+poll=${OMAMOBILE_AUTOSUSPEND_POLL:-5}
+
+delay=$(sed -n 's/^AUTO_SUSPEND_DELAY=\([0-9][0-9]*\)$/\1/p' "$conf" 2>/dev/null)
+delay=${delay:-0}
+
+# 0: every Hyprland has every monitor off; 1: one is on, or none answers.
+screens_off() {
+  local dir sig uid user out found=0
+  for dir in "$root"/run/user/*/hypr/*/; do
+    [[ -S $dir.socket.sock ]] || continue
+    found=1
+    sig=$(basename -- "$dir")
+    uid=$(stat -c %u -- "$dir")
+    user=$(id -nu "$uid" 2>/dev/null) || return 1
+    out=$(runuser -u "$user" -- env XDG_RUNTIME_DIR="/run/user/$uid" HYPRLAND_INSTANCE_SIGNATURE="$sig" \
+      timeout 3 hyprctl monitors 2>/dev/null) || return 1
+    grep -c 'dpmsStatus: 0' <<<"$out" >/dev/null || return 1
+    grep -c 'dpmsStatus: 1' <<<"$out" >/dev/null && return 1
+  done
+  (( found ))
+}
+
+# Prints why the phone must stay awake, or nothing.
+awake_reason() {
+  local f
+  [[ $(cat "$root"/sys/class/net/usb0/carrier 2>/dev/null) == 1 ]] && { echo "USB cable in a computer"; return; }
+  for f in "$root"/sys/bus/usb/devices/*; do
+    [[ ${f##*/} =~ ^[0-9]+-[0-9.]+$ ]] && { echo "USB device plugged in (${f##*/})"; return; }
+  done
+  for f in "$root"/proc/asound/card*/pcm*p/sub*/status; do
+    grep -c 'state: RUNNING' "$f" >/dev/null 2>&1 && { echo "sound playing"; return; }
+  done
+  for f in "$root"/home/*/.local/state/omarchy/indicators/stay-awake; do
+    [[ -e $f ]] && { echo "Stay awake is on"; return; }
+  done
+  f=$(systemd-inhibit --list --mode=block --what=sleep --no-legend 2>/dev/null | head -n1)
+  [[ -n $f ]] && { echo "sleep inhibitor: ${f%%  *}"; return; }
+}
+
+decide() {
+  if ! screens_off; then echo "screen on"; return; fi
+  local reason
+  reason=$(awake_reason)
+  if [[ -n $reason ]]; then echo "awake: $reason"; else echo "suspend"; fi
+}
+
+if [[ ${1:-} == --check ]]; then
+  echo "delay: ${delay}s"
+  decide
+  exit 0
+fi
+
+(( delay > 0 )) || { echo "AUTO_SUSPEND_DELAY is 0 or unset: nothing to do"; exit 0; }
+echo "suspending after ${delay}s with every screen off"
+
+off_since=0
+last=""
+while sleep "$poll"; do
+  state=$(decide)
+  if [[ $state == "screen on" ]]; then off_since=0; last=""; continue; fi
+  now=$(date +%s)
+  (( off_since == 0 )) && off_since=$now
+  (( now - off_since >= delay )) || continue
+  if [[ $state != suspend ]]; then
+    [[ $state != "$last" ]] && echo "screen off, staying $state"
+    last=$state
+    continue
+  fi
+  echo "screen off for ${delay}s: suspending"
+  before=$(cat /sys/power/suspend_stats/success 2>/dev/null || echo 0)
+  systemctl suspend || echo "systemctl suspend failed"
+  # Wait for the resume (or a minute), then give the user the full delay.
+  for _ in $(seq 60); do
+    [[ $(cat /sys/power/suspend_stats/success 2>/dev/null || echo 0) != "$before" ]] && break
+    sleep 1
+  done
+  echo "resumed (suspend_stats success $(cat /sys/power/suspend_stats/success 2>/dev/null), fail $(cat /sys/power/suspend_stats/fail 2>/dev/null))"
+  off_since=$(date +%s)
+  last=""
+done

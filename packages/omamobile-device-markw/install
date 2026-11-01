@@ -32,6 +32,10 @@ install -Dm644 vendor/systemd/system/omamobile-zram.service \
 install -d "$destination/usr/lib/systemd/system/swap.target.wants"
 ln -sf ../omamobile-zram.service \
   "$destination/usr/lib/systemd/system/swap.target.wants/omamobile-zram.service"
+# Suspend when the screen has been off a while: installed, not enabled.
+install -Dm755 vendor/omamobile-autosuspend "$destination/usr/lib/omamobile/omamobile-autosuspend"
+install -Dm644 vendor/systemd/system/omamobile-autosuspend.service \
+  "$destination/usr/lib/systemd/system/omamobile-autosuspend.service"
 install -Dm644 vendor/tmpfiles.d/omamobile-schedutil.conf \
   "$destination/usr/lib/tmpfiles.d/omamobile-schedutil.conf"
 install -Dm644 vendor/sysctl.d/90-omamobile-zram.conf \
