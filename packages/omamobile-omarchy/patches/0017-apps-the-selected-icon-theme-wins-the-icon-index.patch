@@ -1,0 +1,28 @@
+# Apps: list the selected icon theme first when indexing app icons, so a
+# theme's own icon (Omarchy Mobile's pastel set, or any theme a user
+# picks) wins over hicolor's for the same name. The index keeps the first
+# file per name and walked every theme in find order, so hicolor's foot,
+# mpv and btop icons showed whatever icon theme was set; which one won
+# was luck. Themes are found from GTK's icon-theme setting, as Qt's gtk3
+# platform theme does for the fallback lookup.
+#
+# Against Omarchy 4.0.6 (edge 4.0.6-1).
+diff --git i/shell/services/AppLibrary.qml w/shell/services/AppLibrary.qml
+--- i/shell/services/AppLibrary.qml
++++ w/shell/services/AppLibrary.qml
+@@ -124,10 +124,15 @@
+     // "<path>" lines. Some desktop entries, such as Print Settings, use device
+     // icons like "printer" instead of app icons. SVGs are emitted before PNGs
+     // so the parser, which keeps the first hit per name, prefers scalable icons.
++    // The selected icon theme is listed first, so its icons win over hicolor's.
+     return [
+       'dirs="$HOME/.icons $HOME/.local/share/icons";',
+       'IFS=":"; for d in ${XDG_DATA_DIRS:-/usr/local/share:/usr/share}; do dirs="$dirs $d/icons"; done; unset IFS;',
++      'theme=$(gsettings get org.gnome.desktop.interface icon-theme 2>/dev/null | tr -d "\\047");',
+       'for ext in svg png; do',
++      '  [[ -n $theme && $theme != */* ]] && for base in $dirs; do',
++      '    [[ -d $base/$theme ]] && find "$base/$theme" \\( -path "*/apps/*" -o -path "*/devices/*" \\) -name "*.$ext" 2>/dev/null;',
++      '  done;',
+       '  for base in $dirs; do',
+       '    [[ -d $base ]] && find "$base" \\( -path "*/apps/*" -o -path "*/devices/*" \\) -name "*.$ext" 2>/dev/null;',
+       '  done;',
