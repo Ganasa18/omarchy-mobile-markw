@@ -140,6 +140,19 @@ blacklist still in place (the DSP started by hand, as in step 3). Step 4
   now ends `Speaker Amp IN`, `LINEOUT_OUT`; the initramfs files are
   identical to m7's. The two UCM files are on the phone's root (no card yet,
   so nothing reads them).
+- **Step 6, phone: pass** (2026-11-01, `probe-m8-audio`,
+  `7.1.3-msm8953-oma2`): the route is in the live DT; after `modprobe
+  qcom_q6v5_pas` the card is `xiaomimarkw` and MultiMedia2 is capture
+  device 1. At idle `Speaker Amp DRV` is now Off (it was always On).
+- **Step 7: pass**: `alsaucm` lists the verb `HiFi` and the devices
+  Speaker, Headphones, Mic and Headset.
+- **Step 8: pass** (DAPM): through UCM, `RX3 Digital Volume` 70 and
+  `speaker-test` 440 Hz: `Speaker Amp DRV` On while playing, Off about 6 s
+  after. Heard by ear: waiting for the owner.
+- **Step 9: pass**: after restarting PipeWire, `wpctl` shows the sink
+  "Built-in Audio Speaker" (port Speaker, active) and the source "Built-in
+  Audio Microphone"; a 1 s `pw-play` tone at -12 dBFS turned the amplifier
+  on. No oops or xrun in the streamed log (`logs/markw-audio-m8.log`).
 
 Headphones and both microphones are checked after step 9, one at a time,
 with `arecord -D hw:0,1 -f S16_LE -r 48000 -d 3` and playing the file back.
