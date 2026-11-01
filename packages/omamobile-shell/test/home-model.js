@@ -265,13 +265,19 @@ test("command output", () => {
 
 test("this phone: the system read, in display units", () => {
   const i = M.systemInfo([
-    'os="Arch Linux ARM"', "kernel=7.1.3-msm8953-oma2", 'device="Xiaomi Redmi 4 Prime"', "soc=msm8953",
-    "codename=markw", "memkb=2875392", "uptime=15720.41",
-    "temp=312", "voltage_now=4118000", "health=Good", "charge_full_design=4100000", "os=ignored"
+    'osname="Omarchy"', 'osversion="4.0.6"', "osid=omarchy", "oslike=arch", "machine=aarch64",
+    "kernel=7.1.3-msm8953-oma2", 'device="Xiaomi Redmi 4 Prime"', "soc=msm8953",
+    "codename=markw", "memkb=2871404", "uptime=15720.41",
+    "temp=290", "voltage_now=4244359", "health=Good", "charge_full_design=4000000", "osname=ignored"
   ].join("\n"))
-  assert.deepStrictEqual(i, { os: "Arch Linux ARM", kernel: "7.1.3-msm8953-oma2", device: "Xiaomi Redmi 4 Prime",
-    soc: "MSM8953", codename: "markw", temperature: 31.2, voltage: 4.12, health: "Good", designMah: 4100,
+  assert.deepStrictEqual(i, { os: "Omarchy 4.0.6", base: "Arch Linux ARM", machine: "aarch64",
+    kernel: "7.1.3-msm8953-oma2", device: "Xiaomi Redmi 4 Prime",
+    soc: "MSM8953", codename: "markw", temperature: 29, voltage: 4.24, health: "Good", designMah: 4000,
     memoryGb: 3, uptime: 15720 })
+  // The base only when it says more than the name.
+  assert.strictEqual(M.systemInfo("osname=Omarchy\noslike=arch\nmachine=x86_64").base, "Arch Linux")
+  assert.strictEqual(M.systemInfo("osname=Arch Linux\nosid=arch\nmachine=x86_64").base, "")
+  assert.strictEqual(M.systemInfo('osname="Arch Linux ARM"\nosid=archarm\noslike=arch\nmachine=aarch64').base, "")
   // A phone without a battery reading, or an empty read, still draws.
   const none = M.systemInfo("temp=\nvoltage_now=\nhealth=Unknown\n")
   assert.strictEqual(none.temperature, null)

@@ -95,7 +95,17 @@ Item {
         Text {
           width: parent.width
           textFormat: Text.PlainText
-          text: [widget.info.os, widget.info.device].filter(function(s) { return !!s }).join(" · ") || "…"
+          text: widget.info.device || "…"
+          color: widget.fg
+          font.family: Style.font.family
+          font.pixelSize: Style.font.body
+          elide: Text.ElideRight
+        }
+        Text {
+          width: parent.width
+          visible: text.length > 0
+          textFormat: Text.PlainText
+          text: [widget.info.os, widget.info.base].filter(function(s) { return !!s }).join(" · ")
           color: widget.dim
           font.family: Style.font.family
           font.pixelSize: Style.font.body

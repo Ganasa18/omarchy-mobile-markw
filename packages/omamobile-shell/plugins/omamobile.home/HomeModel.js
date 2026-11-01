@@ -809,7 +809,8 @@ function commandText(output, maxLines) {
 // the widget; this adds what UPower doesn't carry (temperature, voltage,
 // health, design capacity), from the first power supply of type Battery.
 var SYSTEM_COMMAND = [
-  "sed -n 's/^PRETTY_NAME=/os=/p' /etc/os-release 2>/dev/null",
+  "sed -n 's/^NAME=/osname=/p; s/^VERSION_ID=/osversion=/p; s/^ID=/osid=/p; s/^ID_LIKE=/oslike=/p' /etc/os-release 2>/dev/null",
+  "echo \"machine=$(uname -m)\"",
   "echo \"kernel=$(cat /proc/sys/kernel/osrelease 2>/dev/null)\"",
   "sed -n 's/^NAME=/device=/p; s/^SOC=/soc=/p; s/^CODENAME=/codename=/p' /usr/share/omamobile/device.conf 2>/dev/null",
   "sed -n 's/^MemTotal: *\\([0-9]*\\) kB$/memkb=\\1/p' /proc/meminfo 2>/dev/null",
@@ -830,8 +831,16 @@ function systemInfo(text) {
   function num(k) { var n = Number(raw[k]); return raw[k] !== undefined && raw[k] !== "" && isFinite(n) ? n : null }
   var temp = num("temp"), volt = num("voltage_now"), design = num("charge_full_design")
   var mem = num("memkb"), up = num("uptime")
+  // Omarchy names itself in os-release; the distribution under it is the
+  // ID_LIKE, and on an ARM machine that Arch is Arch Linux ARM.
+  var arm = /^(aarch64|arm)/.test(raw.machine || "")
+  var like = " " + (raw.osid || "") + " " + (raw.oslike || "") + " "
+  var base = / arch /.test(like) ? (arm ? "Arch Linux ARM" : "Arch Linux") : ""
+  var os = [raw.osname || "", raw.osversion || ""].filter(function(s) { return !!s }).join(" ")
   return {
-    os: raw.os || "",
+    os: os,
+    base: base === os ? "" : base,
+    machine: raw.machine || "",
     kernel: raw.kernel || "",
     device: raw.device || "",
     soc: raw.soc ? raw.soc.toUpperCase() : "",
