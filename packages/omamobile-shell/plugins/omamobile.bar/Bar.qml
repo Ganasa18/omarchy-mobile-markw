@@ -204,7 +204,9 @@ Item {
           textFormat: Text.PlainText
           text: Qt.formatDateTime(clock.date, root.clockFormat)
           color: root.foreground
-          font.family: root.fontFamily
+          // The time in a sans, like the home screen's words; glyphs keep
+          // the shell font.
+          font.family: "Adwaita Sans"
           font.pixelSize: Style.font.title
           font.bold: true
         }

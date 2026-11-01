@@ -33,9 +33,8 @@ Item {
   Image {
     id: icon
     anchors.horizontalCenter: parent.horizontalCenter
-    anchors.bottom: parent.verticalCenter
-    anchors.bottomMargin: -Math.round(width * 0.18)
-    width: Math.min(52, Math.max(36, Math.min(tile.width, tile.height) * 0.48))
+    y: Math.round((tile.height - height - 7 - name.implicitHeight) / 2)
+    width: Math.min(64, Math.max(36, Math.min(tile.width * 0.6, tile.height - name.implicitHeight - 9)))
     height: width
     fillMode: Image.PreserveAspectFit
     asynchronous: true
@@ -45,8 +44,9 @@ Item {
   }
 
   Text {
+    id: name
     anchors.top: icon.bottom
-    anchors.topMargin: Style.spacing.md
+    anchors.topMargin: 7
     anchors.left: parent.left
     anchors.right: parent.right
     anchors.leftMargin: Style.spacing.xs
@@ -60,7 +60,8 @@ Item {
     style: Text.Outline
     styleColor: Util.alpha(Commons.Color.menu.background, 0.55)
     font.family: tile.home && tile.home.textFont ? tile.home.textFont : Style.font.family
-    font.pixelSize: Style.font.caption + 1
+    font.pixelSize: 13
+    font.weight: Font.Medium
     elide: Text.ElideRight
     maximumLineCount: 1
   }

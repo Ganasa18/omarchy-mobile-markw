@@ -52,33 +52,36 @@ Item {
 
   // On a card ("card": true): the day as a small label, the time, the date,
   // all from the start edge.
+  Text {
+    visible: !widget.bare && widget.height >= 110
+    x: 18; y: 18
+    width: widget.width - 36
+    textFormat: Text.PlainText
+    text: Qt.formatDateTime(clock.date, "dddd").toUpperCase()
+    color: widget.home ? widget.home.dimForeground : "white"
+    font.family: widget.textFont
+    font.pixelSize: 13
+    font.weight: Font.DemiBold
+    font.letterSpacing: 0.6
+    elide: Text.ElideRight
+  }
   Column {
     visible: !widget.bare
-    anchors.verticalCenter: parent.verticalCenter
-    x: Style.spacing.xl
-    width: widget.width - Style.spacing.xl * 2
-    spacing: Style.spacing.xs
+    anchors.bottom: parent.bottom
+    anchors.bottomMargin: 18
+    x: 18
+    width: widget.width - 36
+    spacing: 6
 
-    Text {
-      width: parent.width
-      visible: widget.height >= 110
-      textFormat: Text.PlainText
-      text: Qt.formatDateTime(clock.date, "dddd").toUpperCase()
-      color: widget.home ? widget.home.dimForeground : "white"
-      font.family: widget.textFont
-      font.pixelSize: Style.font.caption + 1
-      font.weight: Font.DemiBold
-      font.letterSpacing: 1
-      elide: Text.ElideRight
-    }
     Text {
       width: parent.width
       textFormat: Text.PlainText
       text: Qt.formatDateTime(clock.date, widget.timeFormat)
       color: widget.home ? widget.home.foreground : "white"
       font.family: widget.textFont
-      font.pixelSize: Math.max(Style.font.display, Math.min(widget.height * 0.36, widget.width * 0.3))
+      font.pixelSize: Math.min(52, widget.height * 0.34)
       font.weight: Font.Light
+      font.letterSpacing: -2
       fontSizeMode: Text.HorizontalFit
       minimumPixelSize: Style.font.title
     }
@@ -89,7 +92,7 @@ Item {
       text: Qt.formatDateTime(clock.date, widget.config.dateFormat && widget.config.dateFormat !== "dddd d MMMM" ? widget.config.dateFormat : "d MMMM")
       color: widget.home ? widget.home.dimForeground : "white"
       font.family: widget.textFont
-      font.pixelSize: Style.font.body + 1
+      font.pixelSize: 14
       elide: Text.ElideRight
     }
   }

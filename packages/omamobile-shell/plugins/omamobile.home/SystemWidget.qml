@@ -71,15 +71,18 @@ Item {
   }
   readonly property string upText: HomeModel.uptimeText(info.uptime)
 
+  // Centred in the card, so a taller cell spreads its margin evenly.
   Column {
-    anchors.fill: parent
-    anchors.margins: Style.spacing.xl
-    spacing: Style.spacing.lg
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.verticalCenter: parent.verticalCenter
+    anchors.margins: 18
+    spacing: 12
 
     // The system's mark, its name and base, and how long it has been up.
     Row {
       width: parent.width
-      spacing: Style.spacing.lg
+      spacing: 12
 
       Rectangle {
         id: mark
@@ -105,7 +108,7 @@ Item {
           text: "Omarchy Mobile"
           color: widget.fg
           font.family: widget.textFont
-          font.pixelSize: Style.font.title
+          font.pixelSize: 17
           font.weight: Font.DemiBold
           elide: Text.ElideRight
         }
@@ -115,7 +118,7 @@ Item {
           text: [widget.info.os, widget.info.base].filter(function(s) { return !!s }).join(" · ") || "…"
           color: widget.dim
           font.family: widget.textFont
-          font.pixelSize: Style.font.body
+          font.pixelSize: 13
           elide: Text.ElideRight
         }
       }
@@ -123,18 +126,18 @@ Item {
         id: pill
         anchors.verticalCenter: parent.verticalCenter
         visible: widget.upText.length > 0
-        width: visible ? upLabel.implicitWidth + Style.spacing.lg * 2 : 0
-        height: upLabel.implicitHeight + Style.spacing.sm * 2
-        radius: height / 2
-        color: Qt.rgba(widget.okColor.r, widget.okColor.g, widget.okColor.b, 0.16)
+        width: visible ? upLabel.implicitWidth + 20 : 0
+        height: upLabel.implicitHeight + 10
+        radius: 12
+        color: widget.home && widget.home.darkCards ? Qt.rgba(34 / 255, 165 / 255, 91 / 255, 0.18) : Qt.rgba(widget.okColor.r, widget.okColor.g, widget.okColor.b, 0.16)
         Text {
           id: upLabel
           anchors.centerIn: parent
           textFormat: Text.PlainText
           text: "Up " + widget.upText
-          color: widget.okColor
+          color: widget.home && widget.home.darkCards ? "#5fd38f" : widget.okColor
           font.family: widget.textFont
-          font.pixelSize: Style.font.caption + 1
+          font.pixelSize: 12
           font.weight: Font.DemiBold
         }
       }
@@ -144,8 +147,8 @@ Item {
     Grid {
       width: parent.width
       columns: 2
-      rowSpacing: Style.spacing.md
-      columnSpacing: Style.spacing.lg
+      rowSpacing: 8
+      columnSpacing: 16
 
       Repeater {
         // Without a boot label in the descriptor, memory takes its place.
@@ -158,14 +161,14 @@ Item {
         ].concat(widget.tall ? (widget.info.boot ? [memory] : []).concat([{ k: "Battery", v: widget.batteryLine }]) : [])
         delegate: Column {
           required property var modelData
-          width: (widget.width - 2 * Style.spacing.xl - Style.spacing.lg) / 2
-          spacing: 2
+          width: (widget.width - 36 - 16) / 2
+          spacing: 1
           Text {
             textFormat: Text.PlainText
             text: modelData.k
             color: widget.dim
             font.family: widget.textFont
-            font.pixelSize: Style.font.body
+            font.pixelSize: 13
           }
           Text {
             width: parent.width
@@ -173,7 +176,7 @@ Item {
             text: modelData.v || "–"
             color: widget.fg
             font.family: widget.textFont
-            font.pixelSize: Style.font.body + 1
+            font.pixelSize: 13
             font.weight: Font.DemiBold
             elide: Text.ElideRight
           }

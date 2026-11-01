@@ -65,33 +65,36 @@ Item {
   readonly property bool compact: width < 100
 
   // A label, the number, the level bar and what the battery is doing.
+  Text {
+    visible: !widget.compact && widget.height >= 110
+    x: 18; y: 18
+    textFormat: Text.PlainText
+    text: "BATTERY"
+    color: widget.dim
+    font.family: widget.textFont
+    font.pixelSize: 13
+    font.weight: Font.DemiBold
+    font.letterSpacing: 0.6
+  }
   Column {
     visible: !widget.compact
-    anchors.verticalCenter: parent.verticalCenter
-    x: Style.spacing.xl
-    width: widget.width - Style.spacing.xl * 2
-    spacing: Style.spacing.sm
+    anchors.bottom: parent.bottom
+    anchors.bottomMargin: 18
+    x: 18
+    width: widget.width - 36
+    spacing: 8
 
-    Text {
-      visible: widget.height >= 110
-      textFormat: Text.PlainText
-      text: "BATTERY"
-      color: widget.dim
-      font.family: widget.textFont
-      font.pixelSize: Style.font.caption + 1
-      font.weight: Font.DemiBold
-      font.letterSpacing: 1
-    }
     Row {
-      spacing: Style.spacing.xs
+      spacing: 4
       Text {
         id: number
         textFormat: Text.PlainText
         text: widget.percent >= 0 ? String(widget.percent) : "–"
         color: widget.fg
         font.family: widget.textFont
-        font.pixelSize: Math.max(Style.font.display, Math.min(widget.height * 0.3, 48))
+        font.pixelSize: Math.min(44, widget.height * 0.3)
         font.weight: Font.DemiBold
+        font.letterSpacing: -1
       }
       Text {
         anchors.baseline: number.baseline
@@ -99,7 +102,7 @@ Item {
         text: "%"
         color: widget.dim
         font.family: widget.textFont
-        font.pixelSize: Style.font.heading
+        font.pixelSize: 18
       }
       Text {
         anchors.baseline: number.baseline
@@ -112,9 +115,9 @@ Item {
       }
     }
     Rectangle {
-      width: parent.width; height: 6; radius: 3
-      color: Qt.rgba(widget.fg.r, widget.fg.g, widget.fg.b, 0.15)
-      Rectangle { width: parent.width * Math.max(0, widget.percent) / 100; height: parent.height; radius: 3; color: widget.levelColor }
+      width: parent.width; height: 8; radius: 4
+      color: Qt.rgba(widget.fg.r, widget.fg.g, widget.fg.b, 0.12)
+      Rectangle { width: parent.width * Math.max(0, widget.percent) / 100; height: parent.height; radius: 4; color: widget.levelColor }
     }
     Text {
       width: parent.width
@@ -122,7 +125,7 @@ Item {
       text: widget.line
       color: widget.dim
       font.family: widget.textFont
-      font.pixelSize: Style.font.body
+      font.pixelSize: 13
       elide: Text.ElideRight
     }
   }

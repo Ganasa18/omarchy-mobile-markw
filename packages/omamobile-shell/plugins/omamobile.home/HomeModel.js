@@ -19,7 +19,7 @@
 
 var VERSION = 1
 var GRID = { columns: 4, rows: 6 }
-var LIMITS = { minColumns: 3, maxColumns: 6, minRows: 4, maxRows: 8, maxPages: 12 }
+var LIMITS = { minColumns: 3, maxColumns: 6, minRows: 4, maxRows: 10, maxPages: 12 }
 
 // Widget types. min/max/size are in cells; `network` widgets reach the
 // internet and stay off until the user turns them on in their settings.
