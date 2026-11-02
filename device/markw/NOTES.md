@@ -17,8 +17,18 @@ Findings from real hardware, newest first. Plan: [ENGINEERING-PLAN.md](ENGINEERI
   supplies and reads the part ID at once, before the chip's start-up time.
   device-markw 0.1.12 binds it after boot (`omamobile-markw-light`); a
   kernel fix (a delay after the supplies come up) would replace that.
-- `iio-sensor-proxy` isn't installed, so nothing turns the sensors into
-  rotation or brightness yet.
+- **Accelerometer axes** (detached test, prompts on the phone): upright
+  read +x (raw), left side down +y, right side down -y, flat screen up +z
+  (about 1 g each). An "upside down" step also read +x, so it was held
+  some other way; the axes are not fully pinned down. The DT carries a
+  mount matrix (`0,-1,0; -1,0,0; 0,0,1`), whose determinant is -1, which a
+  plain rotation can't have; check it when rotation is wired up.
+- **iio-sensor-proxy 3.9** (installed by hand, not yet in a package)
+  reports the accelerometer (polling: the bmi120 has no IRQ, so its buffer
+  can't be enabled) and the light sensor; it skips proximity until a
+  `PROXIMITY_NEAR_LEVEL` udev property exists. A rotation test logged
+  nothing: the script's claim ended with each `gdbus` call. Orientation is
+  to be checked by eye when Hyprland's auto-rotation is wired up.
 
 ## 2026-11-01: power key bounce, idle power, s2idle (7.1.3-msm8953-oma2)
 
