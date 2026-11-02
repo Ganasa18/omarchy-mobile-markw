@@ -3,6 +3,23 @@
 
 Findings from real hardware, newest first. Plan: [ENGINEERING-PLAN.md](ENGINEERING-PLAN.md); first-light runbook: [BRINGUP-M1.md](BRINGUP-M1.md).
 
+## 2026-11-02: sensors (7.1.3-msm8953-oma2)
+
+- **IMU and compass probe at boot.** `bmi120` (accelerometer, gyroscope)
+  and `yas537` (magnetometer) on the i2c-gpio bus 0 (`0-0068`, `0-002e`)
+  appear as IIO devices. yas5xx finds no mount matrix and uses identity.
+- **The LTR-559 light and proximity sensor misses its probe.** `0-0023`
+  (`liteon,ltr559`) had no driver after boot, wasn't deferred, and ltr501
+  logged nothing. The chip answers: part ID 0x92 and manufacturer 0x05,
+  which ltr501 expects. Bound by hand it probed cleanly as `iio:device2`.
+  Covered, proximity rose from about 25-40 to 96-138 and light fell from
+  about 130-240 lux to 0. Likely cause, not proven: ltr501 enables the
+  supplies and reads the part ID at once, before the chip's start-up time.
+  device-markw 0.1.12 binds it after boot (`omamobile-markw-light`); a
+  kernel fix (a delay after the supplies come up) would replace that.
+- `iio-sensor-proxy` isn't installed, so nothing turns the sensors into
+  rotation or brightness yet.
+
 ## 2026-11-01: power key bounce, idle power, s2idle (7.1.3-msm8953-oma2)
 
 - **The power key bounces.** Held, `pm8941_pwrkey` reports a release and a

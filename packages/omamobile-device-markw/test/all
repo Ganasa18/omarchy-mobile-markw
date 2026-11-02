@@ -144,6 +144,12 @@ grep -q 'audio.position = \[ FL \]' "$mic" || fail "the microphone filter takes 
 [[ $(tr -cd '{' <"$mic" | wc -c) == $(tr -cd '}' <"$mic" | wc -c) &&
    $(tr -cd '[' <"$mic" | wc -c) == $(tr -cd ']' <"$mic" | wc -c) ]] || fail "the microphone filter has unbalanced brackets"
 pass "the microphone filter: AMIC1, the 12.7 kHz tone notched"
+light=$tmp/root/usr/lib/systemd/system/omamobile-markw-light.service
+[[ -f $light && -L $tmp/root/usr/lib/systemd/system/multi-user.target.wants/omamobile-markw-light.service ]]   || fail "install stages and enables the light sensor bind"
+grep -q 'echo 0-0023 > /sys/bus/i2c/drivers/ltr501/bind' "$light" || fail "the light unit binds only the LTR-559"
+[[ $(grep -o '/bind' "$light" | wc -l) == $(grep -o 'ltr501/bind' "$light" | wc -l) ]] || fail "the light unit binds nothing but ltr501"
+! grep -q -E 'unbind|new_device|delete_device' "$light" || fail "the light unit only binds"
+pass "the light unit: binds the LTR-559 to ltr501 when nothing owns it"
 for absent in usr/bin/omamobile-boot-success usr/bin/omamobile-bootctl \
               usr/lib/systemd/system/omamobile-boot-success.service \
               usr/bin/omamobile-wifi-start usr/bin/omamobile-charge-guard \

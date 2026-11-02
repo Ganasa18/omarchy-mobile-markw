@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: MIT
+# The LTR-559 light and proximity sensor (i2c-gpio bus 0, 0x23) misses its
+# probe at boot: ltr501 finds no device and gives up without a message,
+# while the chip answers with its part ID (0x92) once the boot settles and
+# binds cleanly by hand (device/markw/NOTES.md, 2026-11-02). Bind it again
+# if nothing owns it; it is a read-only sensor and polls, so this is safe.
+[Unit]
+Description=Omarchy Mobile: bind the markw light and proximity sensor
+After=systemd-udev-trigger.service systemd-modules-load.service
+ConditionPathExists=/sys/bus/i2c/devices/0-0023
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'd=/sys/bus/i2c/devices/0-0023; [ -e "$d/driver" ] && exit 0; for i in $(seq 20); do [ -e /sys/bus/i2c/drivers/ltr501/bind ] && break; sleep 0.5; done; [ -e /sys/bus/i2c/drivers/ltr501/bind ] || exit 0; [ -e "$d/driver" ] || echo 0-0023 > /sys/bus/i2c/drivers/ltr501/bind'
+
+[Install]
+WantedBy=multi-user.target

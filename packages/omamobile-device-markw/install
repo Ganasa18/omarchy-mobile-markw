@@ -32,6 +32,10 @@ install -Dm644 vendor/systemd/system/omamobile-zram.service \
 install -d "$destination/usr/lib/systemd/system/swap.target.wants"
 ln -sf ../omamobile-zram.service \
   "$destination/usr/lib/systemd/system/swap.target.wants/omamobile-zram.service"
+# The light and proximity sensor misses its probe at boot; bind it after.
+install -Dm644 vendor/systemd/system/omamobile-markw-light.service   "$destination/usr/lib/systemd/system/omamobile-markw-light.service"
+install -d "$destination/usr/lib/systemd/system/multi-user.target.wants"
+ln -sf ../omamobile-markw-light.service   "$destination/usr/lib/systemd/system/multi-user.target.wants/omamobile-markw-light.service"
 # Suspend when the screen has been off a while: installed, not enabled.
 install -Dm755 vendor/omamobile-autosuspend "$destination/usr/lib/omamobile/omamobile-autosuspend"
 install -Dm644 vendor/systemd/system/omamobile-autosuspend.service \
