@@ -15,6 +15,14 @@ Findings from real hardware, newest first. Plan: [ENGINEERING-PLAN.md](ENGINEERI
   then reports `HasProximity`, polls every 0.7 s (near above 55 with its
   hysteresis) and sent "near" when covered and "far" uncovered.
 - **Charger: chg-error follows batt-ov**, not a timer: BRINGUP-CHARGER.md.
+- **Touch keys (menu, home, back) work** with patch 0005: the maXTouch
+  (family 166, firmware 1.0.AB, 36 objects) has a T15 key array, enabled
+  and reporting, one by three keys; without `linux,keycodes` atmel_mxt_ts
+  dropped its messages. Read-only over I2C (object table at 0x0007, T15 at
+  0x039c: `0b 0e 00 01 03 ...`). Booted with a DTB carrying the keymap
+  (`probe-m9k-oma3`), pressed once, twice and three times: left gave
+  KEY_MENU, middle KEY_HOMEPAGE, right KEY_BACK. omamobile-shell 0.2.30
+  binds them.
 - **USB stuck after a burst of replugs.** After about six unplugs and
   plugs within 90 s (a loose cable, the phone being turned), the gadget
   stayed in UDC state `default` with `usb0` down while VBUS was online and
