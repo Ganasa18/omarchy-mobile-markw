@@ -25,7 +25,7 @@ the driver reports the idle battery as "Discharging" (2026-11-02,
 - In 19 h of uptime: chg-taper-thr 118 times, chg-p2f-thr 23, chg-error 11,
   chg-tcc-thr (charge done) and chg-rechg-thr never. The errors came 2-6 h
   apart; the log also shows USB role changes from a loose cable.
-- Likely, not proven: the charge safety timer. 500 mA minus the phone's own
+- Disproven 2026-11-02 (see Results): the charge safety timer. 500 mA minus the phone's own
   load leaves little to charge with, so charging never terminates and the
   timer runs out. Battery temperature (about 25 °C) and voltage are normal.
 
@@ -57,3 +57,21 @@ observation: nothing writes to the charger.
 
 - 2026-11-02 09:37 UTC: logger started (`x-charge-log`, 24 h). First line:
   92 %, 4225 mV, SDP, 500 mA, USBIN 4828 mV, `CHGR_STS` a1, `RT_STS` 01.
+
+- 2026-11-02 12:10 UTC, `7.1.3-msm8953-oma3`, **step 1 (replug)**: unplugged,
+  the phone ran from the battery (3904 mV, -409 mA as reported, so negative
+  is discharge) and chg-error cleared (`RT_STS` 00). Plugged back, USB came
+  back as SDP and chg-error returned **12 s later**: not a safety timer.
+- Read-only registers right after: `BAT_IF RT_STS` 0x1210 = 0x10, bit 4,
+  **batt-ov**, at a battery voltage of 4.21-4.27 V; `BAT_IF CMD_CHG` 0x00
+  (charging enabled, the driver's active-low `CHG_EN`); `USB RT_STS` 0x04
+  (source present); `MISC RT_STS` 0x01 (power-ok); float voltage 0x2d,
+  4380 mV by the driver's table, as the markw DTS asks. Battery 20.7 °C.
+- Five minutes later the charger was charging on its own: 4368 mV, +123 mA,
+  "Charging", charge type taper (`CHGR_STS` 0x87), batt-ov clear.
+- Reading, not proven: the charger tapers to 4.38 V, batt-ov trips at or
+  just above it, the error latches and charging stops without a
+  termination (tcc never fired), the battery relaxes to about 4.21 V and
+  nothing restarts it, while the driver reports "Discharging". The logger
+  now records `BAT_IF` and `USB` RT_STS too, every 2 s for a minute after a
+  plug change, to see which bit comes first.
