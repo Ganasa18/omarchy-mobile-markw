@@ -173,6 +173,20 @@ blacklist still in place (the DSP started by hand, as in step 3). Step 4
   PipeWire had the speaker sink and the microphone source without a
   restart; `systemctl is-system-running` reports running, no failed units.
   The `qcom-venus` probe error (-22) at boot predates this and is unrelated.
+- **Microphone** (2026-11-02, `probe-m8-audio`): the profile's Mic path
+  (bias External1, AMIC1, ADC1 at 8 of 8, DEC1, TX HPF 150 Hz) records
+  the owner's voice about 20 dB over the noise floor (-49 dBFS), on the
+  left channel only. AMIC3 (ADC2 INP3) recorded nothing (-75 dBFS) in the
+  same room; it may be the noise-reference mic and needs another look. The
+  owner heard the playback but called it not clean. The raw signal carries
+  a steady tone near 12.7 kHz and a weaker one near 500 Hz (both
+  electrical, sources unknown) under broadband hiss, and speech sits
+  mostly below 1 kHz. device-markw 0.1.11 adds a PipeWire filter-chain
+  source, the new default: a notch at 12.72 kHz, a low-pass at 8 kHz, +6 dB
+  at 2 kHz and +6 dB make-up gain. Recorded beside the raw source, it cut
+  the 12-24 kHz band from -53.5 to -71.6 dB and raised 1-3 kHz by 11.6 dB,
+  as designed; the hiss rises with the gain. Still to do: find the two
+  tones' sources, wire AMIC3, a noise suppressor.
 
 Headphones and both microphones are checked after step 9, one at a time,
 with `arecord -D hw:0,1 -f S16_LE -r 48000 -d 3` and playing the file back.

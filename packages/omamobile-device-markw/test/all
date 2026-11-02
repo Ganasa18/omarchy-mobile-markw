@@ -136,6 +136,14 @@ grep -q 'platform-c051000.sound-card' "$wp" || fail "the WirePlumber rule matche
 [[ $(tr -cd '{' <"$wp" | wc -c) == $(tr -cd '}' <"$wp" | wc -c) &&
    $(tr -cd '[' <"$wp" | wc -c) == $(tr -cd ']' <"$wp" | wc -c) ]] || fail "the WirePlumber rule has unbalanced brackets"
 pass "the WirePlumber rule: the markw card plays S16LE"
+mic=$tmp/root/usr/share/pipewire/pipewire.conf.d/51-xiaomi-markw-mic.conf
+[[ -f $mic ]] || fail "install stages the microphone filter"
+grep -q 'target.object = "alsa_input.platform-c051000.sound-card.HiFi__Mic__source"' "$mic"   || fail "the microphone filter captures the card's Mic source"
+grep -q 'label = bq_notch' "$mic" && grep -q '"Freq" = 12720.0' "$mic" || fail "the microphone filter notches the 12.7 kHz tone"
+grep -q 'audio.position = \[ FL \]' "$mic" || fail "the microphone filter takes only the left channel"
+[[ $(tr -cd '{' <"$mic" | wc -c) == $(tr -cd '}' <"$mic" | wc -c) &&
+   $(tr -cd '[' <"$mic" | wc -c) == $(tr -cd ']' <"$mic" | wc -c) ]] || fail "the microphone filter has unbalanced brackets"
+pass "the microphone filter: AMIC1, the 12.7 kHz tone notched"
 for absent in usr/bin/omamobile-boot-success usr/bin/omamobile-bootctl \
               usr/lib/systemd/system/omamobile-boot-success.service \
               usr/bin/omamobile-wifi-start usr/bin/omamobile-charge-guard \
