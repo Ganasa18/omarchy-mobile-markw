@@ -75,3 +75,11 @@ observation: nothing writes to the charger.
   nothing restarts it, while the driver reports "Discharging". The logger
   now records `BAT_IF` and `USB` RT_STS too, every 2 s for a minute after a
   plug change, to see which bit comes first.
+- 12:14-12:40 UTC, the new logger: at 12:14:46 taper at 4368 mV, +123 mA,
+  batt-ov clear; chg-error at 12:15 (uptime 6431 s); from 12:17 on, 4221
+  falling to 4202 mV, about 0 mA, `CHGR_STS` a1, chg-error and **batt-ov
+  still set at 4.20 V**. So batt-ov stays asserted 180 mV below the float
+  voltage: either it latches until the charger is re-enabled, or the
+  charger's battery-voltage comparator reads well above what the fuel
+  gauge reports. Telling the two apart, or clearing the state, needs a
+  write to the charger: the owner's call, not yet done.
