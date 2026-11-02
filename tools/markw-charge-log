@@ -1,0 +1,62 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+#
+# markw-charge-log: record the Redmi 4 Prime's charger and battery once a
+# minute, so a charger error can be matched with how long the phone has been
+# charging and from what. Runs ON the phone, detached, because the cable may
+# be unplugged or swapped while it records. Read-only: sysfs, the PMI8950
+# ADC and the charger's registers through the kernel's own regmap (debugfs);
+# it writes nothing to the charger.
+#
+# Usage (on the phone, as root):
+#   systemd-run --unit=x-charge-log --collect markw-charge-log [HOURS]
+#
+# HOURS (default 24) bounds the run. Output, appended:
+#   /var/tmp/charge-log.csv    one line a minute
+#   /var/tmp/charge-kmsg.log   every charger line from the kernel log
+#
+# CSV columns: time (UTC), uptime s, capacity %, battery mV, battery uA
+# (as reported), status, USB online, USB type, input limit mA, USBIN mV,
+# CHGR_STS (0x100e), CHGR RT_STS (0x1010: bit 0 chg-error, 4 p2f, 6 taper,
+# 7 tcc). CHGR_STS bits 2:1 are the charge type: 0 none, 1 pre, 2 fast,
+# 3 taper.
+set -u
+hours=${1:-24}
+csv=/var/tmp/charge-log.csv
+kmsg=/var/tmp/charge-kmsg.log
+bat=/sys/class/power_supply/qcom-battery
+usb=/sys/class/power_supply/qcom-smbchg-usb
+regs=/sys/kernel/debug/regmap/0-02/registers
+
+mountpoint -q /sys/kernel/debug || mount -t debugfs none /sys/kernel/debug
+
+adc() {
+  local d l
+  for d in /sys/bus/iio/devices/iio:device*; do
+    for l in "$d"/in_*_label; do
+      [[ $(cat "$l" 2>/dev/null) == "$1" ]] && { cat "${l%_label}_input"; return; }
+    done
+  done
+  echo ""
+}
+
+reg() { grep -m1 "^$1:" <<<"$2" | cut -d' ' -f2; }
+
+[[ -s $csv ]] || echo "time,uptime,capacity,mv,ua,status,usb_online,usb_type,ilim_ma,usbin_mv,chgr_sts,chgr_rt" > "$csv"
+journalctl -k -f -n 0 -o short-monotonic | grep --line-buffered -i -E 'smbchg|charger|usb role' >> "$kmsg" &
+follower=$!
+trap 'kill $follower 2>/dev/null' EXIT
+
+end=$(( $(date +%s) + hours * 3600 ))
+while (( $(date +%s) < end )); do
+  r=$(timeout 30 grep -E '^10(0e|10):' "$regs" 2>/dev/null)
+  usbin=$(adc usbin)
+  printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+    "$(date -u +%FT%TZ)" "$(cut -d' ' -f1 /proc/uptime)" \
+    "$(cat $bat/capacity)" "$(( $(cat $bat/voltage_now) / 1000 ))" "$(cat $bat/current_now)" \
+    "$(cat $bat/status)" "$(cat $usb/online)" \
+    "$(grep -o '\[[A-Z_]*\]' $usb/usb_type | tr -d '[]')" \
+    "$(( $(cat $usb/input_current_limit) / 1000 ))" "$(( ${usbin:-0} / 1000 ))" \
+    "$(reg 100e "$r")" "$(reg 1010 "$r")" >> "$csv"
+  sleep 60
+done
