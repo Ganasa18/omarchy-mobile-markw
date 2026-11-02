@@ -95,3 +95,64 @@ the laptop's WSL, 2.7 GB with the source tree):
     postmarketOS's kernel (taint `W`).
 - **Step 4: pass.** `pacman -Sy` on a throwaway copy of the database
   downloaded every repository with the sandbox on (no `--disable-sandbox`).
+
+## oma3: the light sensor fix and the watchdog
+
+Release `7.1.3-msm8953-oma3` adds two patches to oma2's two:
+
+- `0003-iio-light-ltr501-wait-for-the-start-up-time-after-power-on`: the
+  driver enables the sensor's supplies and reads the part ID at once, but
+  the LTR-559 needs 100 ms after power-on. This is the likely reason it
+  stays unbound at every boot (NOTES.md, 2026-11-02, sensors), while a bind
+  by hand later works. `omamobile-markw-light.service` stays in the package
+  until oma3 has bound the sensor at several boots in a row; it does nothing
+  when the driver already owns the device.
+- `0004-arm64-dts-qcom-msm8953-add-the-APSS-watchdog-disabled`: upstream
+  MSM8953 has no watchdog node. Its siblings MSM8937 and MSM8917 describe
+  the APSS watchdog at `0x0b017000` with
+  `"qcom,apss-wdt-qcs404", "qcom,kpss-wdt"`, sleep clock, no interrupts; the
+  node is copied with `status = "disabled"`. Whether this firmware lets
+  Linux run that block is unknown, so it is enabled only in a boot of its
+  own (step 3), by editing the probe's DTB.
+
+`markw.config` adds `CONFIG_WATCHDOG=y` and `CONFIG_QCOM_WDT=m`: with the
+node disabled the module never loads.
+
+```sh
+tools/build-markw-kernel --config markw-config.gz \
+  --source linux-v7.1.3-r0.tar.gz --out ~/android/markw/kernel-oma3
+```
+
+### Runbook (oma3)
+
+Same rules as above: the owner's call at each step, stop at the first failed
+Pass, RAM boots only, the eMMC is never written.
+
+| # | Step | Expect / Pass | Stop if | Rollback | Risk |
+| --- | --- | --- | --- | --- | --- |
+| 0 | Read-only, on the laptop: `SOURCE` lists patches 0001-0004; `config` has `CONFIG_QCOM_WDT=m`; `fdtget $K/dtbs/qcom/msm8953-xiaomi-markw.dtb /soc@0/watchdog@b017000 status` is `disabled` | all match | anything else | — | none |
+| 1 | Copy the modules to the running phone and `depmod 7.1.3-msm8953-oma3` (as step 1 above) | `modules.dep` exists; other module directories untouched | tar or depmod errors | `rm -rf /usr/lib/modules/7.1.3-msm8953-oma3` | low |
+| 2 | Boot `probe-m9-oma3` (node disabled) with the laptop cable in | `uname -r` is `7.1.3-msm8953-oma3`; `/sys/bus/i2c/devices/0-0023/driver` exists and `journalctl -b -u omamobile-markw-light` shows no bind; sound, sensors and Wi-Fi as under oma2; no `/dev/watchdog*` | no USB SSH in 3 min, or a driver missing | hold Power about 10 s, then the oma2 probe (`probe-m8-audio`) | low |
+| 3 | Boot `probe-m9w-oma3`, whose DTB has the node enabled (`fdtput -t s markw.dtb /soc@0/watchdog@b017000 status okay`), with `dmesg -w` streamed over Wi-Fi | `qcom_wdt` probes; `/sys/class/watchdog/watchdog0/identity` and `timeout` read; `state` is `inactive`; the phone stays up 10 min | a hang or reset during boot, or an abort in the log | hold Power, then the step 2 probe | medium |
+| 4 | Bite test, announced first: `systemd-run --unit=x-wdt-bite sh -c 'exec 3>/dev/watchdog0; sleep 600'` (opens the watchdog and never pets it) | the phone resets about `timeout` seconds later | no reset after `timeout` + 30 s: the block doesn't bite; stop the unit (it closes without the magic character, so note the state) | the phone boots MIUI or lk2nd; then the step 3 probe | medium |
+| 5 | systemd pets it: a drop-in with `RuntimeWatchdogSec=30s`, then `systemctl daemon-reexec` | `systemctl show -p RuntimeWatchdogUSec` is 30 s; `state` is `active`; up for 1 h with no reset | an unexpected reset | remove the drop-in, reboot | low |
+
+After step 5 the node is enabled in the markw DTS (a patch of its own),
+`omamobile-device-markw` ships the drop-in, and the module is no longer a
+separate step.
+
+### Results (oma3)
+
+**2026-11-02, build `7.1.3-msm8953-oma3`** (laptop only, no phone):
+
+- **Step 0: pass.** `SOURCE` lists 0001-0004; the config has
+  `CONFIG_WATCHDOG=y`, `CONFIG_QCOM_WDT=m`; 820 modules, `qcom-wdt.ko` among
+  them. Against oma2's DTB the only changes are the watchdog node
+  (`status = "disabled"`) and the speaker route from patch 0002 (until now
+  added by the probe builder, which leaves a DTB that has it alone).
+- `checkpatch --strict` is clean on 0003 and 0004. `dt-validate` did not
+  run: `dtschema` would not install in the container. The node is the one
+  MSM8937 and MSM8917 already carry upstream.
+- Probes: `probe-m9-oma3` (node disabled, boot.img sha256 `26e547d9…`) and
+  `probe-m9w-oma3` (node enabled, `37f42c3e…`); their initramfs contents are
+  identical, only the DTB's watchdog status differs.
