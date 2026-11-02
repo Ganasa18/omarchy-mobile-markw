@@ -377,3 +377,10 @@ grep -c 'd355bdb2789f7bd1023d88b17f8a2898dc0ffa2b' widgets/OWL.md >/dev/null || 
 pass "install stages the package"
 
 test/keys.sh || fail "omamobile-keys volume keys"
+grep -c '^o.bind("XF86HomePage", "Home key", "omamobile-keys home")$' hypr/phone.lua >/dev/null \
+  || fail "the home key shows the home screen"
+grep -c '^o.bind("Menu", "Recent apps key", "omamobile-keys recents")$' hypr/phone.lua >/dev/null \
+  || fail "the menu key opens recent apps"
+grep -c '^o.bind("XF86Back", "Back key", "omamobile-keys back", { non_consuming = true })$' hypr/phone.lua >/dev/null \
+  || fail "the back key reaches the app too"
+pass "the touch keys are bound, back without taking the key from the app"

@@ -11,6 +11,7 @@ mkdir -p "$t/bin" "$t/run"
 log=$t/calls
 cat >"$t/bin/hyprctl" <<STUB
 #!/bin/bash
+[[ \$1 == dispatch ]] && { echo "hyprctl \$*" >>"$log"; exit 0; }
 printf '{"class": "%s"}\n' "\$(cat "$t/class")"
 STUB
 cat >"$t/bin/omacam" <<STUB
@@ -24,6 +25,7 @@ STUB
 cat >"$t/bin/omarchy-shell" <<STUB
 #!/bin/bash
 [[ "\$1 \$2" == "lock status" ]] && { echo '{"secure":true}'; exit 0; }
+[[ \$1 == shell ]] && { echo "omarchy-shell \$*" >>"$log"; exit 0; }
 cat "$t/locked"
 STUB
 for stub in omarchy-menu omarchy-system-lock omarchy-brightness-display; do
@@ -65,3 +67,17 @@ reset; keys power-down; sleep 0.05; keys power-up
 grep -q '^omarchy-system-lock' "$log" || fail "a tap locks"
 ! grep -q 'omarchy-menu' "$log" || fail "a tap doesn't open the menu"
 echo "ok - power key: a bounce is the same press"
+
+# The touch keys (markw): home closes the panels and shows the home screen,
+# menu toggles recent apps, back only closes the panels (the app gets the key
+# from Hyprland itself).
+reset; keys home
+[[ $(grep -c '^omarchy-shell shell hide ' "$log") == 3 ]] || fail "home closes the launcher, switcher and quick settings"
+grep -q '^hyprctl dispatch hl.dsp.focus({ workspace = "empty" })$' "$log" || fail "home shows the empty workspace"
+grep -q '^omarchy-shell shell call omamobile.home goHome' "$log" || fail "home turns to the home page"
+reset; keys recents
+[[ $(cat "$log") == "omarchy-shell shell toggle omamobile.switcher {}" ]] || fail "menu toggles recent apps"
+reset; keys back
+[[ $(grep -c '^omarchy-shell shell hide ' "$log") == 3 ]] || fail "back closes the panels"
+! grep -q -E 'dispatch|goHome|toggle' "$log" || fail "back does nothing else"
+echo "ok - touch keys: home, recent apps, back"

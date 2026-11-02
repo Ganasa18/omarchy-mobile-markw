@@ -13,6 +13,10 @@
 #   either volume key while the Camera app (omacam) is in front and the phone
 #                       is unlocked: take a photo (omacam --remote shutter),
 #                       as Android's camera does; held keys take one photo
+#   home (touch key)    the shell's panels close and the home screen shows
+#   menu (touch key)    recent apps (omamobile.switcher), or closes them
+#   back (touch key)    the shell's panels close; Hyprland passes the key on
+#                       to the app too, which goes back if it knows how
 # Hyprland can't bind a chord of two plain keys or a long press that fires
 # while held, so each key reports here and the gesture is worked out from
 # when the keys went down. Hyprland cancels power's release bind once another
@@ -134,7 +138,27 @@ short_press() {
   fi
 }
 
+# The panels a home or back key closes, as Android's keys close sheets.
+close_panels() {
+  local panel
+  for panel in omamobile.launcher omamobile.switcher omamobile.quicksettings; do
+    omarchy-shell shell hide "$panel" >/dev/null 2>&1
+  done
+}
+
 case "${1:-}" in
+  home)
+    close_panels
+    # As the gesture bar's tap: the empty workspace, on the home page.
+    hyprctl dispatch 'hl.dsp.focus({ workspace = "empty" })' >/dev/null 2>&1
+    omarchy-shell shell call omamobile.home goHome '' >/dev/null 2>&1
+    ;;
+  recents)
+    omarchy-shell shell toggle omamobile.switcher '{}' >/dev/null 2>&1
+    ;;
+  back)
+    close_panels
+    ;;
   power-down)
     # The key bounced: the press goes on, and the pending release is void.
     if recent_ms power-release "$bounce"; then
@@ -206,7 +230,7 @@ case "${1:-}" in
     rm -f "$state/power"
     ;;
   *)
-    echo "Usage: omamobile-keys power-down|power-up|volume-down|volume-up" >&2
+    echo "Usage: omamobile-keys power-down|power-up|volume-down|volume-up|home|recents|back" >&2
     exit 1
     ;;
 esac
