@@ -156,3 +156,20 @@ separate step.
 - Probes: `probe-m9-oma3` (node disabled, boot.img sha256 `26e547d9…`) and
   `probe-m9w-oma3` (node enabled, `37f42c3e…`); their initramfs contents are
   identical, only the DTB's watchdog status differs.
+
+**2026-11-02, on the phone, `7.1.3-msm8953-oma3`:**
+
+- **Step 1: pass.** Modules unpacked (checksum matched, 820 modules),
+  `depmod` clean, oma2's directory untouched.
+- **Step 2: pass** (`probe-m9-oma3`). USB SSH answered; system `running`, no
+  failed units.
+  - The kernel bound the LTR-559 itself: it registered as `iio:device1`,
+    before the BMI120's `iio:device2` at 12.08 s, while
+    `omamobile-markw-light` started at 16.09 s and exited in 46 ms without
+    binding. Under oma2 that unit had to bind it at every boot. It read lux
+    1, proximity 26.
+  - The compass and accelerometer came up as before; Wi-Fi connected; the
+    sound card, PipeWire and WirePlumber up; GPU devfreq at 19.2-650 MHz.
+  - No `/dev/watchdog*`, as expected with the node disabled; no new errors
+    against oma2 (the ASoC "widget overwritten" and maxtouch.cfg lines are
+    old).
