@@ -15,6 +15,20 @@ Findings from real hardware, newest first. Plan: [ENGINEERING-PLAN.md](ENGINEERI
   then reports `HasProximity`, polls every 0.7 s (near above 55 with its
   hysteresis) and sent "near" when covered and "far" uncovered.
 - **Charger: chg-error follows batt-ov**, not a timer: BRINGUP-CHARGER.md.
+- **Rotation follows the phone.** Recorded once a second over Wi-Fi SSH
+  (the USB cable drops when the phone moves): upright reads raw +x and
+  iio-sensor-proxy says `normal`; right side down -y, `left-up`; upside
+  down -x, `bottom-up`; left side down +y, `right-up`. So the DT mount
+  matrix, odd determinant and all, gives the right orientations.
+  `omamobile-autorotate` (omamobile-sensors) run as a user unit turned
+  DSI-1 through transforms 0-3 with them and back. A claim from outside the
+  login session (`runuser`) is refused by polkit ("Sensor claim not
+  allowed"); the user unit is allowed.
+- **The shell's layout breaks in landscape** (the owner, by eye): the home
+  screen, bar and lock screen are laid out for portrait only, as on
+  cheetah, where rotation stays locked until the quick-settings tile opens
+  it. Not packaged for markw yet: omamobile-sensors brings cheetah's AoC
+  proxy and conflicts with iio-sensor-proxy.
 
 ## 2026-11-02: sensors (7.1.3-msm8953-oma2)
 
