@@ -3,6 +3,19 @@
 
 Findings from real hardware, newest first. Plan: [ENGINEERING-PLAN.md](ENGINEERING-PLAN.md); first-light runbook: [BRINGUP-M1.md](BRINGUP-M1.md).
 
+## 2026-11-02: light sensor at boot, proximity, charger (7.1.3-msm8953-oma3)
+
+- **The kernel binds the LTR-559 at boot** with patch 0003 (a 100 ms wait
+  after the supplies come up): `iio:device1`, before the BMI120 at 12 s;
+  the bind unit found it owned (BRINGUP-KERNEL.md, oma3 step 2).
+- **Proximity near level 50.** Prompted on the phone, the proximity channel
+  read 19-33 uncovered and 58-237 under a finger (up to about 1500 pressed
+  flat). The kernel's `in_proximity_nearlevel` is 0 (no DT property).
+  device-markw 0.1.13 sets `PROXIMITY_NEAR_LEVEL=50` by udev; iio-sensor-proxy
+  then reports `HasProximity`, polls every 0.7 s (near above 55 with its
+  hysteresis) and sent "near" when covered and "far" uncovered.
+- **Charger: chg-error follows batt-ov**, not a timer: BRINGUP-CHARGER.md.
+
 ## 2026-11-02: sensors (7.1.3-msm8953-oma2)
 
 - **IMU and compass probe at boot.** `bmi120` (accelerometer, gyroscope)
