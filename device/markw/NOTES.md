@@ -15,6 +15,18 @@ Findings from real hardware, newest first. Plan: [ENGINEERING-PLAN.md](ENGINEERI
   then reports `HasProximity`, polls every 0.7 s (near above 55 with its
   hysteresis) and sent "near" when covered and "far" uncovered.
 - **Charger: chg-error follows batt-ov**, not a timer: BRINGUP-CHARGER.md.
+- **USB stuck after a burst of replugs.** After about six unplugs and
+  plugs within 90 s (a loose cable, the phone being turned), the gadget
+  stayed in UDC state `default` with `usb0` down while VBUS was online and
+  the role was `device`; Windows listed "Unknown USB Device (Device
+  Descriptor Request Failed)" through further replugs, other ports
+  included. The gadget was still bound to `7000000.usb` at high speed.
+  Rebinding it over Wi-Fi SSH (`echo "" > UDC`, then `7000000.usb`)
+  brought it back at once: `configured`, `usb0` up, NCM on the laptop, SSH
+  over USB. A single 10 s replug earlier the same day had come back on its
+  own. Candidate fix, not done: rebind the UDC when it sits in `default`
+  for some seconds with VBUS online and the device role set, as
+  `omamobile-usb-rescue` closes the data switch on cheetah.
 - **Rotation follows the phone.** Recorded once a second over Wi-Fi SSH
   (the USB cable drops when the phone moves): upright reads raw +x and
   iio-sensor-proxy says `normal`; right side down -y, `left-up`; upside
