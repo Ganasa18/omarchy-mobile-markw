@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: MIT
+post_install() {
+  echo "omamobile-ssh-wifi: off. Turn it on from quick settings (SSH Wi-Fi) or"
+  echo "  with: omamobile-ssh-wifi on [MINUTES]"
+}
+pre_remove() {
+  /usr/bin/omamobile-ssh-wifi off >/dev/null 2>&1 || true
+}

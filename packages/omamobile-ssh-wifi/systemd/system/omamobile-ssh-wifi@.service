@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: MIT
+# SSH over Wi-Fi for %i minutes (0: until stopped): while this unit runs,
+# ufw lets TCP 22 in on the Wi-Fi interface. When it stops, by itself after
+# the time or through "omamobile-ssh-wifi off", the rule goes and the Wi-Fi
+# SSH sessions end. The active local user may start and stop it through
+# /usr/share/polkit-1/rules.d/50-omamobile-ssh-wifi.rules. Never enabled.
+[Unit]
+Description=Omarchy Mobile: SSH over Wi-Fi for %i minutes
+After=ufw.service sshd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/omamobile-ssh-wifi hold %i
+ExecStopPost=/usr/bin/omamobile-ssh-wifi firewall close
