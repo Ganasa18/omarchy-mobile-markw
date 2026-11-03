@@ -99,7 +99,7 @@ grep -qF "copy modem . image/mba.mbn image/modem.mdt 'image/modem.b??'" vendor/o
 [[ -f $tmp/root/usr/lib/systemd/system/omamobile-markw-rmtfs.service ]] || fail "the rmtfs unit is staged"
 [[ -e $tmp/root/usr/lib/systemd/system/multi-user.target.wants/omamobile-markw-rmtfs.service ]] \
   && fail "the rmtfs unit is not enabled"
-grep -qx 'ExecStart=/usr/bin/rmtfs -s -v -o /run/omamobile-rmtfs' vendor/systemd/system/omamobile-markw-rmtfs.service \
+grep -qx 'ExecStart=/usr/bin/rmtfs -v -o /run/omamobile-rmtfs' vendor/systemd/system/omamobile-markw-rmtfs.service \
   || fail "rmtfs runs on the RAM directory, never with -P"
 # As in the kernel, class/block entries link into the device tree, so a
 # partition's ../device/type names its card; the microSD's decoy modemst1
