@@ -168,3 +168,42 @@ and Wi-Fi SSH was off, so there is no kernel log, only the owner's photos.
   `qcom-smbchg`'s `none -> device` does to a DWC3 that already runs the
   gadget (a role set that should be a no-op); `omamobile-usb-rescue`-style
   recovery (rebinding the UDC) can be tried over Wi-Fi when it happens.
+
+## The dead gadget after host mode: reading and next runbook (2026-11-03)
+
+What the 7.1.3-msm8953-oma3 source does on the way back from host mode
+(no phone needed for this):
+
+- `qcom-smbchg` goes `host -> none -> device`. DWC3's role switch maps
+  `none` to its default mode, peripheral (`dwc3_usb_role_switch_set`), so
+  the gadget comes back already at `none`: that was the carrier at
+  7639.33 s. The later `none -> device` asks DWC3 for the mode it is
+  already in, which `__dwc3_set_mode` skips. It is not a mode switch.
+- What does run at each role set is the Qualcomm glue's
+  `dwc3_qcom_set_role_notifier`: a runtime PM get and put, and the
+  QSCRATCH VBUS-valid override, chosen from the role being *left*
+  (off when leaving device, on otherwise; its resume path uses the role
+  being entered). So after `host -> none` the override is on, and the
+  gadget connects before the charger has finished detecting the cable.
+  The gadget's own pull-up turns it on too (`dwc3_qcom_run_stop_notifier`).
+- `qcom-smbchg` drives no extcon consumer here (the DT has the role
+  switch only), and the `device` branch of its detect work starts AICL
+  only for a DCP or CDP, not for a laptop (SDP).
+
+None of this explains on its own why the link died 20 ms after the
+`none -> device` and stayed dead after a replug. A source reading can't
+say more; the next session records it (DWC3's trace events) and tries
+the rebind that `tools/markw-otg-watch rescue` does. If the rebind works,
+a role-change hook that rebinds after a host session is a cheap,
+hang-safe workaround while the cause is found. If it doesn't, the next
+suspect is the override: a glue patch that sets it from the role being
+entered was drafted, not yet built.
+
+| # | Step | Expect / Pass | Stop if | Rollback | Risk |
+| --- | --- | --- | --- | --- | --- |
+| A0 | Read-only: oma3 boot with OTG (`probe-m9k-oma3` or later), Wi-Fi SSH tile on, `ssh root@<lan-ip> true` answers, battery above 50 %, Flash 0.1.8 | all | Wi-Fi SSH fails | — | none |
+| A1 | Laptop: `MARKW_WIFI_HOST=<lan-ip> MARKW_OTG_TRACE=1 tools/markw-otg-watch` (stays running for A2-A5) | `[s]` lines every 5 s with `role=device usb0=1`; no `[t] no event` lines | no stream | Ctrl-C | none |
+| A2 | Unplug the laptop, plug the OTG adapter and the ESP board, wait for `ttyUSB0`, nothing else | `[k] USB role device -> none`, `none -> host`, `cp210x` attached | no role change, or a smbchg/dwc3 error | unplug | low |
+| A3 | Unplug the board, wait 10 s, plug the laptop | either `usb0=1` stays (fixed by chance: record it) or the 2026-11-03 failure: `none -> device` and `usb0=0`, with the `[t]` events around it | the phone stops answering on Wi-Fi | as A4, else a held power key | low |
+| A4 | With the link dead: second terminal, `MARKW_WIFI_HOST=<lan-ip> tools/markw-otg-watch rescue` | "bound again", `usb0 carrier: 1` within 10 s; USB SSH answers | still `0` after a second try | unplug and replug the laptop; else reboot (owner's go) | low |
+| A5 | Ctrl-C the watch; quote the `[k]`/`[t]` lines from A3 here (no MACs, no serials) | the trace instance is gone (`ls /sys/kernel/tracing/instances`) | — | `rmdir /sys/kernel/tracing/instances/omamobile-otg` | none |
