@@ -62,3 +62,18 @@ Status: plan only (2026-11-03), nothing run. The phone runs
 | 8 | Package it: device-markw ships the rmtfs-on-RAM unit and the blacklist removal, nothing enabled that isn't hang-safe; a quick settings tile for mobile data later | data comes back after a reboot | — | downgrade | low |
 
 Results go here and in NOTES.md, with the date and `uname -r`.
+
+## Results
+
+**2026-11-03, `7.1.3-msm8953-oma3`:**
+
+- **Step 0: pass.** `modemst1`, `modemst2`, `fsg` (1.5 MiB each), `sec`
+  (16 KiB), `fsc` (1 KiB) and `persist` (32 MiB) read by `PARTNAME`, all
+  `ro=1`, into `~/android/reference/markw/modem-backup/<UTC time>/` on
+  the laptop with the phone's and the laptop's sha256 sums; all six match.
+  The USB network dropped twice during the copies (an ssh "Connection
+  reset" and then a minute without answers, no reboot, nothing in the
+  kernel log); `persist` was copied again through `gzip` and matched. A
+  copy loop must give ssh `< /dev/null`, or the first ssh eats the list.
+  The sums stay in the backup folder, not here. This backup predates any
+  modem start on Linux; take a new one after the next MIUI boot.
