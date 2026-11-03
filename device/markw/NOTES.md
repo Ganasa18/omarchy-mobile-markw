@@ -3,10 +3,24 @@
 
 Findings from real hardware, newest first. Plan: [ENGINEERING-PLAN.md](ENGINEERING-PLAN.md); first-light runbook: [BRINGUP-M1.md](BRINGUP-M1.md).
 
+## 2026-11-03: the modem runs on Linux (probe-m10-modem, 7.1.3-msm8953-oma3)
+
+- **The modem boots** from `qcom_q6v5_mss` with `echo start` to its
+  remoteproc `state` (no auto-boot), over rmtfs on RAM copies of the NV
+  partitions and tqftpserv; pd-mapper is not needed (no `.jsn` maps on
+  this firmware). Its QMI services appear on QRTR and IPA brings up
+  `rmnet_ipa0`; the eMMC stays `ro=1`. BRINGUP-MODEM.md steps 4-6.
+- **ModemManager** creates it through `qcom-soc` and waits at
+  `sim-missing` until a SIM is in the tray.
+- **The eMMC and the SD card swapped numbers** this boot (eMMC
+  `mmcblk1`). Find partitions by PARTNAME and device type `MMC`.
+- **A MIUI boot writes the modem's NV** (`modemst1`, `modemst2`,
+  `persist` changed): take a fresh read-only backup after each one.
+
 ## 2026-11-03: OTG to an ESP32 from Flash (7.1.3-msm8953-oma3)
 
 - **Modem scope (owner): mobile data only.** SMS and calls are not needed
-  for now and not part of the 90 % gate for the persistent install. Data
+  for now and not part of the 80 % gate for the persistent install. Data
   goes over IPA v2.6L (the msm8953 tree's `ipa2-lite`, already in oma3
   and bound at boot), not BAM-DMUX; it needs the modem node enabled in
   the probe, rmtfs on RAM copies of the NV partitions, and packages not
