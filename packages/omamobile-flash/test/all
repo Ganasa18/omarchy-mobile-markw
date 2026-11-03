@@ -1,0 +1,74 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Checks for omamobile-flash: syntax, the staged layout, and the helper's
+# answers against a fake home, /dev and udevadm: projects (newest first,
+# PlatformIO's own folders skipped), envs (default first, monitor speeds),
+# ports (named by USB vendor) and the example copy.
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
+fail() { echo "FAIL: $*" >&2; exit 1; }
+pass() { echo "ok - $*"; }
+for f in bin/omamobile-flash install; do bash -n "$f" || fail "syntax: $f"; done
+
+t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
+./install "$t/stage"
+for f in usr/bin/omamobile-flash usr/share/omamobile-flash/shell.qml usr/share/applications/omamobile-flash.desktop \
+         usr/share/omamobile-flash/example/blink/platformio.ini usr/share/omamobile-flash/example/blink/src/main.cpp \
+         usr/share/licenses/omamobile-flash/LICENSE; do
+  [[ -e $t/stage/$f ]] || fail "not staged: $f"
+done
+grep -cx 'Exec=omamobile-flash' share/omamobile-flash.desktop >/dev/null || fail "the launcher runs omamobile-flash"
+pass "staged"
+
+h=$t/home; mkdir -p "$h/proyek/old" "$h/proyek/new" "$h/.platformio/packages/x" "$h/proyek/new/.pio/libdeps"
+printf '[env:a]\nboard = x\n' >"$h/proyek/old/platformio.ini"
+touch -d '2026-01-01' "$h/proyek/old/platformio.ini"
+cat >"$h/proyek/new/platformio.ini" <<'EOF'
+; comment
+[platformio]
+default_envs = s3
+
+[env]
+monitor_speed = 9600
+
+[env:dev]
+board = esp32dev
+
+[env:s3]
+board = esp32-s3-devkitc-1
+monitor_speed = 921600
+EOF
+touch "$h/.platformio/packages/x/platformio.ini" "$h/proyek/new/.pio/libdeps/platformio.ini"
+
+fb=$t/bin; mkdir -p "$fb" "$t/dev"
+cat >"$fb/udevadm" <<'EOF'
+#!/bin/bash
+case ${@: -1} in
+  */ttyUSB0) printf 'ID_VENDOR_ID=10c4\nID_MODEL=CP2102_USB_to_UART_Bridge_Controller\n' ;;
+  */ttyUSB1) printf 'ID_VENDOR_ID=1a86\nID_MODEL=USB_Serial\n' ;;
+  */ttyACM0) printf 'ID_VENDOR_ID=2341\nID_MODEL=Arduino_Uno\n' ;;
+esac
+EOF
+chmod +x "$fb/udevadm"
+run() { HOME=$h PATH="$fb:$PATH" OMAMOBILE_FLASH_DEV=$t/dev OMAMOBILE_FLASH_SHARE=$PWD bash bin/omamobile-flash "$@"; }
+
+[[ $(run projects) == "[\"$h/proyek/new\",\"$h/proyek/old\"]" ]] || fail "projects: $(run projects)"
+pass "projects: newest first, PlatformIO's folders skipped"
+
+[[ $(run envs "$h/proyek/new") == '[{"name":"s3","speed":921600},{"name":"dev","speed":9600}]' ]] || fail "envs: $(run envs "$h/proyek/new")"
+[[ $(run envs "$h/proyek/old") == '[{"name":"a","speed":115200}]' ]] || fail "envs default speed: $(run envs "$h/proyek/old")"
+run envs "$h/proyek" 2>/dev/null && fail "envs without platformio.ini fails"
+pass "envs: default first, env and shared monitor speeds, 115200 otherwise"
+
+[[ $(run ports) == '[]' ]] || fail "no ports: $(run ports)"
+touch "$t/dev/ttyUSB0" "$t/dev/ttyUSB1" "$t/dev/ttyACM0"
+[[ $(run ports) == "[{\"path\":\"$t/dev/ttyUSB0\",\"name\":\"CP210x\"},{\"path\":\"$t/dev/ttyUSB1\",\"name\":\"CH340\"},{\"path\":\"$t/dev/ttyACM0\",\"name\":\"Arduino Uno\"}]" ]] \
+  || fail "ports: $(run ports)"
+pass "ports: named by USB vendor, else udev's model"
+
+[[ $(run example) == "$h/proyek/blink" && -f $h/proyek/blink/src/main.cpp ]] || fail "example copies blink"
+echo changed >"$h/proyek/blink/src/main.cpp"
+run example >/dev/null
+[[ $(cat "$h/proyek/blink/src/main.cpp") == changed ]] || fail "example never overwrites"
+run monitor /dev/null abc 2>/dev/null && fail "monitor checks the baud"
+pass "example: copied once, never overwritten"

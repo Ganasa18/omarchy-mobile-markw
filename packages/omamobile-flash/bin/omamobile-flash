@@ -1,0 +1,125 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Flash: build, upload, monitor and clean PlatformIO projects from a phone
+# window (/usr/share/omamobile-flash/shell.qml). Without arguments it opens
+# the window; the subcommands are what the window asks, as JSON:
+#
+#   omamobile-flash                  open the window
+#   omamobile-flash projects         folders under ~ with a platformio.ini, newest first
+#   omamobile-flash envs DIR         the [env:NAME] sections, default first, with monitor_speed
+#   omamobile-flash ports            USB serial ports (ttyUSB*, ttyACM*) with the adapter's name
+#   omamobile-flash monitor PORT [BAUD]   print the port's lines until stopped
+#   omamobile-flash example          copy the blink example to ~/proyek/blink (once)
+#
+# Build, upload and clean are plain "pio run" calls the window makes itself.
+set -u
+
+SHARE=${OMAMOBILE_FLASH_SHARE:-/usr/share/omamobile-flash}
+DEV=${OMAMOBILE_FLASH_DEV:-/dev}
+
+die() { echo "omamobile-flash: $*" >&2; exit 1; }
+json_str() { printf '"%s"' "$(sed 's/["\\]/\\&/g' <<<"$1")"; }
+
+cmd_projects() {
+  local first=1 dir
+  printf '['
+  # A project is a folder holding platformio.ini; PlatformIO's own trees and
+  # build folders are skipped.
+  while IFS= read -r dir; do
+    (( first )) || printf ','; first=0
+    json_str "$dir"
+  done < <(find "$HOME" -maxdepth 4 \( -name .platformio -o -name .pio -o -name node_modules -o -name '.*cache*' \) -prune \
+             -o -name platformio.ini -type f -printf '%T@ %h\n' 2>/dev/null | sort -rn | cut -d' ' -f2-)
+  printf ']\n'
+}
+
+# [env:NAME] sections in file order, default_envs first; monitor_speed from
+# the env, else the shared [env] section, else 115200.
+cmd_envs() {
+  local ini=${1:?envs DIR}/platformio.ini
+  [[ -r $ini ]] || die "no platformio.ini in $1"
+  awk '
+    function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+    /^[ \t]*[;#]/ { next }
+    /^[ \t]*\[/ { sec = trim($0); gsub(/^\[|\]$/, "", sec)
+                  if (sec ~ /^env:/) { name = substr(sec, 5); order[++n] = name } ; next }
+    /=/ { key = trim(substr($0, 1, index($0, "=") - 1)); val = trim(substr($0, index($0, "=") + 1))
+          if (sec == "platformio" && key == "default_envs") { split(val, d, /[ ,]+/); def = d[1] }
+          if (key == "monitor_speed") { if (sec == "env") common = val; else if (sec ~ /^env:/) speed[substr(sec, 5)] = val } }
+    END {
+      printf "["
+      first = 1
+      if (def != "") { emit(def); }
+      for (i = 1; i <= n; i++) if (order[i] != def) emit(order[i])
+      print "]"
+    }
+    function emit(e,   s) {
+      s = (e in speed) ? speed[e] : (common != "" ? common : "115200")
+      if (!first) printf ","
+      first = 0
+      printf "{\"name\":\"%s\",\"speed\":%d}", e, s
+    }' "$ini"
+}
+
+cmd_ports() {
+  local first=1 dev name props
+  printf '['
+  for dev in "$DEV"/ttyUSB* "$DEV"/ttyACM*; do
+    [[ -e $dev ]] || continue
+    props=$(udevadm info -q property -n "$dev" 2>/dev/null)
+    # The usual ESP32 and Arduino adapters by USB vendor, else udev's model.
+    case $(sed -n 's/^ID_VENDOR_ID=//p' <<<"$props") in
+      10c4) name=CP210x ;;
+      1a86) name=CH340 ;;
+      0403) name=FTDI ;;
+      303a) name="ESP32 USB" ;;
+      *) name=$(sed -n 's/^ID_MODEL=//p' <<<"$props" | head -n1 | tr '_' ' ') ;;
+    esac
+    (( first )) || printf ','; first=0
+    printf '{"path":%s,"name":%s}' "$(json_str "$dev")" "$(json_str "${name:-serial}")"
+  done
+  printf ']\n'
+}
+
+# pyserial comes with PlatformIO. Lines go out as they arrive; a board that
+# resets or a cable that goes leaves the loop with a message, not a trace.
+cmd_monitor() {
+  local port=${1:?monitor PORT [BAUD]} baud=${2:-115200}
+  [[ $baud =~ ^[0-9]+$ ]] || die "baud: a number"
+  exec python3 -I -u -c '
+import sys, serial
+port, baud = sys.argv[1], int(sys.argv[2])
+try:
+    s = serial.Serial(port, baud, timeout=0.2)
+except (OSError, serial.SerialException) as e:
+    sys.exit("cannot open %s: %s" % (port, e))
+print("--- %s at %d baud" % (port, baud), flush=True)
+buf = b""
+try:
+    while True:
+        buf += s.read(256)
+        while b"\n" in buf:
+            line, buf = buf.split(b"\n", 1)
+            print(line.rstrip(b"\r").decode("utf-8", "replace"), flush=True)
+except (OSError, serial.SerialException) as e:
+    print("--- port closed: %s" % e, flush=True)
+' "$port" "$baud"
+}
+
+cmd_example() {
+  local dest=$HOME/proyek/blink
+  if [[ -e $dest ]]; then echo "$dest"; return 0; fi
+  mkdir -p "$HOME/proyek"
+  cp -r "$SHARE/example/blink" "$dest"
+  echo "$dest"
+}
+
+case ${1:-} in
+  "") exec quickshell -p "$SHARE/shell.qml" ;;
+  projects) cmd_projects ;;
+  envs) cmd_envs "${2:-}" ;;
+  ports) cmd_ports ;;
+  monitor) cmd_monitor "${2:-}" "${3:-}" ;;
+  example) cmd_example ;;
+  *) sed -n '7,12s/^#   //p' "$0" >&2; exit 2 ;;
+esac
