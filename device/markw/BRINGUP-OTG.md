@@ -135,10 +135,13 @@ and Wi-Fi SSH was off, so there is no kernel log, only the owner's photos.
   yet installed. The battery read 89 % at 05:37, 88 % at 05:39 and 83 % at
   05:44 (the percentage is an estimate), with the board on OTG power.
 - **After unplug: the laptop link did not come back.** The owner unplugged
-  the board and plugged the laptop in. The laptop saw no USB network
-  adapter, and the phone answered no ping, adb or fastboot. Either the
-  phone hung or the USB role stayed `host`; the owner reported it stuck
-  "as before". Not yet known which: read `journalctl -b -1` (the `USB
+  the board and plugged the laptop in. Windows showed "USB device not
+  recognized" (Device Manager: "Unknown USB Device (Device Descriptor
+  Request Failed)"), so something pulled D+ up but the controller never
+  answered enumeration. There was no USB network adapter, and the phone
+  answered no ping, adb or fastboot. Either the phone hung or DWC3 was left
+  half switched between host and device; the owner reported it stuck "as
+  before". Not yet known which: read `journalctl -b -1` (the `USB
   role` lines, the end of the log) and `/sys/fs/pstore` after the next
   boot. Until then, run OTG sessions with Wi-Fi SSH on and a log streamed
   to the laptop (`dmesg -w` over Wi-Fi), as step 5 of BRINGUP-KERNEL.md
