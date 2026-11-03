@@ -69,27 +69,30 @@ ShellRoot {
   }
 
   // ------------------------------------------------------------ helper calls
-  // One helper call at a time; each answer goes to its handler by name.
-  property var queue: []
-  function ask(args, handler) {
-    queue = queue.concat([[args, handler]])
-    if (!helper.running) nextAsk()
-  }
-  function nextAsk() {
-    if (queue.length === 0) return
-    helper.handler = queue[0][1]
-    helper.command = ["omamobile-flash"].concat(queue[0][0])
-    queue = queue.slice(1)
-    helper.running = true
-  }
-  Process {
-    id: helper
-    property string handler: ""
+  // One process per kind of question, so an answer can't reach the wrong
+  // handler; a question asked while its kind runs is asked again after.
+  component Asker: Process {
+    id: asker
+    property string kind: ""
+    property var pending: null
+    function ask(args) {
+      if (running) { pending = args; return }
+      command = ["omamobile-flash"].concat(args)
+      running = true
+    }
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: app.answer(helper.handler, text)
+      onStreamFinished: app.answer(asker.kind, text)
     }
-    onExited: app.nextAsk()
+    onExited: if (pending) { var again = pending; pending = null; ask(again) }
+  }
+  Asker { id: askStatus; kind: "status" }
+  Asker { id: askProjects; kind: "projects" }
+  Asker { id: askEnvs; kind: "envs" }
+  Asker { id: askPorts; kind: "ports" }
+  Asker { id: askExample; kind: "example" }
+  function ask(args, handler) {
+    ({ status: askStatus, projects: askProjects, envs: askEnvs, ports: askPorts, example: askExample })[handler].ask(args)
   }
   function answer(handler, text) {
     var data = null
@@ -125,7 +128,7 @@ ShellRoot {
   // The adapter comes and goes with the OTG cable.
   Timer {
     interval: 2000; repeat: true; running: true
-    onTriggered: if (!helper.running) app.ask(["ports"], "ports")
+    onTriggered: if (!askPorts.running) app.ask(["ports"], "ports")
   }
 
   // ------------------------------------------------------------ pio
