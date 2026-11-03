@@ -86,3 +86,8 @@ hl.layer_rule({ match = { namespace = "^omamobile-osk-hide$" }, above_lock = 2, 
 -- call is answered from the lock screen, and the in-call controls stay
 -- reachable while it's locked. The card offers call actions only.
 hl.layer_rule({ match = { namespace = "^omamobile-call(-top)?$" }, above_lock = 2 })
+
+-- Flash (omamobile-flash) is a log and small text: opaque, not Omarchy's
+-- default 0.985/0.96, which lets the home screen show through. This file
+-- loads after Omarchy's rules, so its opacity wins.
+o.window({ class = "^org\\.quickshell$", title = "^Flash$" }, { tag = "-default-opacity", opacity = "1 1" })
