@@ -1,8 +1,10 @@
 <!-- SPDX-License-Identifier: MIT -->
 # markw: suspend (runbook)
 
-Status: s2idle works on oma2 and oma3, and auto-suspend steps 8-10 passed
-(2026-11-03). Next: enable it and measure the gain (step 7).
+Status: s2idle works on oma2 and oma3 and auto-suspend steps 8-10 passed,
+but an unattended auto-suspend on 2026-11-03 never resumed, so
+auto-suspend stays off. Next: the staged long sleeps L0-L5 (attended),
+then enable it and measure the gain (step 7).
 
 ## Why
 
@@ -143,3 +145,38 @@ The oma1 failure stays unexplained: the only kernel difference is
 `PM_DEBUG`, which adds the test hooks and messages. Keep the next
 suspends attended and look at `suspend_stats/fail` and the journal after
 each; boot oma2 (`probe-m7-oma2`) from now on.
+
+## A long sleep that never woke (2026-11-03, oma3)
+
+The same boot as steps 8-10 (`probe-m9k-oma3`), auto-suspend still
+started by hand, nobody at the phone. Its journal, read in the next boot:
+
+- 00:33 a suspend of about 52 s, resumed (the step 9 run); then six
+  "staying awake" lines (cable, sound, Stay awake) for the step 10 runs.
+- 01:01:38 "screen off for 10s: suspending". NetworkManager went to
+  sleep (Wi-Fi deauthenticated "by local choice"), wcn36xx logged its
+  usual `ERROR SMD_EVENT (312) not supported`, and at 01:01:40
+  `PM: suspend entry (s2idle)` is the last line of the boot. No "resumed",
+  no 240 s backup alarm wake, no panic; the next boot came up on its own
+  (its clock started before the last line, so how long it hung is
+  unknown). Whether pstore held anything was not checked.
+
+So s2idle hangs sometimes, not always: 13 short sleeps woke, this one and
+the first oma1 attempt didn't. What differed this time: no cable, Wi-Fi
+associated until the suspend, and the whole session had run for hours.
+The staged runs below look for the length or the condition that hangs,
+one change per run, with the backup RTC alarm armed every time.
+
+| # | Step | Expect / Pass | Stop if | Rollback | Risk |
+| --- | --- | --- | --- | --- | --- |
+| L0 | Read-only: `systemctl is-active omamobile-autosuspend` (inactive), `cat /sys/power/suspend_stats/{success,fail}`, `journalctl --list-boots` | auto-suspend off; counts noted | it is active (stop it first) | — | none |
+| L1 | Cable in, Wi-Fi up: `journalctl --sync; systemd-run --unit=x-sleep rtcwake -m freeze -s 120` | wakes on IRQ 71 after 120 s, USB SSH back, `success` +1 | no wake in 5 min | hold Power about 30 s, boot the probe again | medium |
+| L2 | As L1 with `-s 300` | as L1 | as L1 | as L1 | medium |
+| L3 | As L1 with `-s 900` | as L1 | as L1 | as L1 | medium |
+| L4 | Cable out (Wi-Fi SSH tile on), `-s 900`; plug back after | wakes, Wi-Fi SSH answers within 1 min of the alarm | no wake | as L1 | medium |
+| L5 | As L4 with `nmcli radio wifi off` before (the cable carries the check afterwards) | wakes; `nmcli radio wifi on` restores Wi-Fi | no wake | as L1 | medium |
+
+A hang at L1-L3 says the length matters; one only at L4 points at the
+cable or Wi-Fi, and L5 then separates those. After each hang, read the
+lost boot's journal (`journalctl -b -1 -k | tail -50`) before anything
+else. The screen goes dark at each step; announce it.

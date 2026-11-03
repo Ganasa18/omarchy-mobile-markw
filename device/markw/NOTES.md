@@ -19,6 +19,11 @@ Findings from real hardware, newest first. Plan: [ENGINEERING-PLAN.md](ENGINEERI
 
 ## 2026-11-03: OTG to an ESP32 from Flash (7.1.3-msm8953-oma3)
 
+- **An unattended auto-suspend never woke** (2026-11-03 01:01, oma3):
+  `PM: suspend entry (s2idle)` is the boot's last line, and the backup
+  alarm didn't wake it either. Auto-suspend stays off until staged long sleeps
+  pass: [BRINGUP-SUSPEND.md](BRINGUP-SUSPEND.md).
+
 - **Modem scope (owner): mobile data only.** SMS and calls are not needed
   for now and not part of the 90 % gate for the persistent install. Data
   goes over IPA v2.6L (the msm8953 tree's `ipa2-lite`, already in oma3
