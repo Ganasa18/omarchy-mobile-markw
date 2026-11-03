@@ -112,3 +112,34 @@ Results go here and in NOTES.md, with the date and `uname -r`.
   - Until then, use `probe-m4-otg` only for OTG sessions (`probe-m3`
     stays the default), swap cables in one firm motion, and wait about
     5 s between unplug and plug.
+
+**2026-11-03, 7.1.3-msm8953-oma3 (`probe-m9k-oma3`, role-change debounce
+patch 0001), the board's own USB port through the OTG adapter, from Flash
+(omamobile-flash 0.1.4).** Unattended by the laptop: the cable was out
+and Wi-Fi SSH was off, so there is no kernel log, only the owner's photos.
+
+- **Plug: pass.** No hang. The board was powered from the phone (its LED
+  on), and Flash listed `ttyUSB0 · CP210x` by itself.
+- **Upload: not passed.** The blink upload (esptool 5.4.0 at PlatformIO's
+  default 460800 baud) connected to the chip (ESP32-D0WD-V3, revision
+  3.1) and read its eFuses. Then it warned "Detected crystal freq
+  15.55 MHz is quite different to normalized freq 26 MHz", uploaded the
+  stub and failed with "Failed to start stub flasher. There was no
+  response". The 2026-10-28 CH340G run also synced once and then lost the
+  chip. Suspects: the board browning out on the phone's OTG VBUS, or the
+  speed. Next try: `upload_speed = 115200`, then a powered OTG hub.
+- **Flash froze** (Hyprland's "Application Not Responding"; its Terminate
+  did nothing) while the board stayed plugged in. Its log replaced the
+  whole line list for every line, and a board in a reset loop prints fast.
+  Fixed in omamobile-flash 0.1.6 (batched appends to a ListModel), not
+  yet installed. The battery read 89 % at 05:37, 88 % at 05:39 and 83 % at
+  05:44 (the percentage is an estimate), with the board on OTG power.
+- **After unplug: the laptop link did not come back.** The owner unplugged
+  the board and plugged the laptop in. The laptop saw no USB network
+  adapter, and the phone answered no ping, adb or fastboot. Either the
+  phone hung or the USB role stayed `host`; the owner reported it stuck
+  "as before". Not yet known which: read `journalctl -b -1` (the `USB
+  role` lines, the end of the log) and `/sys/fs/pstore` after the next
+  boot. Until then, run OTG sessions with Wi-Fi SSH on and a log streamed
+  to the laptop (`dmesg -w` over Wi-Fi), as step 5 of BRINGUP-KERNEL.md
+  asks.

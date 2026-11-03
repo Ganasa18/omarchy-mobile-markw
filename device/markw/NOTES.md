@@ -3,6 +3,18 @@
 
 Findings from real hardware, newest first. Plan: [ENGINEERING-PLAN.md](ENGINEERING-PLAN.md); first-light runbook: [BRINGUP-M1.md](BRINGUP-M1.md).
 
+## 2026-11-03: OTG to an ESP32 from Flash (7.1.3-msm8953-oma3)
+
+- **The OTG plug works on oma3**: no hang, the board powered, `ttyUSB0`
+  (CP210x) listed. esptool reached the chip, then lost it at the stub
+  flasher (a crystal-frequency warning first): a brownout on OTG power,
+  or the 460800 baud.
+- **After unplug the laptop link did not come back** (no USB network, no
+  adb or fastboot): a hang, or a role stuck at host. Read the previous
+  boot's journal next boot. Details: BRINGUP-OTG.md, 2026-11-03.
+- **Flash froze on fast serial output.** Its log rebuilt the whole list
+  per line; omamobile-flash 0.1.6 batches lines.
+
 ## 2026-11-02: light sensor at boot, proximity, charger (7.1.3-msm8953-oma3)
 
 - **The kernel binds the LTR-559 at boot** with patch 0003 (a 100 ms wait
