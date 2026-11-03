@@ -8,6 +8,8 @@
 #            etc/firmware/a506_zap.*                  -> qcom/msm8953/xiaomi/markw/
 #   modem    image/wcnss.mdt, wcnss.b??               -> ./
 #            image/adsp.mdt, adsp.b?? (LPASS ADSP)    -> ./
+#            image/mba.mbn, modem.mdt, modem.b??      -> ./
+#            (the modem, MPSS: BRINGUP-MODEM.md)
 #   persist  WCNSS_qcom_wlan_nv.bin (this phone's own -> wlan/prima/
 #            Wi-Fi calibration)
 #
@@ -95,6 +97,7 @@ copy system qcom etc/firmware/a530_pm4.fw etc/firmware/a530_pfp.fw
 copy system qcom/msm8953/xiaomi/markw 'etc/firmware/a506_zap.*'
 copy modem . image/wcnss.mdt 'image/wcnss.b??'
 copy modem . image/adsp.mdt 'image/adsp.b??'
+copy modem . image/mba.mbn image/modem.mdt 'image/modem.b??'
 copy persist wlan/prima WCNSS_qcom_wlan_nv.bin
 
 if (( check )); then

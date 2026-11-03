@@ -38,6 +38,11 @@ ln -sf ../omamobile-zram.service \
 install -Dm644 vendor/systemd/system/omamobile-markw-light.service   "$destination/usr/lib/systemd/system/omamobile-markw-light.service"
 install -d "$destination/usr/lib/systemd/system/multi-user.target.wants"
 ln -sf ../omamobile-markw-light.service   "$destination/usr/lib/systemd/system/multi-user.target.wants/omamobile-markw-light.service"
+# rmtfs on RAM copies of the modem's NV (device/markw/BRINGUP-MODEM.md):
+# installed, not enabled.
+install -Dm755 vendor/omamobile-markw-rmtfs "$destination/usr/lib/omamobile/omamobile-markw-rmtfs"
+install -Dm644 vendor/systemd/system/omamobile-markw-rmtfs.service \
+  "$destination/usr/lib/systemd/system/omamobile-markw-rmtfs.service"
 # Suspend when the screen has been off a while: installed, not enabled.
 install -Dm755 vendor/omamobile-autosuspend "$destination/usr/lib/omamobile/omamobile-autosuspend"
 install -Dm644 vendor/systemd/system/omamobile-autosuspend.service \

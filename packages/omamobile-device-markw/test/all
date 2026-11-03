@@ -91,6 +91,37 @@ grep -q 'mount -o ro ' vendor/omamobile-markw-firmware || fail "Android partitio
 grep -qF '/ro") != 1' vendor/omamobile-markw-firmware || fail "a partition that isn't read-only is never mounted"
 grep -qF "copy modem . image/adsp.mdt 'image/adsp.b??'" vendor/omamobile-markw-firmware \
   || fail "the audio DSP firmware is copied from the modem partition"
+grep -qF "copy modem . image/mba.mbn image/modem.mdt 'image/modem.b??'" vendor/omamobile-markw-firmware \
+  || fail "the modem firmware is copied from the modem partition"
+
+# rmtfs on RAM copies: a fake eMMC (and a microSD it must skip), read-only.
+[[ -x $tmp/root/usr/lib/omamobile/omamobile-markw-rmtfs ]] || fail "the rmtfs copy is staged"
+[[ -f $tmp/root/usr/lib/systemd/system/omamobile-markw-rmtfs.service ]] || fail "the rmtfs unit is staged"
+[[ -e $tmp/root/usr/lib/systemd/system/multi-user.target.wants/omamobile-markw-rmtfs.service ]] \
+  && fail "the rmtfs unit is not enabled"
+grep -qx 'ExecStart=/usr/bin/rmtfs -s -v -o /run/omamobile-rmtfs' vendor/systemd/system/omamobile-markw-rmtfs.service \
+  || fail "rmtfs runs on the RAM directory, never with -P"
+# As in the kernel, class/block entries link into the device tree, so a
+# partition's ../device/type names its card; the microSD's decoy modemst1
+# (listed first by name: mmcblk0 is the SD here) must be skipped.
+fs=$tmp/rmtfs; mkdir -p "$fs/sys/class/block" "$fs/dev"
+disk() { mkdir -p "$fs/sys/devices/$1/device"; echo "$2" >"$fs/sys/devices/$1/device/type"; }
+part() { # DISK PART NAME CONTENT
+  mkdir -p "$fs/sys/devices/$1/$2"
+  printf 'PARTNAME=%s
+' "$3" >"$fs/sys/devices/$1/$2/uevent"; echo 1 >"$fs/sys/devices/$1/$2/ro"
+  ln -s "../../devices/$1/$2" "$fs/sys/class/block/$2"; printf '%s' "$4" >"$fs/dev/$2"
+}
+disk mmcblk0 SD; part mmcblk0 mmcblk0p1 modemst1 decoy
+disk mmcblk1 MMC; n=1
+for name in modemst1 modemst2 fsg fsc; do part mmcblk1 "mmcblk1p$n" "$name" "nv-$name"; n=$((n + 1)); done
+rt() { OMAMOBILE_RMTFS_DIR=$fs/run OMAMOBILE_SYSFS=$fs/sys OMAMOBILE_DEV=$fs/dev bash vendor/omamobile-markw-rmtfs 2>/dev/null; }
+rt || fail "the rmtfs copy runs"
+[[ $(cat "$fs/run/modem_fs1") == nv-modemst1 && $(cat "$fs/run/modem_fsc") == nv-fsc ]] || fail "each partition lands in its rmtfs file"
+[[ $(stat -c %a "$fs/run/modem_fsg") == 600 ]] || fail "the copies are root's only"
+echo 0 >"$fs/sys/devices/mmcblk1/mmcblk1p2/ro"
+rt && fail "a partition that isn't read-only is never read"
+pass "rmtfs: modem NV copied to RAM from read-only partitions only, unit not enabled"
 grep -qx 'w /sys/devices/system/cpu/cpufreq/schedutil/rate_limit_us - - - - 20000' \
   "$tmp/root/usr/lib/tmpfiles.d/omamobile-schedutil.conf" \
   || fail "schedutil changes the clock at most every 20 ms"
