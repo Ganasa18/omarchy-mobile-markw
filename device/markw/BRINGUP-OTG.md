@@ -141,8 +141,30 @@ and Wi-Fi SSH was off, so there is no kernel log, only the owner's photos.
   answered enumeration. There was no USB network adapter, and the phone
   answered no ping, adb or fastboot. Either the phone hung or DWC3 was left
   half switched between host and device; the owner reported it stuck "as
-  before". Not yet known which: read `journalctl -b -1` (the `USB
-  role` lines, the end of the log) and `/sys/fs/pstore` after the next
-  boot. Until then, run OTG sessions with Wi-Fi SSH on and a log streamed
-  to the laptop (`dmesg -w` over Wi-Fi), as step 5 of BRINGUP-KERNEL.md
-  asks.
+  before".
+- **The previous boot's journal (read after a held power key, MIUI and
+  fastboot back to oma3): no hang.** The phone ran on and shut down
+  cleanly from the held key (8239 s). Two separate faults:
+  - **Out of memory.** `cp210x` attached at 7146 s, and the board
+    re-enumerated once 0.3 s later (a reset). Flash, the board's quickshell
+    process, grew to 1.87 GB anonymous RSS. The 1.4 GB zram swap filled,
+    and at 7637 s the kernel OOM killer killed it, the only OOM kill of the
+    boot. The phone was slow and swapping before that: that was the
+    unresponsive window and the fast battery drain. omamobile-flash 0.1.6
+    caps the log in a ListModel instead of building a new array per line.
+  - **The gadget link died after leaving host mode.** At unplug (7615.6 s)
+    `USB role host -> none` came 0.5 s later (the debounce), the xHCI buses
+    deregistered, and xHCI logged "host not responding to stop endpoint
+    command" (7620.9 s). The gadget came back by itself: `usb0` gained
+    carrier at 7639.33 s. Then `USB role none -> device` at 7640.26 s, and
+    `usb0` lost carrier at 7640.28 s, for good. A replug at 8110-8113 s
+    (`device -> none -> device`) brought nothing back either: that was the
+    laptop's "Device Descriptor Request Failed". So it is the late
+    `none -> device` switch, landing on a gadget that is already up, that
+    leaves DWC3's device side dead. Whether the memory pressure (a
+    20 s-late role decision) made it worse is not known.
+- Next: OTG only with Wi-Fi SSH on and `dmesg -w` streamed to the laptop
+  (BRINGUP-KERNEL.md step 5), and Flash 0.1.6 first. Look at what
+  `qcom-smbchg`'s `none -> device` does to a DWC3 that already runs the
+  gadget (a role set that should be a no-op); `omamobile-usb-rescue`-style
+  recovery (rebinding the UDC) can be tried over Wi-Fi when it happens.
