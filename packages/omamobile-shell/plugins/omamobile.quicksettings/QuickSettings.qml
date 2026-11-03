@@ -180,7 +180,8 @@ Item {
     "hotspot": hotspot, "dnd": dnd, "torch": torch, "rotation-lock": rotationLock,
     "location": location, "nfc": nfc, "battery-saver": batterySaver, "dark-theme": darkTheme,
     "night-light": nightLight, "stay-awake": stayAwake, "mic": mic, "screenshot": screenshot,
-    "screen-record": screenRecord, "fingerprint": fingerprint, "keyboard": keyboard
+    "screen-record": screenRecord, "fingerprint": fingerprint, "keyboard": keyboard,
+    "ssh-wifi": sshWifi
   })
 
   // ---------------------------------------------------------------- layout
@@ -417,6 +418,26 @@ Item {
     function toggle() { if (available) root.runTileAction("stay-awake", !enabled) }
   }
 
+  // SSH over Wi-Fi through omamobile-ssh-wifi: a tap opens it for 30
+  // minutes or closes it; the chevron opens the page (other times, the
+  // address and command, sessions).
+  QtObject {
+    id: sshWifi
+    readonly property bool available: root.probedHas("sshwifi")
+    readonly property bool enabled: available && root.probedOn("ssh-wifi", "sshwifi")
+    readonly property string icon: "󰣀"
+    readonly property bool details: true
+    readonly property string status: {
+      if (!available) return "No Wi-Fi radio"
+      if (!enabled) return "Off"
+      var left = root.probed.sshwifi_left
+      var addr = root.probed.sshwifi_addr || "On"
+      return left ? addr + " · " + left + " min" : addr
+    }
+    function toggle() { if (available) root.runTileAction("ssh-wifi", !enabled) }
+    function openDetails() { root.openPage("ssh"); root.dismiss() }
+  }
+
   // The default microphone's mute, through PipeWire.
   QtObject {
     id: mic
@@ -581,9 +602,16 @@ Item {
     if (page !== "wifi") wifiPicker.close()
     if (page !== "bluetooth") bluetoothPanelItem.close()
     if (page !== "record") recordPanelItem.close()
+    if (page !== "ssh") sshPanelItem.close()
     if (page === "wifi") wifiPicker.open()
     else if (page === "bluetooth") bluetoothPanelItem.open()
     else if (page === "record") recordPanelItem.open()
+    else if (page === "ssh") sshPanelItem.open()
+  }
+
+  SshPanel {
+    id: sshPanelItem
+    onBackRequested: root.backToSheet(sshPanelItem)
   }
 
   RecordPanel {

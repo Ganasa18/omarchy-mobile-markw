@@ -1,0 +1,31 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: MIT -->
+<html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Board Flash</title><link rel="stylesheet" href="mockup.css"></head>
+<body><div class="phone">
+  <div class="statusbar"><span>01:42</span><span>68%</span></div>
+  <header><h1>flash</h1><span class="muted">sensor-kebun</span></header>
+  <section>
+    <div class="item"><span>Proyek</span><span class="v">~/proyek/sensor-kebun</span></div>
+    <div class="item"><span>Env</span><span class="v">esp32dev</span></div>
+    <div class="item"><span>Port</span><span class="v">ttyUSB0 · CP2102</span></div>
+  </section>
+  <section style="margin-top:24px;padding:0">
+    <div class="buttons"><div>build</div><div class="on">upload</div><div>monitor</div><div>clean</div></div>
+  </section>
+  <section style="margin-top:16px">
+    <div style="display:flex;justify-content:space-between;font-size:12px"><span>upload 62%</span><span class="muted">batal</span></div>
+    <div class="bar"><div></div></div>
+  </section>
+  <section style="margin-top:20px;display:flex;justify-content:space-between">
+    <div class="tabs"><span class="on">output</span><span>serial</span></div>
+    <span class="muted" style="font-size:12px">ram 14% · flash 23%</span>
+  </section>
+  <div class="log">
+    <div class="d">pio run -e esp32dev -t upload</div>
+    <div>Linking firmware.elf</div>
+    <div>Chip is ESP32-D0WD-V3</div>
+    <div>Writing at 0x0005a000 (50 %)</div>
+    <div>Writing at 0x0006c000 (62 %)</div>
+  </div>
+  <div class="foot"><div></div></div>
+</div></body></html>
