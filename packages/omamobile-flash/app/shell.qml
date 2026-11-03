@@ -375,6 +375,20 @@ ShellRoot {
       Rectangle {
         width: parent.width; height: 4; radius: 2; color: app.line; clip: true
         Rectangle { height: parent.height; radius: 2; color: app.fg; width: parent.width * Math.max(0, app.progress) / 100; visible: app.progress >= 0 }
+        // Build, clean and setup print no percentage: a segment sweeps
+        // while pio works, so the window doesn't look stuck.
+        Rectangle {
+          id: sweep
+          readonly property bool busy: app.action !== "" && app.progress < 0
+          visible: busy
+          width: parent.width / 4; height: parent.height; radius: 2; color: app.fg
+          SequentialAnimation on x {
+            running: sweep.busy
+            loops: Animation.Infinite
+            NumberAnimation { from: 0; to: sweep.parent.width - sweep.width; duration: 900; easing.type: Easing.InOutQuad }
+            NumberAnimation { from: sweep.parent.width - sweep.width; to: 0; duration: 900; easing.type: Easing.InOutQuad }
+          }
+        }
       }
 
       Item { width: 1; height: 20 }
