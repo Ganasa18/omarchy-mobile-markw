@@ -10,6 +10,8 @@
 #     board being flashed),
 #   - something plays sound (an ALSA playback stream is running),
 #   - Omarchy's stay-awake indicator is on (quick settings' Stay awake),
+#   - an SSH session is open (over Wi-Fi, omamobile-ssh-wifi: Wi-Fi doesn't
+#     wake the phone, so a suspend would cut the session),
 #   - anything holds a systemd sleep inhibitor in block mode.
 # The power key wakes the phone; after a resume it waits the full delay
 # again before the next suspend.
@@ -55,6 +57,8 @@ awake_reason() {
   for f in "$root"/home/*/.local/state/omarchy/indicators/stay-awake; do
     [[ -e $f ]] && { echo "Stay awake is on"; return; }
   done
+  f=$(ss -Htn state established '( sport = :22 )' 2>/dev/null | head -n1)
+  [[ -n $f ]] && { echo "SSH session open"; return; }
   f=$(systemd-inhibit --list --mode=block --what=sleep --no-legend 2>/dev/null | head -n1)
   [[ -n $f ]] && { echo "sleep inhibitor: ${f%%  *}"; return; }
 }

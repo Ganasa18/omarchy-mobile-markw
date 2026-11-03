@@ -37,12 +37,16 @@ cat >"$t/bin/systemd-inhibit" <<'EOF'
 #!/bin/bash
 cat "$FAKE_INHIBIT" 2>/dev/null
 EOF
+cat >"$t/bin/ss" <<'EOF'
+#!/bin/bash
+cat "$FAKE_SS" 2>/dev/null
+EOF
 cat >"$t/bin/systemctl" <<'EOF'
 #!/bin/bash
 echo "systemctl must not run in --check" >&2; exit 99
 EOF
 chmod +x "$t"/bin/*
-export PATH="$t/bin:$PATH" OMAMOBILE_AUTOSUSPEND_ROOT=$r FAKE_DPMS=$t/dpms FAKE_INHIBIT=$t/inhibit
+export PATH="$t/bin:$PATH" OMAMOBILE_AUTOSUSPEND_ROOT=$r FAKE_DPMS=$t/dpms FAKE_INHIBIT=$t/inhibit FAKE_SS=$t/ss
 
 check() { bash vendor/omamobile-autosuspend --check | tail -n1; }
 expect() { local got; got=$(check); [[ $got == "$1" ]] || fail "$2: got '$got', want '$1'"; pass "$2"; }
@@ -62,6 +66,8 @@ echo 'state: RUNNING' >"$r/proc/asound/card0/pcm0p/sub0/status"; expect "awake: 
 echo 'closed' >"$r/proc/asound/card0/pcm0p/sub0/status"
 touch "$r/home/u/.local/state/omarchy/indicators/stay-awake"; expect "awake: Stay awake is on" "Stay awake keeps it awake"
 rm "$r/home/u/.local/state/omarchy/indicators/stay-awake"
+printf '0 0 192.0.2.17:22 192.0.2.40:51234\n' >"$t/ss"; expect "awake: SSH session open" "an SSH session keeps it awake"
+rm "$t/ss"
 printf 'mpv  1000 u 123 mpv sleep Playing block\n' >"$t/inhibit"; expect "awake: sleep inhibitor: mpv" "a block sleep inhibitor keeps it awake"
 rm "$t/inhibit"
 rm "$r/run/user/1000/hypr/sig1/.socket.sock"; expect "screen on" "no Hyprland answering: never suspend"
