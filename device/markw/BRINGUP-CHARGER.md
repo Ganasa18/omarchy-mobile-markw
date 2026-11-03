@@ -1,9 +1,10 @@
 <!-- SPDX-License-Identifier: MIT -->
 # markw: charger and fuel gauge (runbook)
 
-Status: the charger stops in an error state on the laptop's USB port, and
-the driver reports the idle battery as "Discharging" (2026-11-02,
-`7.1.3-msm8953-oma2`). Nothing has been written to the charger.
+Status: the charger stops in an error state (batt-ov) near 4.37 V and
+never restarts, so the battery stays at about 90 % (2026-11-02,
+`7.1.3-msm8953-oma3`). Nothing has been written to the charger. Next:
+C1-C3 below; C3 is the first write and the owner's go.
 
 ## Facts
 
@@ -83,3 +84,39 @@ observation: nothing writes to the charger.
   charger's battery-voltage comparator reads well above what the fuel
   gauge reports. Telling the two apart, or clearing the state, needs a
   write to the charger: the owner's call, not yet done.
+
+## What the driver leaves alone, and the next runbook (2026-11-03)
+
+From the oma3 source (`drivers/power/supply/qcom-smbchg.c`):
+
+- The driver never writes the charger's recharge and termination
+  configuration: `CHGR_CFG1` 0x10fb (recharge and termination source,
+  analog or fuel gauge), `CHGR_CFG2` 0x10fc (auto-recharge, current
+  termination, charge-enable source) and `CHGR_CFG` 0x10ff (recharge
+  threshold, 100 or 200 mV below float) keep what the bootloader or the
+  PMIC's reset left. Its recharge handler says "Auto-recharge is enabled,
+  nothing to do here", which nobody checked on markw.
+- `batt-ov` has no handler, and `chg-error` only logs and notifies. So
+  nothing in Linux restarts charging after a batt-ov.
+- With a 200 mV threshold, recharge would start at about 4.18 V. On the
+  laptop the phone runs from USB and the battery holds 4.20 V, so it would
+  never get there: that alone would explain a battery that sits at about
+  90 % for hours.
+- The driver's one way to restart the charge path is the USB supply's
+  writable `online` (`smbchg_usb_enable`, the `USBIN_SUSPEND` bit): 0
+  suspends the input, 1 resumes it. The data link stays up (VBUS is
+  still there). A replug did the same on 2026-11-02 and cleared
+  chg-error.
+
+| # | Step | Expect / Pass | Stop if | Rollback | Risk |
+| --- | --- | --- | --- | --- | --- |
+| C1 | Read-only, while stuck (chg-error and batt-ov set, about 4.20 V): `grep -E '^(10f4\|10f5\|10f7\|10f9\|10fb\|10fc\|10fd\|10ff\|1210\|1242):' /sys/kernel/debug/regmap/0-02/registers` | the values, decoded here: recharge source and threshold, auto-recharge on or off, termination on or off | the file is missing (find the SMBCHG regmap first; read nothing else) | — | none |
+| C2 | Read-only: charge from a wall adapter for an hour, logger running | DCP, input limit above 500 mA; whether tcc (charge done) fires near 100 %, or batt-ov comes first | battery past 40 °C | unplug | low |
+| C3 | **Owner's go (a write through the driver).** While stuck, as in C1: `echo 0 > /sys/class/power_supply/<usb supply>/online`, 10 s, `echo 1 >` the same; watch the logger | chg-error clears, charging resumes (taper, current positive); then whether batt-ov trips again and at what voltage | batt-ov or chg-error set right after the resume with the battery under 4.30 V (a comparator offset, not a latch); battery past 40 °C | `echo 1 >` `online` (the default); unplug and replug | low |
+
+C1 says whether auto-recharge is on at all; C2 whether a stronger
+charger reaches termination before batt-ov; C3 whether batt-ov latches
+until the charge path restarts. Only then a fix: likely a driver change
+that sets recharge and termination explicitly (as the battery node
+asks) and restarts the charge path after a batt-ov once the voltage
+has dropped, with a patch in `device/markw/kernel/patches`.
