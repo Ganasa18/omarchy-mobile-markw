@@ -5,7 +5,10 @@
 # the window; the subcommands are what the window asks, as JSON:
 #
 #   omamobile-flash                  open the window
-#   omamobile-flash projects         folders under ~ with a platformio.ini, newest first
+#   omamobile-flash projects         folders under ~ with a platformio.ini or an Arduino .ino, newest first
+#   omamobile-flash dirs DIR         DIR's folders for the folder browser, projects marked
+#   omamobile-flash sketch DIR       an Arduino sketch's .ino, likely board and serial speed
+#   omamobile-flash init DIR BOARD [SPEED]   write a platformio.ini beside the sketch
 #   omamobile-flash envs DIR         the [env:NAME] sections, default first, with monitor_speed
 #   omamobile-flash ports            USB serial ports (ttyUSB*, ttyACM*) with the adapter's name
 #   omamobile-flash monitor PORT [BAUD]   print the port's lines until stopped
@@ -37,17 +40,91 @@ serial_python() {
 die() { echo "omamobile-flash: $*" >&2; exit 1; }
 json_str() { printf '"%s"' "$(sed 's/["\\]/\\&/g' <<<"$1")"; }
 
+# "pio" for a folder with platformio.ini, "ino" for an Arduino sketch
+# folder without one, else nothing.
+kind_of() {
+  local f
+  [[ -f $1/platformio.ini ]] && { echo pio; return; }
+  for f in "$1"/*.ino; do [[ -f $f ]] && { echo ino; return; }; done
+}
+
 cmd_projects() {
-  local first=1 dir
+  local first=1 kind dir
   printf '['
-  # A project is a folder holding platformio.ini; PlatformIO's own trees and
-  # build folders are skipped.
-  while IFS= read -r dir; do
+  # Hidden folders (PlatformIO's ~/.platformio and .pio, caches) are skipped.
+  # An .ino inside a PlatformIO project (its src/) is that project's, not a
+  # sketch of its own.
+  while IFS=$'\t' read -r kind dir; do
     (( first )) || printf ','; first=0
-    json_str "$dir"
-  done < <(find "$HOME" -maxdepth 4 \( -name .platformio -o -name .pio -o -name node_modules -o -name '.*cache*' \) -prune \
-             -o -name platformio.ini -type f -printf '%T@ %h\n' 2>/dev/null | sort -rn | cut -d' ' -f2-)
+    printf '{"path":%s,"kind":"%s"}' "$(json_str "$dir")" "$kind"
+  done < <(find "$HOME" -mindepth 1 -maxdepth 4 \( -name '.*' -o -name node_modules \) -prune \
+             -o \( -name platformio.ini -o -name '*.ino' \) -type f -printf '%T@\t%h\t%f\n' 2>/dev/null |
+           awk -F'\t' '
+             { if ($3 == "platformio.ini") pio[$2] = 1; if (!($2 in t) || $1 > t[$2]) t[$2] = $1 }
+             END { for (d in t) {
+                     k = (d in pio) ? "pio" : "ino"; up = d; sub(/\/[^\/]*$/, "", up)
+                     if (k == "ino" && (up in pio)) continue
+                     printf "%s\t%s\t%s\n", t[d], k, d } }' | sort -t$'\t' -k1,1rn | cut -f2-)
   printf ']\n'
+}
+
+# The folder browser: DIR's own mark and its folders (hidden ones left out)
+# by name, each marked like kind_of.
+cmd_dirs() {
+  local dir=${1:?dirs DIR} sub first=1
+  [[ -d $dir ]] || die "not a folder: $dir"
+  printf '{"kind":"%s","dirs":[' "$(kind_of "$dir")"
+  for sub in "$dir"/*/; do
+    [[ -d $sub ]] || continue
+    sub=${sub%/}
+    (( first )) || printf ','; first=0
+    printf '{"name":%s,"kind":"%s"}' "$(json_str "${sub##*/}")" "$(kind_of "$sub")"
+  done
+  printf ']}\n'
+}
+
+# An Arduino IDE sketch: its .ino (the one named after the folder first), the
+# board from arduino-cli's build folder (build/esp32.esp32.nodemcu-32s) or
+# esp32dev, and the speed of its Serial.begin() or 115200.
+cmd_sketch() {
+  local dir=${1:?sketch DIR} ino="" board=esp32dev speed f b
+  for f in "$dir"/*.ino; do [[ -f $f ]] && { ino=${f##*/}; break; }; done
+  [[ -n $ino ]] || die "no .ino in $dir"
+  [[ -f $dir/${dir##*/}.ino ]] && ino=${dir##*/}.ino
+  for b in "$dir"/build/*.*.*/; do
+    [[ -d $b ]] || continue
+    b=${b%/}; b=${b##*.}
+    [[ $b =~ ^[A-Za-z0-9_-]+$ ]] && { board=$b; break; }
+  done
+  # Arduino's generic ESP32 is PlatformIO's esp32dev.
+  [[ $board == esp32 ]] && board=esp32dev
+  speed=$(grep -ohE 'Serial\.begin\( *[0-9]+' "$dir/$ino" 2>/dev/null | head -n1 | grep -oE '[0-9]+$')
+  printf '{"ino":%s,"board":%s,"speed":%d}\n' "$(json_str "$ino")" "$(json_str "$board")" "${speed:-115200}"
+}
+
+# A platformio.ini that builds the sketch where it is (src_dir = .), so the
+# Arduino IDE still opens the folder; only the sketch's top-level sources and
+# its src/ are built, never build/ or .pio/. Never replaces one.
+cmd_init() {
+  local dir=${1:?init DIR BOARD [SPEED]} board=${2:?init DIR BOARD [SPEED]} speed=${3:-115200} platform=espressif32
+  [[ -e $dir/platformio.ini ]] && die "$dir already has a platformio.ini"
+  [[ $(kind_of "$dir") == ino ]] || die "no .ino in $dir"
+  [[ $board =~ ^[A-Za-z0-9_-]+$ ]] || die "board: a PlatformIO board id"
+  [[ $speed =~ ^[0-9]+$ ]] || die "speed: a number"
+  case $board in nodemcuv2|d1_mini|esp01_1m|esp12e) platform=espressif8266 ;; esac
+  cat >"$dir/platformio.ini" <<EOF || die "cannot write $dir/platformio.ini"
+; Written by Flash (omamobile-flash) for the Arduino sketch in this folder.
+[platformio]
+src_dir = .
+
+[env:$board]
+platform = $platform
+board = $board
+framework = arduino
+monitor_speed = $speed
+build_src_filter = +<*.ino> +<*.cpp> +<*.c> +<*.S> +<src/>
+EOF
+  echo "$dir"
 }
 
 # [env:NAME] sections in file order, default_envs first; monitor_speed from
@@ -158,9 +235,12 @@ case ${1:-} in
   status) cmd_status ;;
   setup) cmd_setup ;;
   projects) cmd_projects ;;
+  dirs) cmd_dirs "${2:-}" ;;
+  sketch) cmd_sketch "${2:-}" ;;
+  init) cmd_init "${2:-}" "${3:-}" "${4:-}" ;;
   envs) cmd_envs "${2:-}" ;;
   ports) cmd_ports ;;
   monitor) cmd_monitor "${2:-}" "${3:-}" ;;
   example) cmd_example ;;
-  *) sed -n '7,14s/^#   //p' "$0" >&2; exit 2 ;;
+  *) sed -n '7,17s/^#   //p' "$0" >&2; exit 2 ;;
 esac

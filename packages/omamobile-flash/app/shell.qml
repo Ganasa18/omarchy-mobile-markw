@@ -4,7 +4,8 @@ import Quickshell
 import Quickshell.Io
 
 // Flash: a PlatformIO front end in an ordinary window, so it tiles beside a
-// terminal. Pick a project, an env and a port; build, upload, watch the
+// terminal. Pick a project (or browse to any folder; an Arduino IDE sketch
+// gets a platformio.ini), an env and a port; build, upload, watch the
 // serial port or clean. Everything runs "pio" or omamobile-flash (the
 // helper beside it). Drawn in the Omarchy theme's text colour only
 // (docs/design/dev-tools): the chosen action is inverted, outer corners are
@@ -34,7 +35,7 @@ ShellRoot {
   readonly property int gap: 4
 
   // ------------------------------------------------------------ state
-  property var projects: []
+  property var projects: []           // [{path, kind: pio | ino}]
   property string project: ""
   property var envs: []
   property string env: ""
@@ -50,13 +51,22 @@ ShellRoot {
   property string tab: "output"
   property var outputLines: []
   property var serialLines: []
-  property string picking: ""         // project | env | port while the list is up
+  property string picking: ""         // project | env | port | browse | sketch | board while the sheet is up
+  property string browseDir: ""
+  property string browseKind: ""      // the browsed folder's own mark: pio, ino or ""
+  property var browseDirs: []
+  property string sketchDir: ""       // an Arduino sketch waiting for its platformio.ini
+  property string sketchIno: ""
+  property string board: ""
+  property int sketchSpeed: 115200
+  readonly property var boards: ["esp32dev", "nodemcu-32s", "esp32-s3-devkitc-1", "esp32-c3-devkitm-1", "nodemcuv2", "d1_mini"]
   property string pioPath: ""         // from "omamobile-flash status"; "" = not installed
   property string pioVersion: ""
   property bool pioKnown: false
 
   readonly property string projectName: project ? project.replace(/\/+$/, "").split("/").pop() : ""
-  readonly property string shortProject: project.indexOf(home) === 0 ? "~" + project.slice(home.length) : project
+  readonly property string shortProject: shortPath(project)
+  function shortPath(dir) { return dir.indexOf(home) === 0 ? "~" + dir.slice(home.length) : dir }
   readonly property string portName: {
     for (var i = 0; i < ports.length; i++) if (ports[i].path === port) return ports[i].name
     return ""
@@ -92,15 +102,19 @@ ShellRoot {
   Asker { id: askEnvs; kind: "envs" }
   Asker { id: askPorts; kind: "ports" }
   Asker { id: askExample; kind: "example" }
+  Asker { id: askDirs; kind: "dirs" }
+  Asker { id: askSketch; kind: "sketch" }
+  Asker { id: askInit; kind: "init" }
   function ask(args, handler) {
-    ({ status: askStatus, projects: askProjects, envs: askEnvs, ports: askPorts, example: askExample })[handler].ask(args)
+    ({ status: askStatus, projects: askProjects, envs: askEnvs, ports: askPorts, example: askExample,
+       dirs: askDirs, sketch: askSketch, init: askInit })[handler].ask(args)
   }
   function answer(handler, text) {
     var data = null
-    if (handler !== "example") { try { data = JSON.parse(text) } catch (error) { return } }
+    if (handler !== "example" && handler !== "init") { try { data = JSON.parse(text) } catch (error) { return } }
     if (handler === "projects") {
       projects = data
-      if (!project && data.length) setProject(data[0])
+      if (!project) for (var k = 0; k < data.length; k++) if (data[k].kind === "pio") { setProject(data[k].path); break }
     } else if (handler === "envs") {
       envs = data
       var keep = false
@@ -113,10 +127,30 @@ ShellRoot {
       if (!still) port = data.length ? data[0].path : ""
     } else if (handler === "status") {
       pioPath = data.pio; pioVersion = data.version; pioKnown = true
-    } else if (handler === "example") {
+    } else if (handler === "dirs") {
+      browseKind = data.kind; browseDirs = data.dirs
+    } else if (handler === "sketch") {
+      sketchIno = data.ino; board = data.board; sketchSpeed = data.speed
+      picking = "sketch"
+    } else if (handler === "example" || handler === "init") {
+      if (!text.trim()) { result = handler === "init" ? "could not write platformio.ini" : "could not copy the example"; picking = ""; return }
       setProject(text.trim())
+      picking = ""
       ask(["projects"], "projects")
     }
+  }
+  // The project list is scanned again each time it opens.
+  function openProjects() { picking = "project"; ask(["projects"], "projects") }
+  function browse(dir) {
+    browseDir = dir; browseKind = ""; browseDirs = []
+    picking = "browse"
+    ask(["dirs", dir], "dirs")
+  }
+  // A PlatformIO folder becomes the project; a sketch first gets its
+  // platformio.ini from the sketch sheet.
+  function choose(dir, kind) {
+    if (kind === "pio") { setProject(dir); picking = "" }
+    else if (kind === "ino") { sketchDir = dir; ask(["sketch", dir], "sketch") }
   }
   function setProject(dir) {
     project = dir
@@ -214,6 +248,38 @@ ShellRoot {
     MouseArea { anchors.fill: parent; onClicked: field.tapped() }
   }
 
+  // A full-width button: inverted for the sheet's action, an outline otherwise.
+  component Button: Rectangle {
+    id: button
+    property string label: ""
+    property bool primary: true
+    signal tapped()
+    width: parent ? parent.width : 0
+    height: app.touch
+    radius: 8
+    color: button.primary ? (buttonTouch.pressed ? Qt.rgba(app.fg.r, app.fg.g, app.fg.b, 0.85) : app.fg)
+      : buttonTouch.pressed ? Qt.rgba(app.fg.r, app.fg.g, app.fg.b, 0.08) : "transparent"
+    border.width: button.primary ? 0 : 1
+    border.color: app.line
+    Text {
+      anchors.centerIn: parent
+      width: Math.min(implicitWidth, parent.width - 24)
+      elide: Text.ElideLeft
+      text: button.label; color: button.primary ? app.bg : app.fg
+      font.family: app.mono; font.pixelSize: 15; font.bold: button.primary
+    }
+    MouseArea { id: buttonTouch; anchors.fill: parent; onClicked: button.tapped() }
+  }
+
+  // A small dimmed heading above a list.
+  component Heading: Text {
+    width: parent ? parent.width : 0
+    height: 28
+    verticalAlignment: Text.AlignBottom
+    bottomPadding: 6
+    color: app.dim; font.family: app.mono; font.pixelSize: 12
+  }
+
   // ------------------------------------------------------------ window
   FloatingWindow {
     id: win
@@ -237,8 +303,8 @@ ShellRoot {
       Rectangle { width: parent.width; height: 1; color: app.line }
       Field {
         label: "Project"
-        value: app.project ? app.shortProject : (app.projects.length ? "choose" : "none: tap for an example")
-        onTapped: app.projects.length ? app.picking = "project" : app.ask(["example"], "example")
+        value: app.project ? app.shortProject : "choose"
+        onTapped: app.openProjects()
       }
       Field { label: "Env"; value: app.env || "none"; onTapped: if (app.envs.length) app.picking = "env" }
       Field {
@@ -365,44 +431,148 @@ ShellRoot {
       }
     }
 
-    // The choice list for a field, over everything.
+    // The sheet over everything: a field's choices, the project list, the
+    // folder browser, and a sketch's platformio.ini.
     Rectangle {
+      id: sheet
       anchors.fill: parent
       visible: app.picking !== ""
       color: app.bg
       MouseArea { anchors.fill: parent }
-      readonly property var options: app.picking === "project" ? app.projects
-        : app.picking === "env" ? app.envs.map(e => e.name)
-        : app.picking === "port" ? app.ports.map(p => p.path) : []
-      Column {
-        x: app.side; y: 12; width: parent.width - app.side * 2
-        Item {
-          width: parent.width; height: 56
-          Text { anchors.verticalCenter: parent.verticalCenter; text: app.picking; color: app.fg; font.family: app.mono; font.pixelSize: 19; font.bold: true }
-          Text {
-            anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
-            text: "close"; color: app.dim; font.family: app.mono; font.pixelSize: 15
-            MouseArea { anchors.fill: parent; anchors.margins: -14; onClicked: app.picking = "" }
+      readonly property var options: app.picking === "env" ? app.envs.map(e => e.name)
+        : app.picking === "port" ? app.ports.map(p => p.path)
+        : app.picking === "board" ? app.boards : []
+      // Where the corner goes: the board list back to its sketch, the browser
+      // and the sketch back to the project list; the rest closes.
+      readonly property string back: app.picking === "board" ? "sketch"
+        : app.picking === "browse" || app.picking === "sketch" ? "project" : ""
+      readonly property bool atHome: app.browseDir.replace(/\/+$/, "") === app.home.replace(/\/+$/, "")
+
+      Item {
+        id: sheetHead
+        x: app.side; y: 12; width: parent.width - app.side * 2; height: 56
+        Text {
+          anchors.verticalCenter: parent.verticalCenter
+          text: ({ browse: "folder" })[app.picking] || app.picking
+          color: app.fg; font.family: app.mono; font.pixelSize: 19; font.bold: true
+        }
+        Text {
+          anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+          text: sheet.back ? "back" : "close"; color: app.dim; font.family: app.mono; font.pixelSize: 15
+          MouseArea {
+            anchors.fill: parent; anchors.margins: -14
+            onClicked: sheet.back === "project" ? app.openProjects() : app.picking = sheet.back
           }
         }
-        Rectangle { width: parent.width; height: 1; color: app.line }
-        Repeater {
-          model: parent.parent.options
-          delegate: Field {
-            required property string modelData
-            label: app.picking === "project" && modelData.indexOf(app.home) === 0 ? "~" + modelData.slice(app.home.length) : modelData
-            value: (app.picking === "project" && modelData === app.project) || (app.picking === "env" && modelData === app.env)
-              || (app.picking === "port" && modelData === app.port) ? "current" : ""
-            onTapped: {
-              if (app.picking === "project") app.setProject(modelData)
-              else if (app.picking === "env") {
-                app.env = modelData
-                for (var i = 0; i < app.envs.length; i++) if (app.envs[i].name === modelData) app.speed = app.envs[i].speed
-              } else app.port = modelData
-              app.picking = ""
+      }
+
+      Flickable {
+        x: app.side; width: parent.width - app.side * 2
+        anchors.top: sheetHead.bottom; anchors.bottom: sheetFoot.top; anchors.bottomMargin: 12
+        contentHeight: body.height
+        clip: true
+        Column {
+          id: body
+          width: parent.width
+
+          // env, port, board: one row per choice
+          Rectangle { visible: sheet.options.length > 0; width: parent.width; height: 1; color: app.line }
+          Repeater {
+            model: sheet.options
+            delegate: Field {
+              required property string modelData
+              label: modelData
+              value: (app.picking === "env" && modelData === app.env) || (app.picking === "port" && modelData === app.port)
+                || (app.picking === "board" && modelData === app.board) ? "current" : ""
+              onTapped: {
+                if (app.picking === "board") { app.board = modelData; app.picking = "sketch"; return }
+                if (app.picking === "env") {
+                  app.env = modelData
+                  for (var i = 0; i < app.envs.length; i++) if (app.envs[i].name === modelData) app.speed = app.envs[i].speed
+                } else app.port = modelData
+                app.picking = ""
+              }
             }
           }
+
+          // project: what the scan found, then any folder
+          Heading { visible: app.picking === "project" && app.projects.length > 0; text: "recent" }
+          Rectangle { visible: app.picking === "project" && app.projects.length > 0; width: parent.width; height: 1; color: app.line }
+          Repeater {
+            model: app.picking === "project" ? app.projects : []
+            delegate: Field {
+              required property var modelData
+              label: app.shortPath(modelData.path)
+              value: modelData.path === app.project ? "current" : modelData.kind
+              onTapped: app.choose(modelData.path, modelData.kind)
+            }
+          }
+          Item { visible: app.picking === "project"; width: 1; height: 24 }
+          Rectangle { visible: app.picking === "project"; width: parent.width; height: 1; color: app.line }
+          Field { visible: app.picking === "project"; label: "Browse folders…"; value: "›"; onTapped: app.browse(app.home) }
+          Field {
+            visible: app.picking === "project" && app.projects.length === 0
+            label: "Copy the blink example"; value: "›"
+            onTapped: app.ask(["example"], "example")
+          }
+          Text {
+            visible: app.picking === "project"
+            width: parent.width; topPadding: 12; wrapMode: Text.WordWrap
+            text: "Folders under ~ with a platformio.ini (pio) or an Arduino sketch (ino), four levels deep."
+            color: app.dim; font.family: app.mono; font.pixelSize: 12; lineHeight: 1.3
+          }
+
+          // browse: ~ and below, hidden folders left out
+          Heading { visible: app.picking === "browse"; text: app.shortPath(app.browseDir) }
+          Rectangle { visible: app.picking === "browse"; width: parent.width; height: 1; color: app.line }
+          Field {
+            visible: app.picking === "browse" && !sheet.atHome
+            label: "‹ .."
+            onTapped: app.browse(app.browseDir.replace(/\/+$/, "").replace(/\/[^\/]+$/, "") || "/")
+          }
+          Repeater {
+            model: app.picking === "browse" ? app.browseDirs : []
+            delegate: Field {
+              required property var modelData
+              label: modelData.name
+              value: modelData.kind ? modelData.kind + " ›" : "›"
+              onTapped: app.browse(app.browseDir.replace(/\/+$/, "") + "/" + modelData.name)
+            }
+          }
+
+          // sketch: an Arduino IDE folder without platformio.ini
+          Heading { visible: app.picking === "sketch"; text: "no platformio.ini yet" }
+          Rectangle { visible: app.picking === "sketch"; width: parent.width; height: 1; color: app.line }
+          Field { visible: app.picking === "sketch"; label: "Sketch"; value: app.sketchIno }
+          Field { visible: app.picking === "sketch"; label: "Board"; value: app.board + " ›"; onTapped: app.picking = "board" }
+          Field { visible: app.picking === "sketch"; label: "Speed"; value: String(app.sketchSpeed) }
+          Text {
+            visible: app.picking === "sketch"
+            width: parent.width; topPadding: 12; wrapMode: Text.WordWrap
+            text: "Flash writes a platformio.ini in " + app.shortPath(app.sketchDir)
+              + " (src_dir = .). The sketch stays where it is, and the Arduino IDE still opens it."
+            color: app.dim; font.family: app.mono; font.pixelSize: 12; lineHeight: 1.3
+          }
         }
+      }
+
+      Column {
+        id: sheetFoot
+        x: app.side; width: parent.width - app.side * 2
+        anchors.bottom: parent.bottom; anchors.bottomMargin: 16
+        spacing: 8
+        Button {
+          visible: app.picking === "browse"
+          primary: app.browseKind !== ""
+          label: app.browseKind === "" ? "no project here" : "choose " + app.shortPath(app.browseDir)
+          onTapped: app.choose(app.browseDir, app.browseKind)
+        }
+        Button {
+          visible: app.picking === "sketch"
+          label: "create platformio.ini"
+          onTapped: app.ask(["init", app.sketchDir, app.board, String(app.sketchSpeed)], "init")
+        }
+        Button { visible: app.picking === "sketch"; primary: false; label: "cancel"; onTapped: app.openProjects() }
       }
     }
   }

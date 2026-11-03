@@ -1,0 +1,65 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: MIT -->
+<html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Flash Folder</title><link rel="stylesheet" href="mockup.css">
+<style>
+  .wrap { display: flex; gap: 24px; flex-wrap: wrap; justify-content: center; padding: 16px; }
+  .wrap .phone { margin: 0; min-height: 760px; }
+  .path { font-size: 12px; color: var(--dim); padding: 0 20px 12px; }
+  .item .tag { font-size: 11px; color: var(--dim); }
+  .item.up { color: var(--dim); }
+  .pick { margin: auto 20px 16px; height: 48px; display: grid; place-items: center; border-radius: 8px; background: var(--fg); color: var(--bg); }
+  .ghost { margin: 0 20px 16px; height: 48px; display: grid; place-items: center; border-radius: 8px; border: 1px solid var(--line); }
+  .cap { text-align: center; font-size: 12px; color: var(--dim); margin-top: 8px; }
+</style></head>
+<body><div class="wrap">
+
+<div>
+<div class="phone">
+  <div class="statusbar"><span>01:42</span><span>68%</span></div>
+  <header><h1>proyek</h1><span class="muted">tutup</span></header>
+  <section>
+    <h2>terakhir</h2>
+    <div class="item"><span>blink</span><span class="tag">pio</span></div>
+    <div class="item"><span>markw-hello</span><span class="tag">ino</span></div>
+  </section>
+  <section>
+    <div class="item"><span>Cari folder lain…</span><span class="muted">›</span></div>
+  </section>
+  <p class="small" style="padding:0 20px">Daftar diperbarui setiap kali dibuka: folder dengan platformio.ini atau sketsa .ino di ~ (4 tingkat).</p>
+</div>
+<div class="cap">1 · pilih proyek</div>
+</div>
+
+<div>
+<div class="phone">
+  <div class="statusbar"><span>01:42</span><span>68%</span></div>
+  <header><h1>folder</h1><span class="muted">batal</span></header>
+  <div class="path">~/esp</div>
+  <section>
+    <div class="item up"><span>‹ ..</span><span></span></div>
+    <div class="item"><span>build</span><span class="muted">›</span></div>
+    <div class="item"><span>markw-hello</span><span class="tag">ino ›</span></div>
+  </section>
+  <div class="pick">pilih ~/esp</div>
+</div>
+<div class="cap">2 · telusuri ~ (tanpa file tersembunyi)</div>
+</div>
+
+<div>
+<div class="phone">
+  <div class="statusbar"><span>01:42</span><span>68%</span></div>
+  <header><h1>flash</h1><span class="muted">markw-hello</span></header>
+  <section>
+    <h2>belum ada platformio.ini</h2>
+    <div class="item"><span>Sketsa</span><span class="v">markw-hello.ino</span></div>
+    <div class="item"><span>Board</span><span class="v">nodemcu-32s ›</span></div>
+    <div class="item"><span>Kecepatan</span><span class="v">115200</span></div>
+  </section>
+  <p class="small" style="padding:0 20px">Flash menulis platformio.ini di folder ini (src_dir = .), sketsa tidak dipindah. Arduino IDE tetap bisa membukanya.</p>
+  <div class="pick" style="margin-top:auto">buat platformio.ini</div>
+  <div class="ghost">batal</div>
+</div>
+<div class="cap">3 · sketsa Arduino tanpa platformio.ini</div>
+</div>
+
+</div></body></html>
