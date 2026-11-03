@@ -121,3 +121,29 @@ Results go here and in NOTES.md, with the date and `uname -r`.
   contents differ only in the build date in `/etc/shadow`.
   `/etc/modprobe.d/omamobile-modem-bringup.conf` on the phone blacklists
   `qcom_q6v5_mss` for step 4 (remove it when the modem is packaged).
+- **2026-11-03, between steps 1 and 4:** the reboot into the probe went
+  through MIUI (ABL ignores `reboot-to bootloader`; then `adb reboot
+  bootloader`). MIUI's modem changed `modemst1`, `modemst2` and `persist`;
+  a fresh read-only backup (`…-after-miui`) was taken by eMMC device type,
+  since the SD card and the eMMC swapped numbers in this boot (eMMC
+  `mmcblk1`): the scripts find partitions by PARTNAME and device type,
+  never by number, and so must any by-hand command.
+- **Step 4: pass** (`probe-m10-modem`). System `running`, no failed units,
+  `remoteproc@4080000` `okay`, `qcom_q6v5_mss` not loaded (blacklisted),
+  Wi-Fi connected; no kernel error that the previous boots lacked.
+- **Step 5: pass.** rmtfs (RAM copies), tqftpserv started; pd-mapper
+  exits with "no pd maps available" (no `.jsn` on this firmware) and is
+  not needed. `modprobe qcom_q6v5_mss`: `remoteproc2`
+  (4080000.remoteproc) available but `offline`, no auto-boot. `echo start`
+  to its `state`: "Booting fw image mba.mbn", "MBA booted without debug
+  policy, loading mpss", "remote processor 4080000.remoteproc is now up"
+  1.1 s later; `running` for the next 30 s and on. The modem's QMI
+  services appeared on QRTR node 0 (WDS, NAS, UIM, DMS, WMS, voice, IPA
+  control, ...). eMMC partitions still `ro=1`. qcom-memshare logged "a
+  request from unknown client (id=1)", WCNSS "unexpected response to
+  sysmon event"; neither stopped anything.
+- **Step 5b: pass.** `rmnet_ipa0` and `ipa_lan0` appeared with the modem.
+- **Step 6, without a SIM:** ModemManager 1.24.2 created the modem with
+  the `qcom-soc` plugin (`qrtr0` control, `rmnet_ipa0` data) and stopped
+  at `failed` / `sim-missing` ("GW primary session index unknown"), as
+  expected with no SIM; with one in the tray, step 6 again.
