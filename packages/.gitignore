@@ -1,3 +1,5 @@
 *.pkg.tar.*
 src/
 pkg/
+# makepkg's src/ above; an example project's own src/ is source.
+!omamobile-flash/example/*/src/
