@@ -152,7 +152,9 @@ cmd_setup() {
 }
 
 case ${1:-} in
-  "") exec quickshell -p "$SHARE/shell.qml" ;;
+  # From home: pio returns to the folder it started in, and fails when the
+  # window was opened from one the user can't enter (a root shell's /root).
+  "") cd "$HOME" && exec quickshell -p "$SHARE/shell.qml" ;;
   status) cmd_status ;;
   setup) cmd_setup ;;
   projects) cmd_projects ;;

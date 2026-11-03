@@ -73,6 +73,7 @@ ShellRoot {
   // handler; a question asked while its kind runs is asked again after.
   component Asker: Process {
     id: asker
+    workingDirectory: app.home
     property string kind: ""
     property var pending: null
     function ask(args) {
@@ -159,6 +160,7 @@ ShellRoot {
   }
   Process {
     id: pio
+    workingDirectory: app.home
     stdout: SplitParser { onRead: data => { app.parse(data); app.append("output", data) } }
     stderr: SplitParser { onRead: data => { app.parse(data); app.append("output", data) } }
     onExited: (code, status) => {
@@ -183,6 +185,7 @@ ShellRoot {
   function stopMonitor() { monitor.running = false; monitoring = false }
   Process {
     id: monitor
+    workingDirectory: app.home
     stdout: SplitParser { onRead: data => app.append("serial", data) }
     stderr: SplitParser { onRead: data => app.append("serial", data) }
     onExited: app.monitoring = false
