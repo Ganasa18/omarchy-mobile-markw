@@ -27,6 +27,13 @@ Flash (quickshell -p /usr/share/omamobile-flash/shell.qml)
   the folder. An existing `platformio.ini` is never replaced.
 - **Env** lists the `[env:NAME]` sections, `default_envs` first; the monitor
   speed comes from `monitor_speed` (else 115200).
+- **Upload** sets the env's `upload_speed` in `platformio.ini` (115200 to
+  921600, or the board's default). Lower it when esptool finds the chip
+  but loses it at "Uploading stub flasher", as over the phone's OTG.
+- **Everything the window shows** (pio, setup, the serial monitor) is also
+  appended to `~/.local/state/omamobile-flash/flash.log`, so a session
+  can be followed over Wi-Fi SSH while the board holds the USB port
+  (`tools/markw-otg-watch`).
 - **Port** lists `/dev/ttyUSB*` and `/dev/ttyACM*`, named by the adapter's
   USB vendor (CP210x, CH340, FTDI, ESP32 USB), and follows the cable.
 - After an upload the Serial tab opens, so the board's first lines show.

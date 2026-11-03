@@ -40,6 +40,8 @@ ShellRoot {
   property var envs: []
   property string env: ""
   property int speed: 115200
+  property int upload: 0              // the env's upload_speed; 0 = the board's default
+  readonly property var uploadSpeeds: ["board default", "115200", "230400", "460800", "921600"]
   property var ports: []
   property string port: ""
   property string action: ""          // build | upload | clean while pio runs
@@ -129,12 +131,15 @@ ShellRoot {
   Asker { id: askDirs; kind: "dirs" }
   Asker { id: askSketch; kind: "sketch" }
   Asker { id: askInit; kind: "init" }
+  Asker { id: askUpload; kind: "upload" }
   function ask(args, handler) {
     ({ status: askStatus, projects: askProjects, envs: askEnvs, ports: askPorts, example: askExample,
-       dirs: askDirs, sketch: askSketch, init: askInit })[handler].ask(args)
+       dirs: askDirs, sketch: askSketch, init: askInit, upload: askUpload })[handler].ask(args)
   }
   function answer(handler, text) {
     var data = null
+    // upload-speed answers nothing: read the envs back to show what the file says now.
+    if (handler === "upload") { ask(["envs", project], "envs"); return }
     if (handler !== "example" && handler !== "init") { try { data = JSON.parse(text) } catch (error) { return } }
     if (handler === "projects") {
       projects = data
@@ -142,8 +147,8 @@ ShellRoot {
     } else if (handler === "envs") {
       envs = data
       var keep = false
-      for (var i = 0; i < data.length; i++) if (data[i].name === env) { keep = true; speed = data[i].speed }
-      if (!keep && data.length) { env = data[0].name; speed = data[0].speed }
+      for (var i = 0; i < data.length; i++) if (data[i].name === env) { keep = true; speed = data[i].speed; upload = data[i].upload }
+      if (!keep && data.length) { env = data[0].name; speed = data[0].speed; upload = data[0].upload }
     } else if (handler === "ports") {
       ports = data
       var still = false
@@ -332,6 +337,13 @@ ShellRoot {
         onTapped: app.openProjects()
       }
       Field { label: "Env"; value: app.env || "none"; onTapped: if (app.envs.length) app.picking = "env" }
+      // Written to the env's upload_speed in platformio.ini; lower it when
+      // esptool loses the board after "Uploading stub flasher".
+      Field {
+        label: "Upload"
+        value: app.env ? (app.upload > 0 ? app.upload + " baud" : "board default") : "–"
+        onTapped: if (app.env && app.action === "") app.picking = "upload"
+      }
       Field {
         label: "Port"
         value: app.port ? app.port.replace(/^\/dev\//, "") + (app.portName ? " · " + app.portName : "") : "no board"
@@ -480,7 +492,8 @@ ShellRoot {
       MouseArea { anchors.fill: parent }
       readonly property var options: app.picking === "env" ? app.envs.map(e => e.name)
         : app.picking === "port" ? app.ports.map(p => p.path)
-        : app.picking === "board" ? app.boards : []
+        : app.picking === "board" ? app.boards
+        : app.picking === "upload" ? app.uploadSpeeds : []
       // Where the corner goes: the board list back to its sketch, the browser
       // and the sketch back to the project list; the rest closes.
       readonly property string back: app.picking === "board" ? "sketch"
@@ -522,12 +535,18 @@ ShellRoot {
               required property string modelData
               label: modelData
               value: (app.picking === "env" && modelData === app.env) || (app.picking === "port" && modelData === app.port)
-                || (app.picking === "board" && modelData === app.board) ? "current" : ""
+                || (app.picking === "board" && modelData === app.board)
+                || (app.picking === "upload" && modelData === (app.upload > 0 ? String(app.upload) : "board default")) ? "current" : ""
               onTapped: {
                 if (app.picking === "board") { app.board = modelData; app.picking = "sketch"; return }
+                if (app.picking === "upload") {
+                  app.ask(["upload-speed", app.project, app.env].concat(modelData === "board default" ? [] : [modelData]), "upload")
+                  app.picking = ""
+                  return
+                }
                 if (app.picking === "env") {
                   app.env = modelData
-                  for (var i = 0; i < app.envs.length; i++) if (app.envs[i].name === modelData) app.speed = app.envs[i].speed
+                  for (var i = 0; i < app.envs.length; i++) if (app.envs[i].name === modelData) { app.speed = app.envs[i].speed; app.upload = app.envs[i].upload }
                 } else app.port = modelData
                 app.picking = ""
               }

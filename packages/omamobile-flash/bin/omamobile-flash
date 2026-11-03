@@ -9,7 +9,8 @@
 #   omamobile-flash dirs DIR         DIR's folders for the folder browser, projects marked
 #   omamobile-flash sketch DIR       an Arduino sketch's .ino, likely board and serial speed
 #   omamobile-flash init DIR BOARD [SPEED]   write a platformio.ini beside the sketch
-#   omamobile-flash envs DIR         the [env:NAME] sections, default first, with monitor_speed
+#   omamobile-flash envs DIR         the [env:NAME] sections, default first, with monitor and upload speeds
+#   omamobile-flash upload-speed DIR ENV [BAUD]   set the env's upload_speed (none: the board's default)
 #   omamobile-flash ports            USB serial ports (ttyUSB*, ttyACM*) with the adapter's name
 #   omamobile-flash monitor PORT [BAUD]   print the port's lines until stopped
 #   omamobile-flash example          copy the blink example to ~/proyek/blink (once)
@@ -142,7 +143,8 @@ EOF
 }
 
 # [env:NAME] sections in file order, default_envs first; monitor_speed from
-# the env, else the shared [env] section, else 115200.
+# the env, else the shared [env] section, else 115200; upload_speed the
+# same way, else 0 (the board's own default).
 cmd_envs() {
   local ini=${1:?envs DIR}/platformio.ini
   [[ -r $ini ]] || die "no platformio.ini in $1"
@@ -153,7 +155,8 @@ cmd_envs() {
                   if (sec ~ /^env:/) { name = substr(sec, 5); order[++n] = name } ; next }
     /=/ { key = trim(substr($0, 1, index($0, "=") - 1)); val = trim(substr($0, index($0, "=") + 1))
           if (sec == "platformio" && key == "default_envs") { split(val, d, /[ ,]+/); def = d[1] }
-          if (key == "monitor_speed") { if (sec == "env") common = val; else if (sec ~ /^env:/) speed[substr(sec, 5)] = val } }
+          if (key == "monitor_speed") { if (sec == "env") common = val; else if (sec ~ /^env:/) speed[substr(sec, 5)] = val }
+          if (key == "upload_speed") { if (sec == "env") cup = val; else if (sec ~ /^env:/) up[substr(sec, 5)] = val } }
     END {
       printf "["
       first = 1
@@ -161,12 +164,35 @@ cmd_envs() {
       for (i = 1; i <= n; i++) if (order[i] != def) emit(order[i])
       print "]"
     }
-    function emit(e,   s) {
+    function emit(e,   s, u) {
       s = (e in speed) ? speed[e] : (common != "" ? common : "115200")
+      u = (e in up) ? up[e] : (cup != "" ? cup : 0)
       if (!first) printf ","
       first = 0
-      printf "{\"name\":\"%s\",\"speed\":%d}", e, s
+      printf "{\"name\":\"%s\",\"speed\":%d,\"upload\":%d}", e, s, u
     }' "$ini"
+}
+
+# Set the env's upload_speed in platformio.ini (no BAUD: remove it, back to
+# the board's default). Only that env's upload_speed lines change; the file
+# keeps its owner and mode.
+cmd_upload_speed() {
+  local dir=${1:?upload-speed DIR ENV [BAUD]} env=${2:?upload-speed DIR ENV [BAUD]} baud=${3:-} ini tmp
+  ini=$dir/platformio.ini
+  [[ -w $ini ]] || die "cannot write $ini"
+  [[ -z $baud || $baud =~ ^[0-9]+$ ]] || die "baud: a number"
+  tmp=$(mktemp "${TMPDIR:-/tmp}/omamobile-flash.XXXXXX") || die "mktemp failed"
+  if ! awk -v env="env:$env" -v baud="$baud" '
+    function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+    /^[ \t]*\[/ { sec = trim($0); gsub(/^\[|\]$/, "", sec); print
+                  if (sec == env) { found = 1; if (baud != "") print "upload_speed = " baud }
+                  next }
+    sec == env && /^[ \t]*upload_speed[ \t]*=/ { next }
+    { print }
+    END { if (!found) exit 3 }' "$ini" >"$tmp"; then
+    rm -f "$tmp"; die "no [env:$env] in $ini"
+  fi
+  cat "$tmp" >"$ini"; rm -f "$tmp"
 }
 
 cmd_ports() {
@@ -259,8 +285,9 @@ case ${1:-} in
   sketch) cmd_sketch "${2:-}" ;;
   init) cmd_init "${2:-}" "${3:-}" "${4:-}" ;;
   envs) cmd_envs "${2:-}" ;;
+  upload-speed) cmd_upload_speed "${2:-}" "${3:-}" "${4:-}" ;;
   ports) cmd_ports ;;
   monitor) cmd_monitor "${2:-}" "${3:-}" ;;
   example) cmd_example ;;
-  *) sed -n '7,18s/^#   //p' "$0" >&2; exit 2 ;;
+  *) sed -n '7,19s/^#   //p' "$0" >&2; exit 2 ;;
 esac

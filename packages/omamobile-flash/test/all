@@ -79,14 +79,14 @@ run init "$h/esp/empty" esp32dev 2>/dev/null && fail "init without an .ino fails
 run init "$h/esp/hello" 'bad board' 2>/dev/null && fail "init checks the board"
 [[ $(run init "$h/esp/hello" nodemcu-32s 9600) == "$h/esp/hello" ]] || fail "init prints the folder"
 grep -cx 'src_dir = .' "$h/esp/hello/platformio.ini" >/dev/null || fail "init builds in place"
-[[ $(run envs "$h/esp/hello") == '[{"name":"nodemcu-32s","speed":9600}]' ]] || fail "init env: $(run envs "$h/esp/hello")"
+[[ $(run envs "$h/esp/hello") == '[{"name":"nodemcu-32s","speed":9600,"upload":0}]' ]] || fail "init env: $(run envs "$h/esp/hello")"
 grep -cx 'platform = espressif32' "$h/esp/hello/platformio.ini" >/dev/null || fail "init platform"
 run init "$h/esp/hello" esp32dev 2>/dev/null && fail "init never replaces a platformio.ini"
 [[ $(run dirs "$h/esp") == *'"name":"hello","kind":"pio"'* ]] || fail "an initialised sketch is a project"
 pass "sketch and init: board from arduino-cli, speed from Serial.begin, written once"
 
-[[ $(run envs "$h/proyek/new") == '[{"name":"s3","speed":921600},{"name":"dev","speed":9600}]' ]] || fail "envs: $(run envs "$h/proyek/new")"
-[[ $(run envs "$h/proyek/old") == '[{"name":"a","speed":115200}]' ]] || fail "envs default speed: $(run envs "$h/proyek/old")"
+[[ $(run envs "$h/proyek/new") == '[{"name":"s3","speed":921600,"upload":0},{"name":"dev","speed":9600,"upload":0}]' ]] || fail "envs: $(run envs "$h/proyek/new")"
+[[ $(run envs "$h/proyek/old") == '[{"name":"a","speed":115200,"upload":0}]' ]] || fail "envs default speed: $(run envs "$h/proyek/old")"
 run envs "$h/proyek" 2>/dev/null && fail "envs without platformio.ini fails"
 pass "envs: default first, env and shared monitor speeds, 115200 otherwise"
 
@@ -126,3 +126,17 @@ rr true
 sleep 0.2
 [[ -f $lg.1 && $(stat -c %s "$lg") -lt 1000 ]] || fail "the log rolls over"
 pass "run: output and exit code through, logged with a header, rolled over past 2 MB"
+
+# upload-speed: set, replace and remove one env's upload_speed only.
+ini=$h/proyek/new/platformio.ini
+run upload-speed "$h/proyek/new" dev 115200
+[[ $(run envs "$h/proyek/new") == '[{"name":"s3","speed":921600,"upload":0},{"name":"dev","speed":9600,"upload":115200}]' ]] || fail "upload-speed set: $(run envs "$h/proyek/new")"
+run upload-speed "$h/proyek/new" dev 230400
+[[ $(grep -c '^upload_speed' "$ini") == 1 ]] || fail "upload-speed replaces, not adds"
+[[ $(run envs "$h/proyek/new") == *'"name":"dev","speed":9600,"upload":230400'* ]] || fail "upload-speed replace"
+run upload-speed "$h/proyek/new" dev
+grep -c upload_speed "$ini" >/dev/null && fail "upload-speed without a baud removes it"
+grep -cx 'board = esp32-s3-devkitc-1' "$ini" >/dev/null || fail "upload-speed keeps the rest"
+run upload-speed "$h/proyek/new" nope 115200 2>/dev/null && fail "upload-speed of a missing env fails"
+run upload-speed "$h/proyek/new" dev fast 2>/dev/null && fail "upload-speed checks the baud"
+pass "upload-speed: set, replaced, removed, one env only"
