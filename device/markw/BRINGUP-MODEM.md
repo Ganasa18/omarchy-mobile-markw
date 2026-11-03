@@ -3,8 +3,8 @@
 
 Status: step 0 (backup) passed (2026-11-03). The phone runs
 `7.1.3-msm8953-oma3`, which already has the modem and IPA drivers; the
-probe's DTB keeps the modem's node disabled. Next: the userspace packages
-(step 2), blocked on `omarchy update`.
+probe's DTB keeps the modem's node disabled. Steps 0 and 2 passed; next:
+step 3 (rmtfs on RAM copies) and the step 1 probe.
 
 ## Scope (owner's decision, 2026-11-03)
 
@@ -66,7 +66,7 @@ probe's DTB keeps the modem's node disabled. Next: the userspace packages
 | --- | --- | --- | --- | --- | --- |
 | 0 | Read-only backup to the laptop (`~/android/reference/markw/modem-backup/`, never committed): `dd` of `modemst1`, `modemst2`, `fsg`, `fsc`, `sec`, `persist` by `PARTNAME`, plus `sha256sum` on the phone and the laptop | sums match on both sides | a read error | none needed | none |
 | 1 | Laptop: a probe like `probe-m9k-oma3` whose DTB has `remoteproc@4080000` `okay` again (`fdtput`), with `qcom_q6v5_mss` blacklisted on the phone first (`ipa2_lite` already loads at every boot and stays as it is); no kernel change | `fdtget` reads `okay`; the boot.img differs from m9k only in the DTB | — | — | none |
-| 2 | Packages: `rmtfs`, `qrtr`, `tqftpserv`, `pd-mapper`, ModemManager, after `omarchy update` succeeds (or from `[omamobile]`); all services disabled | installed, nothing started | a partial upgrade would be needed | `pacman -R` | low |
+| 2 | Packages: `rmtfs`, `qrtr`, `tqftpserv`, `pd-mapper`, ModemManager; all services disabled | installed, nothing started | a partial upgrade would be needed | `pacman -R` | low |
 | 3 | rmtfs on RAM copies: a unit that copies the four NV partitions from the backup-verified block devices into `/run/omamobile-rmtfs/` (checking the step 0 sums) and runs rmtfs with that directory as its storage; check rmtfs's file-storage option on the phone first | rmtfs starts and waits; partitions still `ro=1` | rmtfs wants the block devices | stop the unit | low |
 | 4 | Boot the step 1 probe (one change: the node), modules still blacklisted | boots; no new errors; remoteproc not started | a hang or new errors | boot `probe-m9k-oma3` | low |
 | 5 | Log streamed, then load the modem: start rmtfs (step 3), pd-mapper and tqftpserv, then `modprobe qcom_q6v5_mss` | `remoteproc2` "running", sysmon and QRTR services listed (`qrtr-lookup`), no crash loop | the modem crashes or restarts in a loop, or eMMC errors | `rmmod`, reboot | medium |
@@ -91,3 +91,15 @@ Results go here and in NOTES.md, with the date and `uname -r`.
   copy loop must give ssh `< /dev/null`, or the first ssh eats the list.
   The sums stay in the backup folder, not here. This backup predates any
   modem start on Linux; take a new one after the next MIUI boot.
+- **Step 2: pass** (owner's go for installing from the synced database
+  without `omarchy update`). pacman's dry run listed only new packages,
+  no upgrades of installed ones; installed `rmtfs-git` r78 and `qrtr-git`
+  r126 (Omarchy's `[aur]`), `modemmanager` 1.24.2 and `ppp` (`extra`).
+  `tqftpserv` 1.3 and `pd-mapper` 1.1 aren't in any repository: built on
+  the phone from `packages/tqftpserv` and `packages/pd-mapper` (`cc`
+  directly; the phone has no make). rmtfs, ModemManager, tqftpserv and
+  pd-mapper are all disabled and inactive. rmtfs takes `-o DIR` for its
+  storage, with the files `modem_fs1`, `modem_fs2`, `modem_fsg` and
+  `modem_fsc`, which step 3 needs. Room for the later `omarchy update`:
+  the owner had PlatformIO's RISC-V toolchain and its download cache
+  removed (12 GiB free of 29 on the card, from 7.6).
