@@ -1,9 +1,8 @@
 <!-- SPDX-License-Identifier: MIT -->
 # markw: suspend (runbook)
 
-Status: the first s2idle attempt never resumed (2026-11-01). Kernel
-`7.1.3-msm8953-oma2` (oma1 plus `CONFIG_PM_DEBUG`) is being built for a
-staged search.
+Status: s2idle works on oma2 and oma3, and auto-suspend steps 8-10 passed
+(2026-11-03). Next: enable it and measure the gain (step 7).
 
 ## Why
 
@@ -118,6 +117,23 @@ with no sleep inhibitor held.
 | 8 | Install device-markw 0.1.7; `omamobile-autosuspend --check` with the screen on, then off | `screen on`, then `awake: USB cable in a computer` | anything else | — | low |
 | 9 | Start it by hand (`systemctl start omamobile-autosuspend`), unplug the cable, power key off; wait 30 s; power key on; plug in and read `journalctl -u omamobile-autosuspend` and `suspend_stats` | one "suspending" and one "resumed", `success` up by one, `fail` 0; screen and Wi-Fi back | no wake on the power key | Power held about 30 s, boot the probe again; `systemctl stop omamobile-autosuspend` | medium |
 | 10 | Same with music playing (`mpv` on a file), then with Stay awake on | "staying awake: sound playing", then "Stay awake is on"; no suspend | it suspends | as 9 | low |
+
+Results (2026-11-03, `7.1.3-msm8953-oma3`, `probe-m9k-oma3`, device-markw
+0.1.13 replacing 0.1.0 and the hand-copied files, all byte-identical):
+
+- **Step 8: pass**: `--check` printed `awake: USB cable in a computer`
+  with the screen off and `screen on` with it lit.
+- **Step 9: pass**: "screen off for 10s: suspending", then "resumed
+  (suspend_stats success 1, fail 0)" after about 52 s asleep, woken by
+  IRQ 68 (`pm8941_pwrkey`), not by the 240 s backup RTC alarm; Wi-Fi came
+  back (the log was read over it).
+- **Step 10: pass**: a quiet test tone (`pw-play`, cable out) gave
+  "staying awake: sound playing", and Stay awake gave "staying awake:
+  Stay awake is on"; no suspend in either. The cable is checked first, so
+  run these with it out, or the log names the cable instead.
+
+Before this, 10 h on battery with the screen mostly off and nothing
+suspending drew 729 mAh, 73 mA on average.
 
 After 8-10 pass: `systemctl enable --now omamobile-autosuspend`, and a
 later package version enables it by default. Step 7 (the battery
