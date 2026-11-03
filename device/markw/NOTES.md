@@ -5,6 +5,13 @@ Findings from real hardware, newest first. Plan: [ENGINEERING-PLAN.md](ENGINEERI
 
 ## 2026-11-03: OTG to an ESP32 from Flash (7.1.3-msm8953-oma3)
 
+- **Modem scope (owner): mobile data only.** SMS and calls are not needed
+  for now and not part of the 90 % gate for the persistent install. Data
+  needs `QCOM_BAM_DMUX` (not set in oma3), rmtfs on RAM copies of the NV
+  partitions, and packages not yet installed: BRINGUP-MODEM.md.
+- **Time zone** was UTC from the image; set to the owner's zone with
+  `timedatectl set-timezone` (the clock itself was NTP-synced).
+
 - **The OTG plug works on oma3**: no hang, the board powered, `ttyUSB0`
   (CP210x) listed. esptool reached the chip, then lost it at the stub
   flasher (a crystal-frequency warning first): a brownout on OTG power,
