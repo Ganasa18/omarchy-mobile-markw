@@ -109,10 +109,18 @@ case ${USB_ROLE:-peripheral} in
         ;;
     *) echo "USB_ROLE must be peripheral or otg" >&2; exit 1 ;;
 esac
-# The modem stays off. The LPASS ADSP (audio) stays off unless ADSP=1: its
-# firmware comes from the root like WCNSS's, and device/markw/BRINGUP-AUDIO.md
-# blacklists qcom_q6v5_pas for the first boot with the node enabled.
-fdtput -t s /out/markw.dtb /soc@0/remoteproc@4080000 status disabled
+# The modem (MPSS) stays off unless MPSS=1: its firmware comes from the root
+# (omamobile-markw-firmware) and rmtfs runs on RAM copies of its NV
+# (device/markw/BRINGUP-MODEM.md), which blacklists qcom_q6v5_mss for the
+# first boot with the node enabled. The LPASS ADSP (audio) stays off unless
+# ADSP=1: its firmware comes from the root like WCNSS's, and
+# device/markw/BRINGUP-AUDIO.md blacklists qcom_q6v5_pas for the first boot
+# with the node enabled.
+case ${MPSS:-0} in
+    0) fdtput -t s /out/markw.dtb /soc@0/remoteproc@4080000 status disabled ;;
+    1) fdtput -t s /out/markw.dtb /soc@0/remoteproc@4080000 status okay ;;
+    *) echo "MPSS must be 0 or 1" >&2; exit 1 ;;
+esac
 case ${ADSP:-0} in
     0) fdtput -t s /out/markw.dtb /soc@0/remoteproc@c200000 status disabled ;;
     1) fdtput -t s /out/markw.dtb /soc@0/remoteproc@c200000 status okay ;;

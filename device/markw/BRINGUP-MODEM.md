@@ -3,8 +3,8 @@
 
 Status: step 0 (backup) passed (2026-11-03). The phone runs
 `7.1.3-msm8953-oma3`, which already has the modem and IPA drivers; the
-probe's DTB keeps the modem's node disabled. Steps 0 and 2 passed; next:
-step 3 (rmtfs on RAM copies) and the step 1 probe.
+probe's DTB keeps the modem's node disabled. Steps 0-3 passed; next:
+step 4, a boot of `probe-m10-modem` (owner's go).
 
 ## Scope (owner's decision, 2026-11-03)
 
@@ -103,3 +103,21 @@ Results go here and in NOTES.md, with the date and `uname -r`.
   `modem_fsc`, which step 3 needs. Room for the later `omarchy update`:
   the owner had PlatformIO's RISC-V toolchain and its download cache
   removed (12 GiB free of 29 on the card, from 7.6).
+- **Step 3: pass** (device-markw 0.1.15, then 0.1.16). The firmware copy
+  took `mba.mbn` and `modem.mdt`/`.b??` from the read-only modem partition
+  (20 files, 43 MB). `omamobile-markw-rmtfs` copied the four NV
+  partitions to root-only files in `/run/omamobile-rmtfs`; the
+  partitions stayed `ro=1`. With `-s`, rmtfs exited ("Failed to get
+  rprocfd": it controls the modem's remoteproc, which the probe has not
+  got); without it, rmtfs ran and `qrtr-lookup` listed its "Remote file
+  system service", next to the "IPA control service" ipa2-lite already
+  offers. The modem partition has no `.jsn` files, so pd-mapper will
+  probably have nothing to serve. rmtfs stopped again; nothing enabled.
+- **Step 1: built** (laptop only). `tools/build-markw-probe --modem`
+  (new: `MPSS=1` in `initramfs/build`) with m9k's inputs (oma3,
+  `markw-keys.dtb`, `--usb-role otg --adsp`, the same root):
+  `~/android/markw/probe-m10-modem`, boot.img sha256 `aceff63c…`. Its DTB
+  differs from m9k's only in `remoteproc@4080000` `okay`; the initramfs
+  contents differ only in the build date in `/etc/shadow`.
+  `/etc/modprobe.d/omamobile-modem-bringup.conf` on the phone blacklists
+  `qcom_q6v5_mss` for step 4 (remove it when the modem is packaged).

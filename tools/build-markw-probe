@@ -5,13 +5,14 @@
 # Usage: tools/build-markw-probe --kernel Image.gz \
 #          --dtb msm8953-xiaomi-markw.dtb --modules lib/modules/RELEASE \
 #          --ssh-key ~/.ssh/id_ed25519.pub --mkbootimg /path/to/mkbootimg.py \
-#          --out /path/to/output [--root-uuid UUID] [--usb-role otg] [--adsp]
+#          --out /path/to/output [--root-uuid UUID] [--usb-role otg] [--adsp] [--modem]
 #
 # --usb-role otg keeps the kernel's USB role switch, so an OTG adapter
 # turns the port into a host (the charger supplies VBUS); the default,
 # peripheral, keeps the port a gadget whatever is plugged in.
 # --adsp keeps the LPASS ADSP (audio DSP) enabled; its firmware must be on
 # the root (omamobile-markw-firmware). Without it the node is disabled.
+# --modem keeps the modem (MPSS) enabled the same way (BRINGUP-MODEM.md).
 # Without --root-uuid the probe keeps every disk read-only and stops at SSH
 # (M1). With it, the initramfs switches to the Arch root on the microSD
 # partition whose ext4 file system has that UUID (tools/build-markw-sd).
@@ -24,7 +25,7 @@
 # Boot this image from a RAM-loaded lk2nd's fastboot, never flash it.
 set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-kernel="" dtb="" modules="" key="" mkbootimg="" out="" root_uuid="" usb_role=peripheral adsp=0
+kernel="" dtb="" modules="" key="" mkbootimg="" out="" root_uuid="" usb_role=peripheral adsp=0 mpss=0
 die() { echo "error: $*" >&2; exit 1; }
 while (($#)); do
   case $1 in
@@ -37,7 +38,8 @@ while (($#)); do
     --root-uuid) root_uuid=${2:?}; shift ;;
     --usb-role) usb_role=${2:?}; shift ;;
     --adsp) adsp=1 ;;
-    -h|--help) sed -n '3,27p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --modem) mpss=1 ;;
+    -h|--help) sed -n '3,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
   shift
@@ -86,6 +88,6 @@ docker run --rm --platform linux/arm64 \
   --mount "type=bind,source=$key,target=/input/key.pub,readonly" \
   --mount "type=bind,source=$(dirname "$mkbootimg"),target=/mkbootimg,readonly" \
   --mount "type=bind,source=$out,target=/out" \
-  -e ROOT_UUID="$root_uuid" -e USB_ROLE="$usb_role" -e ADSP="$adsp" \
+  -e ROOT_UUID="$root_uuid" -e USB_ROLE="$usb_role" -e ADSP="$adsp" -e MPSS="$mpss" \
   alpine:3.22 sh /src/device/markw/initramfs/build
 echo "Built $out/boot.img (lk2nd RAM-loaded image${root_uuid:+, root UUID $root_uuid}; no phone was accessed)"
