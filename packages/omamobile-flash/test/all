@@ -110,3 +110,19 @@ mkdir -p "$t/penv/bin"
 printf '#!/bin/bash\necho "PlatformIO Core, version 6.1.18"\n' >"$t/penv/bin/pio"; chmod +x "$t/penv/bin/pio"
 [[ $(st "$fb:$PATH") == "{\"pio\":\"$t/penv/bin/pio\",\"version\":\"6.1.18\"}" ]] || fail "status: $(st "$fb:$PATH")"
 pass "status: the penv's pio and its version"
+
+# run: CMD's output and exit code come through, and the log keeps both
+# a header and the output; it rolls over past 2 MB.
+lg=$t/state/flash.log
+rr() { HOME=$h OMAMOBILE_FLASH_LOG=$lg bash bin/omamobile-flash run "$@"; }
+[[ $(rr bash -c 'echo built; echo oops >&2') == $'built\noops' ]] || fail "run passes output through"
+rc=0; rr bash -c 'exit 3' || rc=$?
+[[ $rc -eq 3 ]] || fail "run keeps the exit code: $rc"
+sleep 0.2
+grep -c '^=== .* bash -c echo built' "$lg" >/dev/null || fail "run writes a header"
+grep -cx oops "$lg" >/dev/null || fail "run logs stderr too"
+head -c 2200000 /dev/zero >"$lg"
+rr true
+sleep 0.2
+[[ -f $lg.1 && $(stat -c %s "$lg") -lt 1000 ]] || fail "the log rolls over"
+pass "run: output and exit code through, logged with a header, rolled over past 2 MB"

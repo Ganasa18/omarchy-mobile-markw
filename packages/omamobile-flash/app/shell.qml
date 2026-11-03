@@ -194,7 +194,8 @@ ShellRoot {
   function start(what, cmd) {
     action = what; progress = what === "upload" ? 0 : -1; result = ""; tab = "output"
     clearLog("output", "$ " + cmd.join(" "))
-    pio.command = cmd
+    // Through the helper, which also writes the output to flash.log.
+    pio.command = what === "setup" ? cmd : ["omamobile-flash", "run"].concat(cmd)
     pio.running = true
   }
   // PlatformIO into ~/.platformio, once, with its output in the log.
