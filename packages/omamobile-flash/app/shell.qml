@@ -51,6 +51,9 @@ ShellRoot {
   property var outputLines: []
   property var serialLines: []
   property string picking: ""         // project | env | port while the list is up
+  property string pioPath: ""         // from "omamobile-flash status"; "" = not installed
+  property string pioVersion: ""
+  property bool pioKnown: false
 
   readonly property string projectName: project ? project.replace(/\/+$/, "").split("/").pop() : ""
   readonly property string shortProject: project.indexOf(home) === 0 ? "~" + project.slice(home.length) : project
@@ -104,6 +107,8 @@ ShellRoot {
       var still = false
       for (var j = 0; j < data.length; j++) if (data[j].path === port) still = true
       if (!still) port = data.length ? data[0].path : ""
+    } else if (handler === "status") {
+      pioPath = data.pio; pioVersion = data.version; pioKnown = true
     } else if (handler === "example") {
       setProject(text.trim())
       ask(["projects"], "projects")
@@ -115,7 +120,7 @@ ShellRoot {
     ask(["envs", dir], "envs")
   }
 
-  Component.onCompleted: { ask(["projects"], "projects"); ask(["ports"], "ports") }
+  Component.onCompleted: { ask(["status"], "status"); ask(["projects"], "projects"); ask(["ports"], "ports") }
 
   // The adapter comes and goes with the OTG cable.
   Timer {
@@ -124,17 +129,23 @@ ShellRoot {
   }
 
   // ------------------------------------------------------------ pio
-  function run(what) {
-    if (action !== "" || !project || !env) return
-    if (what === "upload" && !port) { result = "no port: plug the board in"; return }
-    if (what === "upload" && monitoring) stopMonitor()
-    var cmd = ["pio", "run", "-d", project, "-e", env]
-    if (what === "upload") cmd = cmd.concat(["-t", "upload", "--upload-port", port])
-    if (what === "clean") cmd = cmd.concat(["-t", "clean"])
+  function start(what, cmd) {
     action = what; progress = what === "upload" ? 0 : -1; result = ""; tab = "output"
     outputLines = ["$ " + cmd.join(" ")]
     pio.command = cmd
     pio.running = true
+  }
+  // PlatformIO into ~/.platformio, once, with its output in the log.
+  function setup() { if (action === "") start("setup", ["omamobile-flash", "setup"]) }
+  function run(what) {
+    if (action !== "" || !project || !env) return
+    if (!pioPath) { result = "install PlatformIO first"; return }
+    if (what === "upload" && !port) { result = "no port: plug the board in"; return }
+    if (what === "upload" && monitoring) stopMonitor()
+    var cmd = [pioPath, "run", "-d", project, "-e", env]
+    if (what === "upload") cmd = cmd.concat(["-t", "upload", "--upload-port", port])
+    if (what === "clean") cmd = cmd.concat(["-t", "clean"])
+    start(what, cmd)
   }
   function cancel() { pio.running = false }
   function parse(text) {
@@ -152,6 +163,7 @@ ShellRoot {
       if (code === 0 && app.action === "upload") app.progress = 100
       var after = app.action
       app.action = ""
+      if (after === "setup") app.ask(["status"], "status")
       // After an upload the board restarts: show what it prints.
       if (code === 0 && after === "upload") app.startMonitor()
     }
@@ -227,6 +239,13 @@ ShellRoot {
         label: "Port"
         value: app.port ? app.port.replace(/^\/dev\//, "") + (app.portName ? " · " + app.portName : "") : "no board"
         onTapped: if (app.ports.length) app.picking = "port"
+      }
+      // Shown until PlatformIO is installed (or while it installs).
+      Field {
+        visible: app.pioKnown && !app.pioPath || app.action === "setup"
+        label: "PlatformIO"
+        value: app.action === "setup" ? "installing…" : "not installed: tap to install"
+        onTapped: app.setup()
       }
 
       Item { width: 1; height: 24 }

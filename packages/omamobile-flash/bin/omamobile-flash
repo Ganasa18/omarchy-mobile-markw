@@ -10,12 +10,29 @@
 #   omamobile-flash ports            USB serial ports (ttyUSB*, ttyACM*) with the adapter's name
 #   omamobile-flash monitor PORT [BAUD]   print the port's lines until stopped
 #   omamobile-flash example          copy the blink example to ~/proyek/blink (once)
+#   omamobile-flash status           {"pio": PATH or "", "version": ...}
+#   omamobile-flash setup            install PlatformIO Core into ~/.platformio/penv
 #
 # Build, upload and clean are plain "pio run" calls the window makes itself.
+# PlatformIO lives in the user's ~/.platformio (a Python virtualenv from
+# PyPI, as PlatformIO's own installer does), so no system package changes;
+# a pio on PATH (Arch's platformio-core) is used when that is missing.
 set -u
 
 SHARE=${OMAMOBILE_FLASH_SHARE:-/usr/share/omamobile-flash}
 DEV=${OMAMOBILE_FLASH_DEV:-/dev}
+PENV=${OMAMOBILE_FLASH_PENV:-$HOME/.platformio/penv}
+
+# The pio to run, or nothing.
+pio_path() {
+  if [[ -x $PENV/bin/pio ]]; then echo "$PENV/bin/pio"; return; fi
+  command -v pio 2>/dev/null
+}
+
+# The penv's Python has pyserial (PlatformIO depends on it).
+serial_python() {
+  if [[ -x $PENV/bin/python ]]; then echo "$PENV/bin/python"; else echo python3; fi
+}
 
 die() { echo "omamobile-flash: $*" >&2; exit 1; }
 json_str() { printf '"%s"' "$(sed 's/["\\]/\\&/g' <<<"$1")"; }
@@ -86,7 +103,7 @@ cmd_ports() {
 cmd_monitor() {
   local port=${1:?monitor PORT [BAUD]} baud=${2:-115200}
   [[ $baud =~ ^[0-9]+$ ]] || die "baud: a number"
-  exec python3 -I -u -c '
+  exec "$(serial_python)" -I -u -c '
 import sys, serial
 port, baud = sys.argv[1], int(sys.argv[2])
 try:
@@ -114,12 +131,34 @@ cmd_example() {
   echo "$dest"
 }
 
+cmd_status() {
+  local pio version=""
+  pio=$(pio_path)
+  [[ -n $pio ]] && version=$("$pio" --version 2>/dev/null | sed -n 's/.*version //p' | head -n1)
+  printf '{"pio":%s,"version":%s}\n' "$(json_str "$pio")" "$(json_str "$version")"
+}
+
+# Output goes to the window line by line. Idempotent: an existing penv is
+# upgraded in place.
+cmd_setup() {
+  mkdir -p "${PENV%/*}"
+  if [[ ! -x $PENV/bin/python ]]; then
+    echo "creating $PENV"
+    python3 -m venv "$PENV" || die "python3 -m venv failed"
+  fi
+  echo "installing PlatformIO Core from PyPI"
+  "$PENV/bin/python" -m pip install --disable-pip-version-check --progress-bar off -U platformio || die "pip install failed"
+  "$PENV/bin/pio" --version
+}
+
 case ${1:-} in
   "") exec quickshell -p "$SHARE/shell.qml" ;;
+  status) cmd_status ;;
+  setup) cmd_setup ;;
   projects) cmd_projects ;;
   envs) cmd_envs "${2:-}" ;;
   ports) cmd_ports ;;
   monitor) cmd_monitor "${2:-}" "${3:-}" ;;
   example) cmd_example ;;
-  *) sed -n '7,12s/^#   //p' "$0" >&2; exit 2 ;;
+  *) sed -n '7,14s/^#   //p' "$0" >&2; exit 2 ;;
 esac

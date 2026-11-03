@@ -7,7 +7,8 @@ pkgdesc="Omarchy Mobile Flash: build, upload and watch PlatformIO projects (ESP3
 arch=(any)
 url="https://github.com/derekross/omarchy-mobile"
 license=(MIT)
-depends=(bash quickshell platformio-core platformio-core-udev python-pyserial systemd)
+depends=(bash quickshell python systemd)
+optdepends=('platformio-core: used when ~/.platformio has no PlatformIO (Flash installs one there)')
 
 check() {
   "$startdir/test/all"

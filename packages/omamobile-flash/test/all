@@ -72,3 +72,11 @@ run example >/dev/null
 [[ $(cat "$h/proyek/blink/src/main.cpp") == changed ]] || fail "example never overwrites"
 run monitor /dev/null abc 2>/dev/null && fail "monitor checks the baud"
 pass "example: copied once, never overwritten"
+
+# status: the penv's pio first, else one on PATH, else none.
+st() { HOME=$h PATH="$1" OMAMOBILE_FLASH_PENV=$t/penv bash bin/omamobile-flash status; }
+[[ $(st "$fb:/usr/bin:/bin") == '{"pio":"","version":""}' ]] || fail "status without PlatformIO: $(st "$fb:/usr/bin:/bin")"
+mkdir -p "$t/penv/bin"
+printf '#!/bin/bash\necho "PlatformIO Core, version 6.1.18"\n' >"$t/penv/bin/pio"; chmod +x "$t/penv/bin/pio"
+[[ $(st "$fb:$PATH") == "{\"pio\":\"$t/penv/bin/pio\",\"version\":\"6.1.18\"}" ]] || fail "status: $(st "$fb:$PATH")"
+pass "status: the penv's pio and its version"

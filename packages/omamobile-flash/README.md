@@ -22,15 +22,21 @@ Flash (quickshell -p /usr/share/omamobile-flash/shell.qml)
   USB vendor (CP210x, CH340, FTDI, ESP32 USB), and follows the cable.
 - After an upload the Serial tab opens, so the board's first lines show.
 
+PlatformIO Core itself goes into `~/.platformio/penv`, a Python virtualenv
+from PyPI, as PlatformIO's own installer does: the window's PlatformIO row
+(or `omamobile-flash setup`) installs it, and no system package changes.
+A `pio` on PATH (Arch's `platformio-core`) is used when that is missing.
 The first build of a platform downloads its toolchain into `~/.platformio`
 (about 1-2 GB for espressif32) and is slow on the phone; later builds are
-incremental. `platformio-core-udev` lets the user open the boards' ports.
+incremental. The ports are group `uucp`, which the installer's user is in.
 
 ## Use from a terminal
 
 ```sh
 omamobile-flash                 # the window
 omamobile-flash projects        # what the window lists
+omamobile-flash setup           # PlatformIO into ~/.platformio/penv
+omamobile-flash status          # which pio, and its version
 omamobile-flash monitor /dev/ttyUSB0 115200
 ```
 
