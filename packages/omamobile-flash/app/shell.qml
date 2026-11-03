@@ -49,8 +49,6 @@ ShellRoot {
   property string flash: ""
   property string result: ""
   property string tab: "output"
-  property var outputLines: []
-  property var serialLines: []
   property string picking: ""         // project | env | port | browse | sketch | board while the sheet is up
   property string browseDir: ""
   property string browseKind: ""      // the browsed folder's own mark: pio, ino or ""
@@ -72,10 +70,36 @@ ShellRoot {
     return ""
   }
 
+  // Lines wait here and reach the log five times a second, appended to the
+  // model rather than replacing it. A board in a reset loop prints hundreds
+  // of lines a second; rebuilding the whole list for each one kept the UI
+  // thread busy until Hyprland called the window unresponsive.
+  property var pendingOutput: []
+  property var pendingSerial: []
+  ListModel { id: outputModel }
+  ListModel { id: serialModel }
   function append(which, text) {
-    var list = (which === "serial" ? serialLines : outputLines).concat(String(text).split("\n"))
-    if (list.length > 1000) list = list.slice(list.length - 1000)
-    if (which === "serial") serialLines = list; else outputLines = list
+    var pending = which === "serial" ? pendingSerial : pendingOutput
+    var lines = String(text).split("\n")
+    for (var i = 0; i < lines.length; i++) pending.push(lines[i].length > 400 ? lines[i].slice(0, 400) + "…" : lines[i])
+    if (pending.length > 500) pending.splice(0, pending.length - 500)
+  }
+  function flush(model, lines) {
+    for (var i = 0; i < lines.length; i++) model.append({ line: lines[i] })
+    if (model.count > 1000) model.remove(0, model.count - 1000)
+  }
+  function clearLog(which, first) {
+    var model = which === "serial" ? serialModel : outputModel
+    model.clear()
+    if (which === "serial") pendingSerial = first ? [first] : []
+    else pendingOutput = first ? [first] : []
+  }
+  Timer {
+    interval: 200; repeat: true; running: true
+    onTriggered: {
+      if (app.pendingOutput.length) { app.flush(outputModel, app.pendingOutput); app.pendingOutput = [] }
+      if (app.pendingSerial.length) { app.flush(serialModel, app.pendingSerial); app.pendingSerial = [] }
+    }
   }
 
   // ------------------------------------------------------------ helper calls
@@ -169,7 +193,7 @@ ShellRoot {
   // ------------------------------------------------------------ pio
   function start(what, cmd) {
     action = what; progress = what === "upload" ? 0 : -1; result = ""; tab = "output"
-    outputLines = ["$ " + cmd.join(" ")]
+    clearLog("output", "$ " + cmd.join(" "))
     pio.command = cmd
     pio.running = true
   }
@@ -210,7 +234,7 @@ ShellRoot {
 
   function startMonitor() {
     if (!port || monitoring) return
-    serialLines = []
+    clearLog("serial", "")
     tab = "serial"
     monitor.command = ["omamobile-flash", "monitor", port, String(speed)]
     monitor.running = true
@@ -430,15 +454,15 @@ ShellRoot {
         id: log
         anchors.fill: parent; anchors.margins: 12
         clip: true
-        model: app.tab === "serial" ? app.serialLines : app.outputLines
+        model: app.tab === "serial" ? serialModel : outputModel
         onCountChanged: positionViewAtEnd()
         delegate: Text {
-          required property string modelData
+          required property string line
           required property int index
           width: log.width
           wrapMode: Text.WrapAnywhere
           textFormat: Text.PlainText
-          text: modelData
+          text: line
           color: index === 0 && app.tab === "output" ? app.dim : Qt.rgba(app.fg.r, app.fg.g, app.fg.b, 0.8)
           font.family: app.mono; font.pixelSize: 12
         }
