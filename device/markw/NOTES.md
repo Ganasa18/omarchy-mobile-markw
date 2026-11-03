@@ -20,7 +20,7 @@ Findings from real hardware, newest first. Plan: [ENGINEERING-PLAN.md](ENGINEERI
 ## 2026-11-03: OTG to an ESP32 from Flash (7.1.3-msm8953-oma3)
 
 - **Modem scope (owner): mobile data only.** SMS and calls are not needed
-  for now and not part of the 80 % gate for the persistent install. Data
+  for now and not part of the 90 % gate for the persistent install. Data
   goes over IPA v2.6L (the msm8953 tree's `ipa2-lite`, already in oma3
   and bound at boot), not BAM-DMUX; it needs the modem node enabled in
   the probe, rmtfs on RAM copies of the NV partitions, and packages not
