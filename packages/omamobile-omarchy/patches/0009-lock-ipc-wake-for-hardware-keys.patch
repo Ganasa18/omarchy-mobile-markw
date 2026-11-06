@@ -1,21 +1,47 @@
 # Lock: a "wake" IPC call that lights the locked display and re-arms its
 # blank timer, as input on the lock screen does, for hardware keys (the
-# phone's power button, through omamobile-keys).
+# phone's power button, through omamobile-keys). It also focuses the field
+# again: a display turned off and on by the power button keeps the field's
+# focus but gives it no new focus-in, so the on-screen keyboard was never
+# asked back and only the PIN pad worked (markw, 2026-10-27).
 #
 # Against Omarchy 4.0.4 (edge 4.0.4-2; tag v4.0.4).
 diff --git i/shell/plugins/lock/Service.qml w/shell/plugins/lock/Service.qml
 index ccd496a..113b40d 100644
 --- i/shell/plugins/lock/Service.qml
 +++ w/shell/plugins/lock/Service.qml
-@@ -848,6 +848,14 @@ Item {
+@@ -19,6 +19,8 @@ Item {
+
+   property bool lockRequested: false
+   property bool pendingSessionLock: false
++  // The IPC wake below asks the lock screen to focus its field again.
++  signal wakeFocusRequested()
+   property bool authenticatingPassword: false
+   property bool fingerprintAuthenticating: false
+   property bool passwordPamConfigured: false
+@@ -296,6 +298,12 @@ Item {
+         onSubmitPassword: function(password) { root.submitPassword(password) }
+         onClearFailureRequested: root.failureMessage = ""
+         onWakeRequested: root.runWake()
++        // A display woken by a hardware key gets no new focus-in, so the
++        // on-screen keyboard isn't asked back: move the focus off and back.
++        Connections {
++          target: root
++          function onWakeFocusRequested() { lockView.forcePasswordFocus() }
++        }
+       }
+
+     }
+@@ -848,6 +856,15 @@ Item {
        return "ok"
      }
- 
+
 +    // Wake the locked display the way input on the lock screen does: light
-+    // it and re-arm the blank timer (a phone's power button).
++    // it, re-arm the blank timer and focus the field (a phone's power button).
 +    function wake(): string {
 +      if (!root.currentlyLocked()) return "unlocked"
 +      root.runWake()
++      root.wakeFocusRequested()
 +      return "ok"
 +    }
 +

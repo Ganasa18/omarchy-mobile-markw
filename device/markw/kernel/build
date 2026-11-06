@@ -1,0 +1,65 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Runs inside tools/build-markw-kernel's x86_64 Alpine container: unpack the
+# MSM8953 source, apply device/markw/kernel/patches, merge markw.config over
+# the base config and cross-build Image.gz, the markw DTB and modules.
+# /src is this repository (read-only), /input holds source.tar.gz and
+# config, /out is the output directory (the source tree goes to /out/build).
+set -eu
+apk add -q --no-cache clang lld llvm make bc bison flex perl python3 \
+  openssl openssl-dev elfutils-dev linux-headers gzip zstd findutils diffutils \
+  bash coreutils sed grep build-base tar patch kmod >/dev/null
+clang --version | head -n 1
+
+tree=/out/build
+rm -rf "$tree"
+mkdir -p "$tree"
+tar -xzf /input/source.tar.gz -C "$tree" --strip-components=1
+cd "$tree"
+for p in /src/device/markw/kernel/patches/*.patch; do
+  echo "patch: ${p##*/}"
+  patch -p1 --forward --fuzz=0 --no-backup-if-mismatch < "$p"
+done
+
+O=$tree/out
+mkdir -p "$O"
+if gzip -t /input/config 2>/dev/null; then
+  gzip -dc /input/config > "$O/.config"
+else
+  cp /input/config "$O/.config"
+fi
+frag=/src/device/markw/kernel/markw.config
+make -s O="$O" ARCH=arm64 LLVM=1 olddefconfig
+scripts/kconfig/merge_config.sh -m -O "$O" "$O/.config" "$frag" >/dev/null
+make -s O="$O" ARCH=arm64 LLVM=1 olddefconfig
+# merge_config only warns when Kconfig drops a value; refuse that here.
+bad=0
+while IFS= read -r line; do
+  case $line in
+    CONFIG_*=*) grep -qxF "$line" "$O/.config" || { echo "not applied: $line" >&2; bad=1; } ;;
+    '# CONFIG_'*' is not set')
+      sym=${line#\# }; sym=${sym%% *}
+      ! grep -q "^$sym=" "$O/.config" || { echo "not applied: $line" >&2; bad=1; } ;;
+  esac
+done < "$frag"
+[ "$bad" = 0 ] || exit 1
+
+make -s O="$O" ARCH=arm64 LLVM=1 -j"$(nproc)" Image.gz modules \
+  qcom/msm8953-xiaomi-markw.dtb
+release=$(cat "$O/include/config/kernel.release")
+echo "release: $release"
+
+cp "$O/arch/arm64/boot/Image.gz" /out/Image.gz
+mkdir -p /out/dtbs/qcom /out/include/config /out/lib/modules
+cp "$O/arch/arm64/boot/dts/qcom/msm8953-xiaomi-markw.dtb" /out/dtbs/qcom/
+echo "$release" > /out/include/config/kernel.release
+cp "$O/.config" /out/config
+rm -rf "/out/lib/modules/$release"
+make -s O="$O" ARCH=arm64 LLVM=1 INSTALL_MOD_PATH=/out/stage \
+  INSTALL_MOD_STRIP=1 modules_install
+mv "/out/stage/lib/modules/$release" /out/lib/modules/
+rm -rf /out/stage
+rm -f "/out/lib/modules/$release/build" "/out/lib/modules/$release/source"
+# Paths in the tarball are relative to /usr/lib/modules: RELEASE/kernel/...
+tar -C /out/lib/modules --owner=0 --group=0 --numeric-owner -cf - "$release" \
+  | zstd -q -19 -T0 -f -o "/out/modules-$release.tar.zst"

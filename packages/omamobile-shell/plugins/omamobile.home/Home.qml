@@ -59,9 +59,21 @@ Item {
 
   readonly property color foreground: Commons.Color.menu.text
   readonly property color dimForeground: Util.alpha(Commons.Color.menu.text, 0.68)
-  readonly property color cardColor: Util.alpha(Commons.Color.menu.background, 0.8)
+  // Cards are a light veil over the wallpaper (no blur: it would cost every
+  // frame), white on a dark theme and near-opaque white on a light one.
+  readonly property color cardColor: darkCards ? Qt.rgba(1, 1, 1, 0.07) : Qt.rgba(1, 1, 1, 0.72)
+  readonly property color cardSolid: Commons.Color.menu.background
+  readonly property color cardBorder: darkCards ? Qt.rgba(1, 1, 1, 0.06) : Qt.rgba(0, 0, 0, 0.06)
+  // Words on the home screen are set in a sans; the shell's own font (often
+  // a monospace) stays for glyphs.
+  readonly property string textFont: "Adwaita Sans"
+  // A level or state that is fine: a soft green that reads on the cards.
+  readonly property bool darkCards: Commons.Color.menu.background.hslLightness < 0.5
+  readonly property color okColor: darkCards ? "#9ddbb4" : "#3f9b6a"
+  readonly property int dockIcon: 64
   readonly property int touch: Math.max(44, Style.space(44))
-  readonly property int gap: Style.spacing.md
+  // Half the space between two cards (14 px apart, as in the design).
+  readonly property int gap: 7
 
   // ---------------------------------------------------------------- state
 
@@ -71,6 +83,10 @@ Item {
   property int currentPage: 0
   // "", "widgets", "apps", "pages", "settings", "create"
   property string sheet: ""
+  // The Apps sheet adds to the page, or to the dock when the dock's empty
+  // slot opened it.
+  property string appsTarget: "page"
+  onSheetChanged: if (sheet !== "apps") appsTarget = "page"
   property string settingsId: ""
   property string notice: ""
   readonly property bool wantsKeyboard: sheet === "apps" || sheet === "settings" || sheet === "create" || owlTyping
@@ -857,12 +873,31 @@ Item {
   }
 
   function addAppHere(appId, page) {
+    if (appsTarget === "dock" && page === undefined) {
+      sheet = ""
+      return addToDock(appId)
+    }
     var next = HomeModel.addApp(layout, page === undefined ? currentPage : page, appId)
     if (!next || !next.placed) { flash("No room for that"); return "full" }
     commit(next)
     goToPage(next.placed.page, true)
     sheet = ""
     return next.placed.id
+  }
+
+  function addToDock(appId) {
+    var ids = layout.dock.slice()
+    if (ids.indexOf(appId) >= 0) return "exists"
+    if (ids.length >= layout.grid.columns) { flash("The dock is full"); return "full" }
+    ids.push(appId)
+    commit(HomeModel.setDock(layout, ids))
+    return "ok"
+  }
+
+  function removeFromDock(index) {
+    var ids = layout.dock.slice()
+    ids.splice(index, 1)
+    commit(HomeModel.setDock(layout, ids))
   }
 
   function removeItem(id) {
@@ -1014,6 +1049,11 @@ Item {
         anchors.right: parent.right
         anchors.bottom: dots.top
         anchors.topMargin: Style.spacing.lg
+        // A margin at the screen's edges, as in the design; clipped so the
+        // next page doesn't show in it.
+        anchors.leftMargin: 22 - root.gap
+        anchors.rightMargin: 22 - root.gap
+        clip: true
         orientation: ListView.Horizontal
         snapMode: ListView.SnapOneItem
         highlightRangeMode: ListView.StrictlyEnforceRange
@@ -1023,7 +1063,8 @@ Item {
         // space or tapping the dots.
         interactive: !root.editing && root.sheet === ""
         flickDeceleration: 4000
-        cacheBuffer: width * 2
+        // The margins make the width negative before the window has a size.
+        cacheBuffer: Math.max(0, width * 2)
         model: root.layout.pages.length
         onCurrentIndexChanged: root.currentPage = currentIndex
 
@@ -1036,7 +1077,7 @@ Item {
       Row {
         id: dots
         anchors.horizontalCenter: parent.horizontalCenter
-        anchors.bottom: toolbar.visible ? toolbar.top : parent.bottom
+        anchors.bottom: toolbar.visible ? toolbar.top : dock.top
         height: root.layout.pages.length > 1 || root.editing ? 28 : Style.spacing.lg
         spacing: 0
 
@@ -1060,11 +1101,108 @@ Item {
         }
       }
 
+      // ---------- dock: one row of apps under the pages (home.json's "dock").
+      // In edit mode a cross takes an app out and an empty slot adds one.
+      Rectangle {
+        id: dock
+        visible: root.layout.dock.length > 0 || root.editing
+        anchors.bottom: parent.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.leftMargin: 14
+        anchors.rightMargin: 14
+        anchors.bottomMargin: visible ? 2 : 0
+        height: visible ? root.dockIcon + 28 : 0
+        radius: 32
+        color: root.cardColor
+        border.width: 1
+        border.color: root.cardBorder
+
+        Row {
+          id: dockRow
+          anchors.centerIn: parent
+          width: parent.width - 44
+          readonly property int slots: root.editing ? root.layout.grid.columns : Math.max(1, root.layout.dock.length)
+          // The icons spread to both ends, as in the design.
+          spacing: slots > 1 ? (width - slots * root.dockIcon) / (slots - 1) : 0
+
+          Repeater {
+            model: dockRow.slots
+            delegate: Item {
+              id: slot
+              required property int index
+              readonly property string app: index < root.layout.dock.length ? root.layout.dock[index] : ""
+              readonly property var desktopEntry: app ? root.entryFor(app) : null
+              width: root.dockIcon
+              height: root.dockIcon
+
+              Image {
+                anchors.centerIn: parent
+                visible: slot.app.length > 0
+                width: root.dockIcon
+                height: width
+                opacity: slot.desktopEntry ? (press.pressed ? 0.7 : 1) : 0.45
+                fillMode: Image.PreserveAspectFit
+                asynchronous: true
+                sourceSize.width: width * Screen.devicePixelRatio
+                sourceSize.height: height * Screen.devicePixelRatio
+                source: slot.app && root.appLibrary ? root.appLibrary.iconSource(slot.desktopEntry ? slot.desktopEntry.icon : "") : ""
+              }
+              Rectangle {
+                anchors.centerIn: parent
+                visible: slot.app.length === 0
+                width: root.dockIcon; height: width
+                radius: width * 0.3
+                color: "transparent"
+                border.width: 1
+                border.color: root.dimForeground
+                Text {
+                  anchors.centerIn: parent
+                  textFormat: Text.PlainText
+                  text: "󰐕"
+                  color: root.dimForeground
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.heading
+                }
+              }
+              Rectangle {
+                visible: root.editing && slot.app.length > 0
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.horizontalCenterOffset: root.dockIcon / 2 - 4
+                y: -6
+                width: 24; height: 24; radius: 12
+                color: Commons.Color.urgent
+                Text {
+                  anchors.centerIn: parent
+                  textFormat: Text.PlainText
+                  text: "󰅖"
+                  color: "white"
+                  font.family: Style.font.family
+                  font.pixelSize: 14
+                }
+              }
+              MouseArea {
+                id: press
+                anchors.fill: parent
+                onClicked: {
+                  if (root.editing) {
+                    if (slot.app) root.removeFromDock(slot.index)
+                    else { root.appsTarget = "dock"; root.sheet = "apps" }
+                  } else if (slot.desktopEntry) root.launch(slot.app)
+                  else if (slot.app) root.flash("Not installed: hold to edit")
+                }
+                onPressAndHold: if (!root.editing) root.setEditing(true)
+              }
+            }
+          }
+        }
+      }
+
       // ---------- edit toolbar
       Row {
         id: toolbar
         visible: root.editing
-        anchors.bottom: parent.bottom
+        anchors.bottom: dock.top
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottomMargin: Style.spacing.sm
         height: visible ? root.touch + Style.spacing.lg : 0
@@ -1256,6 +1394,10 @@ Item {
 
     readonly property var limits: HomeModel.sizeLimits(modelData, root.layout.grid, root.userCatalog)
     readonly property bool isUser: isWidget && HomeModel.isUserType(modelData.type)
+    // The clock and the weather sit on the wallpaper itself, as on Android,
+    // unless their settings ask for a card ("card": true).
+    readonly property bool bare: isWidget && (modelData.type === "clock" || modelData.type === "weather")
+      && !(modelData.config && modelData.config.card === true)
     x: modelData.x * owner.cellW + dragX
     y: modelData.y * owner.cellH + dragY
     width: Math.max(limits.minW * owner.cellW, Math.min(limits.maxW * owner.cellW, modelData.w * owner.cellW + growX))
@@ -1268,9 +1410,11 @@ Item {
       id: card
       anchors.fill: parent
       anchors.margins: root.gap
-      visible: cell.isWidget
-      radius: Math.max(Style.cornerRadius, 12)
+      visible: cell.isWidget && (!cell.bare || root.editing)
+      radius: 24
       color: root.cardColor
+      border.width: 1
+      border.color: root.cardBorder
     }
 
     Loader {

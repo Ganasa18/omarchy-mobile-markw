@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MIT
+[Desktop Entry]
+Type=Application
+Name=Flash
+Comment=Build, upload and watch PlatformIO projects (ESP32, Arduino)
+Exec=omamobile-flash
+TryExec=omamobile-flash
+Icon=applications-electronics
+Terminal=false
+Categories=Development;Electronics;
+Keywords=ESP32;Arduino;PlatformIO;flash;serial;upload;

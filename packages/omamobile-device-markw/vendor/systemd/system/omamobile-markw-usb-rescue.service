@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MIT
+# Started by 80-omamobile-markw-usb-role.rules at each USB role change:
+# rebinds the USB gadget when a computer is plugged in and the link stays
+# down (omamobile-markw-usb-rescue; device/markw/NOTES.md, 2026-11-06).
+# A role change while it runs is caught by its own checks of the role.
+[Unit]
+Description=Omarchy Mobile: bring the markw USB gadget back after a replug
+ConditionPathExists=/sys/kernel/config/usb_gadget
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/omamobile/omamobile-markw-usb-rescue
+TimeoutStartSec=90

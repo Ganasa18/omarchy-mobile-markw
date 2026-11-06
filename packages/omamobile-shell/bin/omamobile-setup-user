@@ -79,9 +79,35 @@ if omarchy-done ensure omamobile-credential-type; then
   fi
 fi
 
-# Phone scale: 1440x3120 at 3 is 480x1040 logical, seeded once
+# Phone scale, seeded once: the device descriptor's MONITOR_SCALE, else the
+# Pixel's 3 (1440x3120 at 3 is 480x1040 logical)
 if omarchy-done ensure omamobile-monitor-scale; then
-  sed -i 's/^local omarchy_monitor_scale = .*/local omarchy_monitor_scale = 3/' ~/.config/hypr/monitors.lua
+  scale=$(sed -n 's/^MONITOR_SCALE=\([0-9][0-9.]*\)$/\1/p' /usr/share/omamobile/device.conf 2>/dev/null)
+  sed -i "s/^local omarchy_monitor_scale = .*/local omarchy_monitor_scale = ${scale:-3}/" ~/.config/hypr/monitors.lua
+fi
+
+# Idle timeouts, seeded once: the device descriptor's IDLE_SCREENSAVER and
+# IDLE_LOCK (seconds, 0 turns one off), else Omarchy's defaults. markw turns
+# the screensaver off and locks after a minute, for its battery.
+if omarchy-done ensure omamobile-idle; then
+  idle_screensaver=$(sed -n 's/^IDLE_SCREENSAVER=\([0-9][0-9]*\)$/\1/p' /usr/share/omamobile/device.conf 2>/dev/null)
+  idle_lock=$(sed -n 's/^IDLE_LOCK=\([0-9][0-9]*\)$/\1/p' /usr/share/omamobile/device.conf 2>/dev/null)
+  if [[ -n $idle_screensaver || -n $idle_lock ]]; then
+    python3 - "$config/shell.json" "$idle_screensaver" "$idle_lock" <<'PY2'
+import json, sys
+path, screensaver, lock = sys.argv[1:]
+with open(path) as f:
+    config = json.load(f)
+idle = config.setdefault("idle", {})
+if screensaver:
+    idle["screensaver"] = int(screensaver)
+if lock:
+    idle["lock"] = int(lock)
+with open(path, "w") as f:
+    json.dump(config, f, indent=2)
+    f.write("\n")
+PY2
+  fi
 fi
 
 # Touch phone: no pointer on screen (it still hides on touch if a USB mouse is
@@ -93,6 +119,33 @@ if omarchy-done ensure omamobile-hide-cursor; then
 -- Omarchy Mobile: a touch phone shows no pointer
 hl.config({ cursor = { invisible = true, hide_on_touch = true } })
 LUA
+fi
+
+# Omarchy Mobile Clean, a light and a dark pastel theme for phones: linked
+# into the user's themes once (so Omarchy's picker lists them and package
+# updates reach them), and made the two sides of quick settings' Dark theme
+# tile unless the user already chose them.
+if omarchy-done ensure omamobile-clean-theme; then
+  mkdir -p ~/.config/omarchy/themes ~/.local/state/omamobile
+  for theme in omamobile-clean omamobile-clean-dark; do
+    [[ -e ~/.config/omarchy/themes/$theme ]] || ln -s "$share/themes/$theme" ~/.config/omarchy/themes/$theme
+  done
+  [[ -s ~/.local/state/omamobile/theme-light ]] || echo omamobile-clean >~/.local/state/omamobile/theme-light
+  [[ -s ~/.local/state/omamobile/theme-dark ]] || echo omamobile-clean-dark >~/.local/state/omamobile/theme-dark
+fi
+
+# Low motion, seeded once when the device descriptor asks (LOW_MOTION=1):
+# Hyprland's window and workspace animations off. Each one redraws the
+# screen for its whole length; markw's battery is worth more than them.
+# Omarchy already leaves blur and shadows off.
+if omarchy-done ensure omamobile-low-motion; then
+  if grep -qx 'LOW_MOTION=1' /usr/share/omamobile/device.conf 2>/dev/null; then
+    cat >>~/.config/hypr/looknfeel.lua <<'LUA'
+
+-- Omarchy Mobile: this phone asks for low motion (device.conf LOW_MOTION=1)
+hl.config({ animations = { enabled = false } })
+LUA
+  fi
 fi
 
 # On-screen keyboard: squeekboard shows itself when a text field takes focus

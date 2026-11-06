@@ -1,0 +1,142 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Checks for omamobile-flash: syntax, the staged layout, and the helper's
+# answers against a fake home, /dev and udevadm: projects (newest first,
+# PlatformIO's own folders skipped, Arduino sketches too), the folder
+# browser, a sketch's platformio.ini, envs (default first, monitor speeds),
+# ports (named by USB vendor) and the example copy.
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
+fail() { echo "FAIL: $*" >&2; exit 1; }
+pass() { echo "ok - $*"; }
+for f in bin/omamobile-flash install; do bash -n "$f" || fail "syntax: $f"; done
+
+t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
+./install "$t/stage"
+for f in usr/bin/omamobile-flash usr/share/omamobile-flash/shell.qml usr/share/applications/omamobile-flash.desktop \
+         usr/share/omamobile-flash/example/blink/platformio.ini usr/share/omamobile-flash/example/blink/src/main.cpp \
+         usr/share/licenses/omamobile-flash/LICENSE; do
+  [[ -e $t/stage/$f ]] || fail "not staged: $f"
+done
+grep -cx 'Exec=omamobile-flash' share/omamobile-flash.desktop >/dev/null || fail "the launcher runs omamobile-flash"
+pass "staged"
+
+h=$t/home; mkdir -p "$h/proyek/old" "$h/proyek/new" "$h/.platformio/packages/x" "$h/proyek/new/.pio/libdeps"
+printf '[env:a]\nboard = x\n' >"$h/proyek/old/platformio.ini"
+touch -d '2026-01-01' "$h/proyek/old/platformio.ini"
+cat >"$h/proyek/new/platformio.ini" <<'EOF'
+; comment
+[platformio]
+default_envs = s3
+
+[env]
+monitor_speed = 9600
+
+[env:dev]
+board = esp32dev
+
+[env:s3]
+board = esp32-s3-devkitc-1
+monitor_speed = 921600
+EOF
+touch "$h/.platformio/packages/x/platformio.ini" "$h/proyek/new/.pio/libdeps/platformio.ini"
+# An Arduino IDE sketch with arduino-cli's build folder, and an .ino in a
+# PlatformIO project's src/ (that project's, not a sketch).
+mkdir -p "$h/esp/hello/build/esp32.esp32.nodemcu-32s" "$h/proyek/new/src" "$h/esp/empty"
+printf 'void setup() {
+  Serial.begin(9600);
+}
+void loop() {}
+' >"$h/esp/hello/hello.ino"
+touch -d '2025-06-01' "$h/esp/hello/hello.ino"
+touch "$h/proyek/new/src/extra.ino"
+
+fb=$t/bin; mkdir -p "$fb" "$t/dev"
+cat >"$fb/udevadm" <<'EOF'
+#!/bin/bash
+case ${@: -1} in
+  */ttyUSB0) printf 'ID_VENDOR_ID=10c4\nID_MODEL=CP2102_USB_to_UART_Bridge_Controller\n' ;;
+  */ttyUSB1) printf 'ID_VENDOR_ID=1a86\nID_MODEL=USB_Serial\n' ;;
+  */ttyACM0) printf 'ID_VENDOR_ID=2341\nID_MODEL=Arduino_Uno\n' ;;
+esac
+EOF
+chmod +x "$fb/udevadm"
+run() { HOME=$h PATH="$fb:$PATH" OMAMOBILE_FLASH_DEV=$t/dev OMAMOBILE_FLASH_SHARE=$PWD bash bin/omamobile-flash "$@"; }
+
+want="[{\"path\":\"$h/proyek/new\",\"kind\":\"pio\"},{\"path\":\"$h/proyek/old\",\"kind\":\"pio\"},{\"path\":\"$h/esp/hello\",\"kind\":\"ino\"}]"
+[[ $(run projects) == "$want" ]] || fail "projects: $(run projects)"
+pass "projects: newest first, sketches marked ino, PlatformIO's folders and src/ skipped"
+
+[[ $(run dirs "$h") == '{"kind":"","dirs":[{"name":"esp","kind":""},{"name":"proyek","kind":""}]}' ]] || fail "dirs: $(run dirs "$h")"
+[[ $(run dirs "$h/esp") == '{"kind":"","dirs":[{"name":"empty","kind":""},{"name":"hello","kind":"ino"}]}' ]] || fail "dirs esp: $(run dirs "$h/esp")"
+[[ $(run dirs "$h/proyek/new") == '{"kind":"pio","dirs":[{"name":"src","kind":"ino"}]}' ]] || fail "dirs pio: $(run dirs "$h/proyek/new")"
+run dirs "$h/nope" 2>/dev/null && fail "dirs of a missing folder fails"
+pass "dirs: hidden folders left out, projects marked"
+
+[[ $(run sketch "$h/esp/hello") == '{"ino":"hello.ino","board":"nodemcu-32s","speed":9600}' ]] || fail "sketch: $(run sketch "$h/esp/hello")"
+run sketch "$h/esp/empty" 2>/dev/null && fail "sketch without an .ino fails"
+run init "$h/esp/empty" esp32dev 2>/dev/null && fail "init without an .ino fails"
+run init "$h/esp/hello" 'bad board' 2>/dev/null && fail "init checks the board"
+[[ $(run init "$h/esp/hello" nodemcu-32s 9600) == "$h/esp/hello" ]] || fail "init prints the folder"
+grep -cx 'src_dir = .' "$h/esp/hello/platformio.ini" >/dev/null || fail "init builds in place"
+[[ $(run envs "$h/esp/hello") == '[{"name":"nodemcu-32s","speed":9600,"upload":0}]' ]] || fail "init env: $(run envs "$h/esp/hello")"
+grep -cx 'platform = espressif32' "$h/esp/hello/platformio.ini" >/dev/null || fail "init platform"
+run init "$h/esp/hello" esp32dev 2>/dev/null && fail "init never replaces a platformio.ini"
+[[ $(run dirs "$h/esp") == *'"name":"hello","kind":"pio"'* ]] || fail "an initialised sketch is a project"
+pass "sketch and init: board from arduino-cli, speed from Serial.begin, written once"
+
+[[ $(run envs "$h/proyek/new") == '[{"name":"s3","speed":921600,"upload":0},{"name":"dev","speed":9600,"upload":0}]' ]] || fail "envs: $(run envs "$h/proyek/new")"
+[[ $(run envs "$h/proyek/old") == '[{"name":"a","speed":115200,"upload":0}]' ]] || fail "envs default speed: $(run envs "$h/proyek/old")"
+run envs "$h/proyek" 2>/dev/null && fail "envs without platformio.ini fails"
+pass "envs: default first, env and shared monitor speeds, 115200 otherwise"
+
+[[ $(run ports) == '[]' ]] || fail "no ports: $(run ports)"
+touch "$t/dev/ttyUSB0" "$t/dev/ttyUSB1" "$t/dev/ttyACM0"
+[[ $(run ports) == "[{\"path\":\"$t/dev/ttyUSB0\",\"name\":\"CP210x\"},{\"path\":\"$t/dev/ttyUSB1\",\"name\":\"CH340\"},{\"path\":\"$t/dev/ttyACM0\",\"name\":\"Arduino Uno\"}]" ]] \
+  || fail "ports: $(run ports)"
+pass "ports: named by USB vendor, else udev's model"
+
+[[ $(run example) == "$h/proyek/blink" && -f $h/proyek/blink/src/main.cpp ]] || fail "example copies blink"
+echo changed >"$h/proyek/blink/src/main.cpp"
+run example >/dev/null
+[[ $(cat "$h/proyek/blink/src/main.cpp") == changed ]] || fail "example never overwrites"
+run monitor /dev/null abc 2>/dev/null && fail "monitor checks the baud"
+pass "example: copied once, never overwritten"
+
+# status: the penv's pio first, else one on PATH, else none.
+st() { HOME=$h PATH="$1" OMAMOBILE_FLASH_PENV=$t/penv bash bin/omamobile-flash status; }
+[[ $(st "$fb:/usr/bin:/bin") == '{"pio":"","version":""}' ]] || fail "status without PlatformIO: $(st "$fb:/usr/bin:/bin")"
+mkdir -p "$t/penv/bin"
+printf '#!/bin/bash\necho "PlatformIO Core, version 6.1.18"\n' >"$t/penv/bin/pio"; chmod +x "$t/penv/bin/pio"
+[[ $(st "$fb:$PATH") == "{\"pio\":\"$t/penv/bin/pio\",\"version\":\"6.1.18\"}" ]] || fail "status: $(st "$fb:$PATH")"
+pass "status: the penv's pio and its version"
+
+# run: CMD's output and exit code come through, and the log keeps both
+# a header and the output; it rolls over past 2 MB.
+lg=$t/state/flash.log
+rr() { HOME=$h OMAMOBILE_FLASH_LOG=$lg bash bin/omamobile-flash run "$@"; }
+[[ $(rr bash -c 'echo built; echo oops >&2') == $'built\noops' ]] || fail "run passes output through"
+rc=0; rr bash -c 'exit 3' || rc=$?
+[[ $rc -eq 3 ]] || fail "run keeps the exit code: $rc"
+sleep 0.2
+grep -c '^=== .* bash -c echo built' "$lg" >/dev/null || fail "run writes a header"
+grep -cx oops "$lg" >/dev/null || fail "run logs stderr too"
+head -c 2200000 /dev/zero >"$lg"
+rr true
+sleep 0.2
+[[ -f $lg.1 && $(stat -c %s "$lg") -lt 1000 ]] || fail "the log rolls over"
+pass "run: output and exit code through, logged with a header, rolled over past 2 MB"
+
+# upload-speed: set, replace and remove one env's upload_speed only.
+ini=$h/proyek/new/platformio.ini
+run upload-speed "$h/proyek/new" dev 115200
+[[ $(run envs "$h/proyek/new") == '[{"name":"s3","speed":921600,"upload":0},{"name":"dev","speed":9600,"upload":115200}]' ]] || fail "upload-speed set: $(run envs "$h/proyek/new")"
+run upload-speed "$h/proyek/new" dev 230400
+[[ $(grep -c '^upload_speed' "$ini") == 1 ]] || fail "upload-speed replaces, not adds"
+[[ $(run envs "$h/proyek/new") == *'"name":"dev","speed":9600,"upload":230400'* ]] || fail "upload-speed replace"
+run upload-speed "$h/proyek/new" dev
+grep -c upload_speed "$ini" >/dev/null && fail "upload-speed without a baud removes it"
+grep -cx 'board = esp32-s3-devkitc-1' "$ini" >/dev/null || fail "upload-speed keeps the rest"
+run upload-speed "$h/proyek/new" nope 115200 2>/dev/null && fail "upload-speed of a missing env fails"
+run upload-speed "$h/proyek/new" dev fast 2>/dev/null && fail "upload-speed checks the baud"
+pass "upload-speed: set, replaced, removed, one env only"

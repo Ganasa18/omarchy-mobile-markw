@@ -1,0 +1,76 @@
+# Lock: a status line at the top on phones, with the battery level and
+# state and which phone this is ("87% · On battery   Omarchy Mobile ·
+# Xiaomi Redmi 4 Prime"), as every phone's lock screen shows the battery.
+# Only where Omarchy Mobile's device descriptor
+# (/usr/share/omamobile/device.conf) names the phone; a computer's lock is
+# unchanged. The level comes from UPower, live; nothing polls or animates.
+#
+# Against Omarchy 4.0.6 (edge 4.0.6-1), after 0003, 0011 and 0014.
+diff --git i/shell/plugins/lock/LockView.qml w/shell/plugins/lock/LockView.qml
+--- i/shell/plugins/lock/LockView.qml
++++ w/shell/plugins/lock/LockView.qml
+@@ -2,6 +2,7 @@
+ import QtQuick.Effects
+ import Quickshell
+ import Quickshell.Io
++import Quickshell.Services.UPower
+ import qs.Commons
+ import qs.Commons as Commons
+ import qs.Ui
+@@ -122,6 +123,32 @@
+     onFileChanged: reload()
+   }
+ 
++  // Phones (Omarchy Mobile's device descriptor): the battery and which phone
++  // this is, in one line at the top, as a phone's lock screen shows them.
++  // Nothing without the descriptor; nothing animates.
++  property string deviceName: ""
++  FileView {
++    path: "/usr/share/omamobile/device.conf"
++    printErrors: false
++    onLoaded: {
++      var m = String(text()).match(/^NAME="?([^"\n]*)"?$/m)
++      root.deviceName = m ? m[1] : ""
++    }
++  }
++  readonly property var batteryDevice: UPower.displayDevice
++  readonly property bool batteryPresent: !!batteryDevice && batteryDevice.isPresent === true
++  readonly property string statusLine: {
++    if (!deviceName) return ""
++    var parts = []
++    if (batteryPresent) {
++      var full = batteryDevice.state === UPowerDeviceState.FullyCharged
++      parts.push(Math.round(batteryDevice.percentage * 100) + "% · "
++        + (full ? "Full" : UPower.onBattery ? "On battery" : "Charging"))
++    }
++    parts.push("Omarchy Mobile · " + deviceName)
++    return parts.join("   ")
++  }
++
+   function clearPassword() {
+     passwordTextEdited("")
+   }
+@@ -185,6 +212,23 @@
+       onPositionChanged: root.wakeRequested()
+     }
+ 
++    Text {
++      objectName: "lockStatusLine"
++      visible: root.statusLine.length > 0
++      anchors.top: parent.top
++      anchors.topMargin: Style.space(14)
++      anchors.horizontalCenter: parent.horizontalCenter
++      width: parent.width - Style.space(32)
++      textFormat: Text.PlainText
++      text: root.statusLine
++      color: Commons.Color.lock.text
++      opacity: 0.9
++      font.family: Style.font.family
++      font.pixelSize: Style.font.caption
++      horizontalAlignment: Text.AlignHCenter
++      elide: Text.ElideRight
++    }
++
+     Item {
+       id: keypadKeys
+       Keys.onPressed: function(event) {

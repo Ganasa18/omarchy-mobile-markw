@@ -435,6 +435,25 @@ def own_screen_for_a_window_already_alone_only_focuses_it():
         assert s.actions() == [("dispatch", 'hl.dsp.focus({ window = "address:0xa" })')], s.actions()
 
 
+@test
+def launches_are_remembered_for_the_recent_row():
+    with Sandbox() as s:
+        s.env["XDG_STATE_HOME"] = os.path.join(s.root, "state")
+        recent = os.path.join(s.root, "state/omamobile/recent-apps")
+        for app in ["foot", "chromium", "foot"] + ["app%d" % i for i in range(9)] + ["chromium"]:
+            s.desktop(app)
+            assert s.run("app", app).returncode == 0
+        ids = open(recent).read().split()
+        assert ids[0] == "chromium" and len(ids) == mod.RECENT_MAX and len(set(ids)) == len(ids), ids
+        assert ids[1:] == ["app8", "app7", "app6", "app5", "app4", "app3", "app2"], ids
+    # A home that can't be written never stops the launch.
+    with Sandbox() as s:
+        s.env["XDG_STATE_HOME"] = "/proc/omamobile-no-such-dir"
+        s.desktop("foot")
+        r = s.run("app", "foot")
+        assert r.returncode == 0 and "recent apps not saved" in r.stderr, r
+
+
 def main():
     global failed
     if not LUA:

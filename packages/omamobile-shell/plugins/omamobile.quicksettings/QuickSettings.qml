@@ -69,6 +69,7 @@ Item {
     fingerprint.refresh()
     keyboard.refresh()
     clockFormatRead.running = true
+    if (!systemRead.running) systemRead.running = true
   }
 
   // Host-initiated close (`shell hide`).
@@ -179,7 +180,8 @@ Item {
     "hotspot": hotspot, "dnd": dnd, "torch": torch, "rotation-lock": rotationLock,
     "location": location, "nfc": nfc, "battery-saver": batterySaver, "dark-theme": darkTheme,
     "night-light": nightLight, "stay-awake": stayAwake, "mic": mic, "screenshot": screenshot,
-    "screen-record": screenRecord, "fingerprint": fingerprint, "keyboard": keyboard
+    "screen-record": screenRecord, "fingerprint": fingerprint, "keyboard": keyboard,
+    "ssh-wifi": sshWifi
   })
 
   // ---------------------------------------------------------------- layout
@@ -416,6 +418,26 @@ Item {
     function toggle() { if (available) root.runTileAction("stay-awake", !enabled) }
   }
 
+  // SSH over Wi-Fi through omamobile-ssh-wifi: a tap opens it for 30
+  // minutes or closes it; the chevron opens the page (other times, the
+  // address and command, sessions).
+  QtObject {
+    id: sshWifi
+    readonly property bool available: root.probedHas("sshwifi")
+    readonly property bool enabled: available && root.probedOn("ssh-wifi", "sshwifi")
+    readonly property string icon: "󰣀"
+    readonly property bool details: true
+    readonly property string status: {
+      if (!available) return "No Wi-Fi radio"
+      if (!enabled) return "Off"
+      var left = root.probed.sshwifi_left
+      var addr = root.probed.sshwifi_addr || "On"
+      return left ? addr + " · " + left + " min" : addr
+    }
+    function toggle() { if (available) root.runTileAction("ssh-wifi", !enabled) }
+    function openDetails() { root.openPage("ssh"); root.dismiss() }
+  }
+
   // The default microphone's mute, through PipeWire.
   QtObject {
     id: mic
@@ -492,6 +514,33 @@ Item {
   }
 
 
+  // What the phone is and runs, and the battery's temperature, for the
+  // header: one short read on open, no polling (the level itself is UPower's).
+  property string systemLine: ""
+  property string batteryTemp: ""
+
+  Process {
+    id: systemRead
+    command: ["sh", "-c",
+      "sed -n 's/^NAME=\"\\{0,1\\}\\([^\"]*\\)\"\\{0,1\\}$/device=\\1/p' /usr/share/omamobile/device.conf 2>/dev/null; "
+      + "sed -n 's/^NAME=\"\\{0,1\\}\\([^\"]*\\)\"\\{0,1\\}$/os=\\1/p; s/^VERSION_ID=\"\\{0,1\\}\\([^\"]*\\)\"\\{0,1\\}$/version=\\1/p' /etc/os-release 2>/dev/null; "
+      + "for d in /sys/class/power_supply/*; do [ \"$(cat \"$d/type\" 2>/dev/null)\" = Battery ] || continue; echo \"temp=$(cat \"$d/temp\" 2>/dev/null)\"; break; done"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var v = {}
+        String(text || "").split("\n").forEach(function(line) {
+          var at = line.indexOf("=")
+          if (at > 0 && !(line.slice(0, at) in v)) v[line.slice(0, at)] = line.slice(at + 1).trim()
+        })
+        var os = [v.os || "", v.version || ""].filter(function(s) { return !!s }).join(" ")
+        root.systemLine = [v.device || "", os].filter(function(s) { return !!s }).join(" · ")
+        var t = Number(v.temp)
+        root.batteryTemp = v.temp && isFinite(t) ? Math.round(t / 10) + " °C" : ""
+      }
+    }
+  }
+
   SystemClock {
     id: clock
     precision: SystemClock.Minutes
@@ -553,9 +602,16 @@ Item {
     if (page !== "wifi") wifiPicker.close()
     if (page !== "bluetooth") bluetoothPanelItem.close()
     if (page !== "record") recordPanelItem.close()
+    if (page !== "ssh") sshPanelItem.close()
     if (page === "wifi") wifiPicker.open()
     else if (page === "bluetooth") bluetoothPanelItem.open()
     else if (page === "record") recordPanelItem.open()
+    else if (page === "ssh") sshPanelItem.open()
+  }
+
+  SshPanel {
+    id: sshPanelItem
+    onBackRequested: root.backToSheet(sshPanelItem)
   }
 
   RecordPanel {
@@ -1195,20 +1251,46 @@ Item {
               font.family: Style.font.family
               font.pixelSize: Style.font.body
             }
+
+            // The device and the OS: "Xiaomi Redmi 4 Prime · Omarchy 4.0.6".
+            Text {
+              visible: root.systemLine.length > 0
+              width: Math.max(0, parent.parent.width - headerBattery.width - Style.spacing.lg)
+              textFormat: Text.PlainText
+              text: root.systemLine
+              color: Qt.darker(root.foreground, 1.4)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+              elide: Text.ElideRight
+            }
           }
 
-          Text {
+          Column {
             id: headerBattery
             visible: root.hasBattery
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            textFormat: Text.PlainText
-            text: root.hasBattery
-              ? (UPower.onBattery ? "󰁹 " : "󰂄 ") + Math.round(root.battery.percentage * 100) + "%"
-              : ""
-            color: root.foreground
-            font.family: Style.font.family
-            font.pixelSize: Style.font.title
+            spacing: Style.spacing.xxs
+
+            Text {
+              anchors.right: parent.right
+              textFormat: Text.PlainText
+              text: root.hasBattery
+                ? (UPower.onBattery ? "󰁹 " : "󰂄 ") + Math.round(root.battery.percentage * 100) + "%"
+                : ""
+              color: root.foreground
+              font.family: Style.font.family
+              font.pixelSize: Style.font.title
+            }
+            Text {
+              anchors.right: parent.right
+              visible: root.batteryTemp.length > 0
+              textFormat: Text.PlainText
+              text: root.batteryTemp
+              color: Qt.darker(root.foreground, 1.4)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+            }
           }
         }
 

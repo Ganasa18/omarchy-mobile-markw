@@ -1,0 +1,184 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# SSH over Wi-Fi while it is needed: ufw lets TCP 22 in on the Wi-Fi
+# interface only while omamobile-ssh-wifi@MINUTES.service runs, and the
+# unit stops by itself after MINUTES (0: until "off"). sshd itself keeps its
+# keys-only configuration; the USB link's rule (usb0) is never touched.
+#
+#   omamobile-ssh-wifi on [MINUTES]   open (default 30; 0 = until off); idempotent
+#   omamobile-ssh-wifi off            close, and end the Wi-Fi SSH sessions
+#   omamobile-ssh-wifi status [--json|--kv]
+#
+# The active local user may start and stop the unit through
+# /usr/share/polkit-1/rules.d/50-omamobile-ssh-wifi.rules. Internal, run by
+# the unit as root: "hold MINUTES" and "firewall open|close".
+set -u
+
+UNIT=omamobile-ssh-wifi
+STATE=${OMAMOBILE_SSH_WIFI_STATE:-/run/omamobile-ssh-wifi}
+NET=${OMAMOBILE_SSH_WIFI_NET:-/sys/class/net}
+PORT=22
+COMMENT=omamobile-ssh-wifi
+MAX_MINUTES=1440
+
+die() { echo "omamobile-ssh-wifi: $*" >&2; exit 1; }
+is_root() { [[ $(id -u) == 0 ]]; }
+minutes_ok() { [[ $1 =~ ^[0-9]+$ ]] && (( 10#$1 <= MAX_MINUTES )); }
+
+# The first wireless interface (it has a wireless/ directory in sysfs).
+wifi_iface() {
+  local d
+  for d in "$NET"/*/wireless; do
+    [[ -d $d ]] || continue
+    d=${d%/wireless}; echo "${d##*/}"; return 0
+  done
+  return 1
+}
+
+wifi_addr() {
+  ip -4 -o addr show dev "$1" 2>/dev/null | awk '{ sub(/\/.*/, "", $4); print $4; exit }'
+}
+
+# The running instance, as "omamobile-ssh-wifi@30.service", or nothing.
+active_unit() {
+  systemctl list-units --plain --no-legend --state=active "$UNIT@*.service" 2>/dev/null | awk '{ print $1; exit }'
+}
+
+# Peers of established SSH connections that came in on ADDR.
+sessions() {
+  [[ -n $1 ]] || return 0
+  # With a state filter ss prints Recv-Q, Send-Q, local, peer (and process).
+  ss -Htn state established "( sport = :$PORT )" 2>/dev/null | awk -v a="$1:$PORT" '
+    $3 == a { peer = $4; sub(/:[0-9]+$/, "", peer); print peer }'
+}
+
+ufw_active() {
+  command -v ufw >/dev/null || return 1
+  [[ $(ufw status 2>/dev/null | head -n1) == "Status: active" ]]
+}
+
+cmd_firewall() {
+  is_root || die "firewall needs root"
+  local iface
+  mkdir -p "$STATE"
+  case ${1:-} in
+    open)
+      iface=$(wifi_iface) || die "no Wi-Fi interface"
+      echo "$iface" >"$STATE/iface"
+      if ufw_active; then
+        ufw allow in on "$iface" to any port "$PORT" proto tcp comment "$COMMENT" >/dev/null
+        echo open >"$STATE/firewall"
+        echo "omamobile-ssh-wifi: TCP $PORT open on $iface"
+      else
+        # Without a firewall sshd answers on every interface anyway.
+        echo "no-ufw" >"$STATE/firewall"
+        echo "omamobile-ssh-wifi: ufw is not active; SSH is reachable on every interface"
+      fi ;;
+    close)
+      iface=$(cat "$STATE/iface" 2>/dev/null) || iface=$(wifi_iface) || iface=""
+      if [[ -n $iface ]] && command -v ufw >/dev/null; then
+        ufw --force delete allow in on "$iface" to any port "$PORT" proto tcp >/dev/null 2>&1 || true
+      fi
+      end_sessions "$iface"
+      rm -f "$STATE/iface" "$STATE/firewall" ;;
+    *) die "firewall open|close" ;;
+  esac
+}
+
+# The rule only stops new connections; end the ones already in over Wi-Fi.
+end_sessions() {
+  local addr pids
+  [[ -n ${1:-} ]] || return 0
+  addr=$(wifi_addr "$1")
+  [[ -n $addr ]] || return 0
+  pids=$(ss -Htnp state established "( sport = :$PORT )" 2>/dev/null | awk -v a="$addr:$PORT" '
+    $3 == a { while (match($0, /pid=[0-9]+/)) { print substr($0, RSTART + 4, RLENGTH - 4); $0 = substr($0, RSTART + RLENGTH) } }' | sort -u)
+  [[ -n $pids ]] && kill $pids 2>/dev/null
+  return 0
+}
+
+cmd_hold() {
+  is_root || die "hold needs root"
+  local minutes=${1:-}
+  minutes_ok "$minutes" || die "minutes: 0 to $MAX_MINUTES"
+  cmd_firewall open
+  if (( 10#$minutes == 0 )); then exec sleep infinity; fi
+  exec sleep $(( 10#$minutes * 60 ))
+}
+
+cmd_on() {
+  local minutes=${1:-30} current
+  minutes_ok "$minutes" || die "minutes: 0 to $MAX_MINUTES"
+  minutes=$(( 10#$minutes ))
+  current=$(active_unit)
+  [[ $current == "$UNIT@$minutes.service" ]] && return 0
+  [[ -n $current ]] && systemctl stop "$current"
+  systemctl start "$UNIT@$minutes.service"
+}
+
+cmd_off() {
+  local current
+  current=$(active_unit)
+  [[ -n $current ]] && systemctl stop "$current"
+  return 0
+}
+
+json_str() { printf '"%s"' "$(sed 's/["\\]/\\&/g' <<<"$1")"; }
+
+cmd_status() {
+  local unit minutes="" left="" iface addr peers enter now
+  unit=$(active_unit)
+  iface=$(wifi_iface) || iface=""
+  addr=""; [[ -n $iface ]] && addr=$(wifi_addr "$iface")
+  if [[ -n $unit ]]; then
+    minutes=${unit#"$UNIT@"}; minutes=${minutes%.service}
+    if (( minutes > 0 )); then
+      enter=$(systemctl show -P ActiveEnterTimestampMonotonic "$unit" 2>/dev/null)
+      now=$(awk '{ printf "%d", $1 * 1000000 }' /proc/uptime)
+      [[ $enter =~ ^[0-9]+$ ]] && left=$(( (minutes * 60000000 - (now - enter)) / 60000000 + 1 ))
+      [[ -n $left ]] && (( left < 0 )) && left=0
+    fi
+  fi
+  peers=$(sessions "$addr")
+  case ${1:-} in
+    --json)
+      printf '{"on":%s,"minutes":%s,"left":%s,"iface":%s,"address":%s,"sessions":[' \
+        "$([[ -n $unit ]] && echo true || echo false)" "${minutes:-null}" "${left:-null}" \
+        "$(json_str "$iface")" "$(json_str "$addr")"
+      local first=1 p
+      while read -r p; do
+        [[ -n $p ]] || continue
+        (( first )) || printf ','; first=0
+        json_str "$p"
+      done <<<"$peers"
+      printf ']}\n' ;;
+    --kv)
+      if [[ -z $iface ]]; then echo "sshwifi=none"; return 0; fi
+      echo "sshwifi=$([[ -n $unit ]] && echo on || echo off)"
+      echo "sshwifi_addr=$addr"
+      echo "sshwifi_left=$left"
+      echo "sshwifi_sessions=$(grep -c . <<<"$peers")" ;;
+    "")
+      if [[ -n $unit ]]; then
+        if [[ -n $left ]]; then echo "on, $left min left"; else echo "on, until off"; fi
+      else
+        echo "off"
+      fi
+      echo "interface: ${iface:-none}"
+      echo "address:   ${addr:-none}"
+      [[ -n $addr ]] && echo "connect:   ssh $(id -nu 2>/dev/null || echo USER)@$addr"
+      echo "sessions:  $(grep -c . <<<"$peers")"
+      [[ -n $peers ]] && sed 's/^/  /' <<<"$peers"
+      return 0 ;;
+    *) die "status [--json|--kv]" ;;
+  esac
+}
+
+case ${1:-} in
+  on) cmd_on "${2:-30}" ;;
+  off) cmd_off ;;
+  status) cmd_status "${2:-}" ;;
+  hold) cmd_hold "${2:-}" ;;
+  firewall) cmd_firewall "${2:-}" ;;
+  *) sed -n '8,10s/^#   //p' "$0" >&2; exit 2 ;;
+esac

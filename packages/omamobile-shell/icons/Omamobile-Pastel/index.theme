@@ -1,0 +1,12 @@
+[Icon Theme]
+Name=Omamobile Pastel
+Comment=Omarchy Mobile's pastel app icons; everything else comes from Yaru
+Inherits=Yaru-blue,Adwaita,hicolor
+Directories=scalable/apps
+
+[scalable/apps]
+Size=128
+MinSize=16
+MaxSize=512
+Type=Scalable
+Context=Applications

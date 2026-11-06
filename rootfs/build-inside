@@ -116,6 +116,10 @@ sed -i 's/^root:[^:]*:/root:!*:/' "$T/etc/shadow"
 rm -rf "$T/etc/pacman.d/gnupg"                 # firstboot makes the phone's own keyring
 rm -f "$T"/etc/ssh/ssh_host_*                  # sshd makes the phone's own host keys
 printf 'uninitialized\n' > "$T/etc/machine-id" # systemd makes the phone's own id
+# systemd starts the clock no earlier than this file's mtime. markw has no
+# readable RTC: its clock began at systemd's own epoch, before our keyring
+# key was made, so gpg rejected the key (NOTES 2026-10-27).
+touch "$T/usr/lib/clock-epoch"
 rm -f "$T/var/lib/systemd/random-seed" "$T/var/lib/dbus/machine-id"
 rm -rf "$T"/root/.ssh "$T"/root/.bash_history "$T"/root/.gnupg
 rm -rf "$T"/etc/NetworkManager/system-connections/* "$T"/var/lib/NetworkManager/*

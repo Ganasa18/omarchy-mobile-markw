@@ -1,0 +1,65 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# markw-otg-watch: follow an OTG session on the Redmi 4 Prime over Wi-Fi SSH,
+# while the phone's only USB port holds a board and the USB link is gone.
+#
+#   MARKW_WIFI_HOST=<lan-ip> tools/markw-otg-watch          stream until Ctrl-C
+#   MARKW_WIFI_HOST=<lan-ip> tools/markw-otg-watch rescue   rebind the USB gadget
+#   MARKW_OTG_TRACE=1 ...                                  add DWC3's trace events
+#
+# Turn the phone's SSH Wi-Fi tile on first (omamobile-ssh-wifi): it opens
+# port 22 on the Wi-Fi interface for a while. The stream goes to the
+# terminal and to logs/otg-<UTC time>.log, each line tagged:
+#   [k] the kernel log (USB role changes, xHCI, cp210x/ch341, OOM)
+#   [f] Flash's log (pio output and the serial monitor, omamobile-flash 0.1.7+)
+#   [s] every 5 s: USB role, gadget carrier, free memory and swap, battery
+#   [t] with MARKW_OTG_TRACE=1: DWC3's mode switches, device events (reset,
+#       connect, disconnect) and control requests, from a tracing instance
+#       of its own that is removed at the end
+# Read-only, apart from "rescue": it unbinds the gadget from the controller
+# and binds it again, for a gadget that stayed dead after leaving host mode
+# (BRINGUP-OTG.md, 2026-11-03). Run it with the board unplugged and the
+# laptop cable in.
+set -euo pipefail
+host=${MARKW_WIFI_HOST:?set MARKW_WIFI_HOST to the phone Wi-Fi address}
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
+opts=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=8
+      -o ServerAliveInterval=5 -o ServerAliveCountMax=3)
+
+if [[ ${1:-} == rescue ]]; then
+  exec ssh "${opts[@]}" "root@$host" bash -s <<'EOF'
+set -u
+g=$(ls -d /sys/kernel/config/usb_gadget/*/ | head -n1); udc=$(ls /sys/class/udc | head -n1)
+echo "role $(cat /sys/class/usb_role/*/role), gadget ${g%/}, udc $udc, bound to '$(cat "$g/UDC")'"
+echo "" >"$g/UDC" 2>/dev/null; sleep 1
+echo "$udc" >"$g/UDC" && echo "bound again"
+sleep 3
+echo "usb0 carrier: $(cat /sys/class/net/usb0/carrier 2>/dev/null || echo none)"
+EOF
+fi
+
+mkdir -p logs
+log=logs/otg-$(date -u +%Y%m%dT%H%M%SZ).log
+echo "streaming to $log (Ctrl-C ends it)"
+ssh "${opts[@]}" "root@$host" TRACE="${MARKW_OTG_TRACE:-0}" bash -s <<'EOF' | tee "$log"
+set -u
+tr=/sys/kernel/tracing/instances/omamobile-otg
+trap 'trap "" TERM; kill 0; sleep 1; [[ ! -d $tr ]] || rmdir "$tr"' EXIT
+if [[ $TRACE == 1 ]]; then
+  mkdir -p "$tr"
+  for e in dwc3_set_prtcap dwc3_event dwc3_ctrl_req; do
+    echo 1 >"$tr/events/dwc3/$e/enable" || echo "[t] no event $e"
+  done
+  sed -u 's/^/[t] /' "$tr/trace_pipe" &
+fi
+journalctl -kf -n 0 -o short-monotonic | sed -u 's/^/[k] /' &
+f=$(ls /home/*/.local/state/omamobile-flash/flash.log 2>/dev/null | head -n1)
+[[ -n $f ]] || f=$(ls -d /home/*/ | head -n1).local/state/omamobile-flash/flash.log
+tail -n 0 -F "$f" 2>/dev/null | sed -u 's/^/[f] /' &
+while sleep 5; do
+  printf '[s] %s role=%s usb0=%s mem=%sM swap=%sM bat=%s%%\n' "$(date +%T)" \
+    "$(cat /sys/class/usb_role/*/role 2>/dev/null)" "$(cat /sys/class/net/usb0/carrier 2>/dev/null || echo -)" \
+    "$(awk '/MemAvailable/{print int($2/1024)}' /proc/meminfo)" "$(awk '/SwapFree/{print int($2/1024)}' /proc/meminfo)" \
+    "$(cat /sys/class/power_supply/qcom-battery/capacity 2>/dev/null)"
+done
+EOF

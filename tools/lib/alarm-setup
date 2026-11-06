@@ -12,6 +12,12 @@ install -m644 /setup/omarchy.gpg /setup/omarchy-trusted /setup/omarchy-revoked \
   /setup/omamobile.gpg /setup/omamobile-trusted /setup/omamobile-revoked /usr/share/pacman/keyrings/
 pacman-key --populate omarchy omamobile >/dev/null 2>&1
 
+# ALARM_MIRROR (optional): a nearer Arch Linux ARM mirror, tried before the
+# tarball's geo-redirecting list
+if [[ -n ${ALARM_MIRROR:-} ]]; then
+  sed -i "1i Server = ${ALARM_MIRROR%/}/\$arch/\$repo" /etc/pacman.d/mirrorlist
+fi
+
 # The order the phone uses: Omarchy's aarch64 builds before Arch Linux ARM's.
 # [omamobile] is added per run (file:///repo), when a repository exists.
 cat >/etc/pacman.conf <<CONF

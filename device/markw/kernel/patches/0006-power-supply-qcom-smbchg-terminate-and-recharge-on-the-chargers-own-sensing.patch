@@ -1,0 +1,48 @@
+From: Omarchy Mobile <omamobile@localhost>
+Subject: [PATCH] power: supply: qcom-smbchg: terminate and recharge on the charger's own sensing
+
+smbchg_init() points the charger's termination current and recharge
+voltage readings at the fuel gauge. Those sources only work once the fuel
+gauge is set up for them, and pmi8994_fg doesn't do that.
+
+On a Redmi 4 Prime (PMI8950, msm8953-xiaomi-markw) charging therefore
+never terminated. The charger tapered at 4.368 V with the battery taking
+147 mA, below the 300 mA termination current, and no charge-done
+interrupt (chg-tcc-thr) came in 19 h or since. It tapered on until the
+battery overvoltage comparator tripped (BAT_IF RT_STS bit 4, batt-ov) and
+chg-error latched. Charging then stayed stopped with the battery near
+4.20 V, at about 90 %, and each error also dropped the USB role to none.
+
+Use the charger's analog sensing for both, so it terminates at its own
+termination current and recharges 100 mV below the float voltage.
+
+---
+ drivers/power/supply/qcom-smbchg.c | 13 ++++++++++---
+ 1 file changed, 10 insertions(+), 3 deletions(-)
+
+--- a/drivers/power/supply/qcom-smbchg.c
++++ b/drivers/power/supply/qcom-smbchg.c
+@@ -1470,13 +1470,20 @@
+ 
+ 	/*
+ 	 * Charger configuration, part 1:
+-	 * - Set recharge voltage reading source to fuel gauge
+-	 * - Set charge termination current reading source to fuel gauge
++	 * - Set recharge voltage reading source to the charger's own sensing
++	 * - Set charge termination current reading source to the charger's
++	 *   own sensing
++	 *
++	 * The fuel gauge sources need the fuel gauge to be programmed for
++	 * them, which pmi8994_fg does not do. With them, charging never terminated:
++	 * it tapered on below the termination current until the battery
++	 * overvoltage comparator tripped, and then stopped in an error state
++	 * that nothing cleared.
+ 	 */
+ 	ret = qcom_pmic_sec_masked_write(
+ 		chip->regmap, chip->base + SMBCHG_CHGR_CHGR_CFG1,
+ 		RECHG_THRESHOLD_SRC_BIT | TERM_I_SRC_BIT,
+-		RCHG_SRC_FG | TERM_SRC_FG);
++		RCHG_SRC_ANA | TERM_SRC_ANA);
+ 	if (ret)
+ 		return ret;
+ 

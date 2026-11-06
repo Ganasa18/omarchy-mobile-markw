@@ -11,10 +11,12 @@ import qs.services as OmarchyServices
 import "LauncherModel.js" as LauncherModel
 
 // The phone's home surface, after Omalauncher: one bar at the bottom of the
-// screen that is app search, app grid and coding-agent prompt at once.
+// screen that is app search, app list and coding-agent prompt at once.
 //
-// Collapsed, it is a dock holding a single search pill. Tapping it raises the
-// app drawer with the input focused. Typing filters the grid; text that reads
+// Collapsed, it is a gesture bar (a swipe up raises the app drawer with the
+// input focused) or, with "dock": "search", a dock holding a single search
+// pill that raises it on a tap. The drawer: the input, recent apps, then
+// every app as a list. Typing filters the list; text that reads
 // like a sentence (or matches no app) offers "Ask <agent>" (the user's
 // Omarchy default agent) instead, and Enter
 // takes whichever is on top: the first app, or a terminal running the agent
@@ -94,6 +96,32 @@ Item {
   }
 
   // ---------------------------------------------------------------- results
+
+  // Words in the drawer are set in a sans, as on the home screen; the
+  // shell's own font stays for glyphs.
+  readonly property string textFont: "Adwaita Sans"
+  readonly property bool darkSheet: Commons.Color.menu.background.hslLightness < 0.5
+
+  // The Recent row: what omamobile-launch last started, one row of what is
+  // still installed and shown.
+  property var recentIds: []
+  readonly property var recentEntries: {
+    var out = []
+    var revision = apps // re-evaluated when the app list changes
+    for (var i = 0; i < recentIds.length && out.length < columns; i++) {
+      var e = DesktopEntries.byId(recentIds[i]) || DesktopEntries.byId(recentIds[i] + ".desktop")
+      if (e && !(appLibrary && appLibrary.isHiddenEntry && appLibrary.isHiddenEntry(e))) out.push(e)
+    }
+    return out
+  }
+  FileView {
+    path: (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state") + "/omamobile/recent-apps"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.recentIds = LauncherModel.recentIds(text())
+    onLoadFailed: root.recentIds = []
+  }
 
   readonly property bool promptMode: LauncherModel.looksLikePrompt(query, apps.length, sentenceWords)
   readonly property bool hasQuery: query.trim().length > 0
@@ -224,7 +252,25 @@ Item {
   readonly property color foreground: Commons.Color.menu.text
   readonly property int touch: Math.max(44, Style.space(44))
   readonly property int inputHeight: Math.max(48, Style.space(48))
-  readonly property int dockHeight: inputHeight + Style.spacing.xxl * 2
+  // The dock: Android's gesture bar by default (a handle; swipe up for the
+  // drawer, further for recent apps, tap for home), or the search pill
+  // ("dock": "search" in the plugin's settings).
+  readonly property bool gestureDock: settings.dock !== "search"
+  // The drawer's input row keeps the search pill's height either way.
+  readonly property int inputRowHeight: inputHeight + Style.spacing.xxl * 2
+  readonly property int dockHeight: gestureDock ? Math.max(28, Style.space(28)) : inputRowHeight
+
+  // As the switcher's Home: the home screen (an empty workspace) on its home page.
+  function goHome() {
+    Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.focus({ workspace = \"empty\" })"])
+    Quickshell.execDetached(["qs", "ipc", "-p", Quickshell.shellDir, "call", "shell", "call", "omamobile.home", "goHome", ""])
+  }
+
+  function showRecents() {
+    // Through the CLI, like Omarchy's background does: a plugin may only
+    // summon panels it owns, and the switcher is its own plugin.
+    Quickshell.execDetached(["omarchy-shell", "shell", "summon", "omamobile.switcher", "{}"])
+  }
 
   property real reveal: opened ? 1 : 0
   Behavior on reveal { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
@@ -244,17 +290,22 @@ Item {
       anchors { bottom: true; left: true; right: true }
       implicitHeight: root.dockHeight
       exclusionMode: ExclusionMode.Auto
-      color: Commons.Color.bar.background
+      // The gesture bar is only its handle, on the wallpaper (or the app above it).
+      color: root.gestureDock ? "transparent" : Commons.Color.bar.background
       WlrLayershell.namespace: "omamobile-dock"
       // Bottom, not Top: its exclusive zone still keeps windows off it, and
       // fullscreen windows (the screensaver, video) cover it. On Top it was
       // drawn over a fullscreen window when it re-mapped after the drawer.
       WlrLayershell.layer: WlrLayer.Bottom
 
-      // Swipe up on the dock for recent apps (omamobile.switcher), as on
-      // Android; a tap still opens the drawer.
+      // The gesture bar: swipe up for the drawer, a long swipe (a quarter of
+      // the screen; the touch stays with this surface past its edge) for
+      // recent apps (omamobile.switcher), a tap for home. The search pill:
+      // any swipe up for recent apps, a tap for the drawer.
       Item {
+        id: dockArea
         anchors.fill: parent
+        readonly property real longSwipe: Math.max(120, (modelData.height || 960) / 4)
 
         DragHandler {
           target: null
@@ -262,15 +313,30 @@ Item {
           property real swipeY: 0
           onActiveTranslationChanged: swipeY = activeTranslation.y
           onActiveChanged: {
-            if (active) swipeY = 0
-            // Through the CLI, like Omarchy's background does: a plugin may
-            // only summon panels it owns, and the switcher is its own plugin.
-            else if (swipeY < -24)
-              Quickshell.execDetached(["omarchy-shell", "shell", "summon", "omamobile.switcher", "{}"])
+            if (active) { swipeY = 0; return }
+            if (swipeY >= -24) return
+            if (!root.gestureDock || -swipeY >= dockArea.longSwipe) root.showRecents()
+            else root.expand()
           }
         }
 
+        TapHandler {
+          enabled: root.gestureDock
+          onTapped: root.goHome()
+        }
+
+        Rectangle {
+          visible: root.gestureDock
+          anchors.centerIn: parent
+          width: Math.max(96, Style.space(108))
+          height: Math.max(4, Style.space(4))
+          radius: height / 2
+          color: root.foreground
+          opacity: 0.7
+        }
+
         SearchPill {
+          visible: !root.gestureDock
           anchors.fill: parent
           anchors.margins: Style.spacing.xxl
           placeholder: (root.hasAgent ? "Search apps or ask " + root.agentName + "…" : "Search apps…")
@@ -297,7 +363,10 @@ Item {
     // one holds exclusive focus, and that includes the on-screen keyboard.
     WlrLayershell.keyboardFocus: root.opened ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
 
-    onVisibleChanged: if (visible) Qt.callLater(function() { input.forceActiveFocus() })
+    // The keyboard comes up only to type: on a tap in the input, or when the
+    // drawer opens with text already in it. Opened by a swipe, the list shows
+    // whole, as in the design.
+    onVisibleChanged: if (visible && root.hasQuery) Qt.callLater(function() { input.forceActiveFocus() })
 
     Rectangle {
       id: sheet
@@ -307,25 +376,25 @@ Item {
       opacity: root.reveal
       color: Commons.Color.menu.background
 
-      // ---------- Header: count and a collapse control
+      // ---------- Header: the title and a collapse control
       Item {
         id: header
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.leftMargin: Style.spacing.panelPadding
+        anchors.leftMargin: 22
         anchors.rightMargin: Style.spacing.sm
-        height: root.touch + Style.spacing.sm
+        height: root.touch + Style.spacing.lg
 
         Text {
           anchors.left: parent.left
           anchors.verticalCenter: parent.verticalCenter
           textFormat: Text.PlainText
           text: root.hasQuery ? (root.apps.length === 1 ? "1 app" : root.apps.length + " apps") : "Apps"
-          color: Qt.darker(root.foreground, 1.4)
-          font.family: Style.font.family
-          font.pixelSize: Style.font.subtitle
-          font.bold: true
+          color: root.foreground
+          font.family: root.textFont
+          font.pixelSize: 34
+          font.weight: Font.Bold
         }
 
         Button {
@@ -340,59 +409,65 @@ Item {
         }
       }
 
-      // ---------- App grid
-      GridView {
-        id: grid
+      // ---------- The one input, under the title
+      Item {
+        id: inputRow
         anchors.top: header.bottom
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.bottom: askRow.visible ? askRow.top : inputRow.top
-        anchors.leftMargin: Style.spacing.lg
-        anchors.rightMargin: Style.spacing.lg
-        anchors.bottomMargin: Style.spacing.lg
-        clip: true
-        boundsBehavior: Flickable.StopAtBounds
-        // While searching, results stack up from the input so the best match
-        // sits nearest the thumb; the full list reads top-down.
-        verticalLayoutDirection: root.hasQuery ? GridView.BottomToTop : GridView.TopToBottom
-        cellWidth: Math.floor(width / root.columns)
-        cellHeight: Math.max(96, Style.space(100))
-        model: root.apps
-        opacity: root.promptMode ? 0.5 : 1
+        height: Math.max(root.touch, Style.space(52)) + Style.spacing.sm * 2
 
-        delegate: AppCell {
-          required property var modelData
-          required property int index
-          width: grid.cellWidth
-          height: grid.cellHeight
-          entry: modelData
-          highlighted: index === 0 && root.hasQuery && !root.promptMode
-          onTapped: root.launchApp(modelData)
-          onHeld: root.addToHome(modelData)
+        TextField {
+          id: input
+          anchors.fill: parent
+          anchors.leftMargin: 22
+          anchors.rightMargin: 22
+          anchors.topMargin: Style.spacing.sm
+          anchors.bottomMargin: Style.spacing.sm
+          verticalAlignment: TextInput.AlignVCenter
+          font.family: root.textFont
+          font.pixelSize: 16
+          // A filled, borderless field, as in the design.
+          background: Rectangle {
+            radius: 16
+            color: root.darkSheet ? Qt.rgba(1, 1, 1, input.activeFocus ? 0.11 : 0.07) : Qt.rgba(0, 0, 0, input.activeFocus ? 0.08 : 0.05)
+          }
+          leftPadding: Style.spacing.controlPaddingX + Style.font.iconLarge + Style.spacing.xl
+          placeholderText: root.hasAgent ? "Search apps or ask " + root.agentName + "…" : "Search apps and commands"
+          foreground: root.foreground
+          text: root.query
+          onTextEdited: root.query = text
+          Keys.onReturnPressed: root.activate()
+          Keys.onEnterPressed: root.activate()
+          Keys.onEscapePressed: {
+            if (root.query) root.query = ""
+            else root.dismiss()
+          }
+
+          Text {
+            anchors.left: parent.left
+            anchors.leftMargin: Style.spacing.controlPaddingX
+            anchors.verticalCenter: parent.verticalCenter
+            textFormat: Text.PlainText
+            text: root.promptMode ? "󰚩" : "󰍉"
+            color: root.promptMode ? Commons.Color.accent : Qt.darker(root.foreground, 1.3)
+            font.family: Style.font.family
+            font.pixelSize: Style.font.iconLarge
+          }
         }
       }
 
-      Text {
-        anchors.centerIn: grid
-        visible: root.hasQuery && root.apps.length === 0
-        textFormat: Text.PlainText
-        text: "No apps match"
-        color: Qt.darker(root.foreground, 1.6)
-        font.family: Style.font.family
-        font.pixelSize: Style.font.body
-      }
-
-      // ---------- Ask the agent
+      // ---------- Ask the agent, while typing
       BorderSurface {
         id: askRow
         visible: root.hasQuery
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.bottom: inputRow.top
-        anchors.leftMargin: Style.spacing.xxl
-        anchors.rightMargin: Style.spacing.xxl
-        anchors.bottomMargin: Style.spacing.lg
-        height: Math.max(root.touch, Style.space(52))
+        anchors.top: inputRow.bottom
+        anchors.leftMargin: 22
+        anchors.rightMargin: 22
+        anchors.topMargin: Style.spacing.sm
+        height: visible ? Math.max(root.touch, Style.space(52)) : 0
         radius: Style.cornerRadius
         color: askTouch.pressed ? Style.pressedFillFor(root.foreground, Commons.Color.accent)
           : root.promptMode ? Commons.Color.menu.selectedBackground : "transparent"
@@ -442,7 +517,7 @@ Item {
             textFormat: Text.PlainText
             text: root.hasAgent ? "Ask " + root.agentName : "Choose your agent"
             color: root.promptMode ? Commons.Color.menu.selectedText : root.foreground
-            font.family: Style.font.family
+            font.family: root.textFont
             font.pixelSize: Style.font.subtitle
             font.bold: true
             elide: Text.ElideRight
@@ -453,7 +528,7 @@ Item {
             textFormat: Text.PlainText
             text: root.query.trim()
             color: Qt.darker(root.foreground, 1.4)
-            font.family: Style.font.family
+            font.family: root.textFont
             font.pixelSize: Style.font.caption
             elide: Text.ElideRight
           }
@@ -479,43 +554,71 @@ Item {
         }
       }
 
-      // ---------- The one input
-      Item {
-        id: inputRow
+      // ---------- Recent apps, then every app as a list
+      ListView {
+        id: list
+        anchors.top: askRow.visible ? askRow.bottom : inputRow.bottom
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        height: root.dockHeight
+        anchors.topMargin: Style.spacing.md
+        anchors.leftMargin: 22
+        anchors.rightMargin: 22
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        model: root.apps
+        opacity: root.promptMode ? 0.5 : 1
 
-        TextField {
-          id: input
-          anchors.fill: parent
-          anchors.margins: Style.spacing.xxl
-          verticalAlignment: TextInput.AlignVCenter
-          font.pixelSize: Style.font.title
-          leftPadding: Style.spacing.controlPaddingX + Style.font.iconLarge + Style.spacing.xl
-          placeholderText: (root.hasAgent ? "Search apps or ask " + root.agentName + "…" : "Search apps…")
-          foreground: root.foreground
-          text: root.query
-          onTextEdited: root.query = text
-          Keys.onReturnPressed: root.activate()
-          Keys.onEnterPressed: root.activate()
-          Keys.onEscapePressed: {
-            if (root.query) root.query = ""
-            else root.dismiss()
+        header: Column {
+          width: list.width
+          spacing: Style.spacing.md
+          bottomPadding: Style.spacing.sm
+
+          SectionLabel {
+            visible: !root.hasQuery && root.recentEntries.length > 0
+            text: "RECENT"
           }
-
-          Text {
-            anchors.left: parent.left
-            anchors.leftMargin: Style.spacing.controlPaddingX + Border.left(input._borderSpec)
-            anchors.verticalCenter: parent.verticalCenter
-            textFormat: Text.PlainText
-            text: root.promptMode ? "󰚩" : "󰍉"
-            color: root.promptMode ? Commons.Color.accent : Qt.darker(root.foreground, 1.3)
-            font.family: Style.font.family
-            font.pixelSize: Style.font.iconLarge
+          Row {
+            visible: !root.hasQuery && root.recentEntries.length > 0
+            width: parent.width
+            Repeater {
+              model: root.hasQuery ? [] : root.recentEntries
+              delegate: AppCell {
+                required property var modelData
+                width: list.width / root.columns
+                height: Math.max(96, Style.space(100))
+                entry: modelData
+                onTapped: root.launchApp(modelData)
+                onHeld: root.addToHome(modelData)
+              }
+            }
+          }
+          SectionLabel {
+            visible: !root.hasQuery
+            text: "ALL APPS"
           }
         }
+
+        delegate: AppRow {
+          required property var modelData
+          required property int index
+          width: list.width
+          entry: modelData
+          last: index === root.apps.length - 1
+          highlighted: index === 0 && root.hasQuery && !root.promptMode
+          onTapped: root.launchApp(modelData)
+          onHeld: root.addToHome(modelData)
+        }
+      }
+
+      Text {
+        anchors.centerIn: list
+        visible: root.hasQuery && root.apps.length === 0
+        textFormat: Text.PlainText
+        text: "No apps match"
+        color: Qt.darker(root.foreground, 1.6)
+        font.family: root.textFont
+        font.pixelSize: Style.font.body
       }
     }
   }
@@ -567,6 +670,95 @@ Item {
     }
   }
 
+  // A small capital heading over a section of the drawer.
+  component SectionLabel: Text {
+    textFormat: Text.PlainText
+    color: Qt.darker(root.foreground, 1.4)
+    font.family: root.textFont
+    font.pixelSize: 13
+    font.weight: Font.DemiBold
+    font.letterSpacing: 0.6
+  }
+
+  // One app in the list: icon, name, and its generic name on the right.
+  component AppRow: Item {
+    id: row
+
+    property var entry: null
+    property bool highlighted: false
+    property bool last: false
+    signal tapped()
+    signal held()
+
+    height: Math.max(64, Style.space(64))
+
+    Rectangle {
+      anchors.fill: parent
+      anchors.topMargin: 2
+      anchors.bottomMargin: 2
+      radius: Style.cornerRadius
+      color: rowTouch.pressed ? Style.pressedFillFor(root.foreground, Commons.Color.accent)
+        : row.highlighted ? Commons.Color.menu.selectedBackground : "transparent"
+    }
+
+    Image {
+      id: rowIcon
+      anchors.left: parent.left
+      anchors.verticalCenter: parent.verticalCenter
+      width: Math.max(40, Style.space(44))
+      height: width
+      fillMode: Image.PreserveAspectFit
+      asynchronous: true
+      sourceSize.width: width * Screen.devicePixelRatio
+      sourceSize.height: height * Screen.devicePixelRatio
+      source: root.appLibrary && row.entry ? root.appLibrary.iconSource(row.entry.icon) : ""
+    }
+
+    Text {
+      id: rowName
+      anchors.left: rowIcon.right
+      anchors.leftMargin: Style.spacing.xl
+      anchors.right: rowGeneric.left
+      anchors.rightMargin: Style.spacing.lg
+      anchors.verticalCenter: parent.verticalCenter
+      textFormat: Text.PlainText
+      text: root.appLibrary && row.entry ? root.appLibrary.entryName(row.entry) : ""
+      color: row.highlighted ? Commons.Color.menu.selectedText : root.foreground
+      font.family: root.textFont
+      font.pixelSize: 16
+      elide: Text.ElideRight
+    }
+
+    Text {
+      id: rowGeneric
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      width: Math.min(implicitWidth, row.width * 0.4)
+      textFormat: Text.PlainText
+      text: root.appLibrary && row.entry ? LauncherModel.sideText(root.appLibrary.entryName(row.entry), root.appLibrary.entrySubtext(row.entry)) : ""
+      color: Qt.darker(root.foreground, 1.6)
+      font.family: root.textFont
+      font.pixelSize: 13
+      elide: Text.ElideRight
+    }
+
+    Rectangle {
+      visible: !row.last
+      anchors.bottom: parent.bottom
+      anchors.left: rowName.left
+      anchors.right: parent.right
+      height: 1
+      color: Util.alpha(root.foreground, 0.08)
+    }
+
+    MouseArea {
+      id: rowTouch
+      anchors.fill: parent
+      onClicked: row.tapped()
+      onPressAndHold: row.held()
+    }
+  }
+
   // One app in the grid: icon over a two-line name.
   component AppCell: Item {
     id: cell
@@ -611,8 +803,8 @@ Item {
       textFormat: Text.PlainText
       text: root.appLibrary && cell.entry ? root.appLibrary.entryName(cell.entry) : ""
       color: cell.highlighted ? Commons.Color.menu.selectedText : root.foreground
-      font.family: Style.font.family
-      font.pixelSize: Style.font.caption
+      font.family: root.textFont
+      font.pixelSize: Style.font.body
       wrapMode: Text.Wrap
       maximumLineCount: 2
       elide: Text.ElideRight

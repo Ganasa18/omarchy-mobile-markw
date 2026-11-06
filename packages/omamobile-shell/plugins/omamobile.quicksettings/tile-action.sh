@@ -88,6 +88,11 @@ case $tile in
   mobile-data)
     exec omamobile-sit data "$want"
     ;;
+  ssh-wifi)
+    # omamobile-ssh-wifi opens port 22 on Wi-Fi for 30 minutes (the page
+    # behind the tile picks other times); polkit lets the user start it.
+    if [ "$want" = on ]; then exec omamobile-ssh-wifi on; else exec omamobile-ssh-wifi off; fi
+    ;;
   *)
     echo "tile-action.sh: unknown tile $tile" >&2
     exit 2

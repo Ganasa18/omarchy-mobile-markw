@@ -15,7 +15,7 @@ logical at scale 3).
 | --- | --- | --- |
 | `omamobile.bar` | `bar` | Status bar: clock, connectivity, battery; tap or pull down for quick settings |
 | `omamobile.quicksettings` | `panel` (keepLoaded) | Pull-down sheet: up to 19 tiles the user arranges, brightness and volume; Wi-Fi picker and Bluetooth panel |
-| `omamobile.launcher` | `panel` (keepLoaded) | Home bar: app search, app grid and coding-agent prompt in one input |
+| `omamobile.launcher` | `panel` (keepLoaded) | Home bar: app search, recent apps and the app list, and coding-agent prompt in one input |
 | `omamobile.home` | `panel` (keepLoaded) | Home screens: pages of apps and widgets on the wallpaper, with an edit mode |
 | `omamobile.fingerprint` | `panel` (keepLoaded) | Fingerprint target over the sensor during verification, desktop guard, and the enrollment screen |
 | `omamobile.keyboard` | `panel` (keepLoaded) | A hide button right above the on-screen keyboard while it is up (also over the lock) |
@@ -237,11 +237,13 @@ The home surface, after Omalauncher: one bar along the bottom of the screen.
 * **Dock (always on screen).** A search pill, "Search apps or ask Claude…",
   in a bar-coloured strip that reserves its height so windows tile above it.
   Tapping it opens the drawer.
-* **Drawer.** The app grid (4 columns of 44 px icons with names) under the
-  status bar, with the one input at the bottom, focused. Typing filters the
-  grid; while searching, results stack upward from the input so the best match
-  sits by your thumb, highlighted.
-* **Ask the agent.** Any text also offers an "Ask Claude" row above the input.
+* **Drawer.** "Apps", the one input under it (focused), a Recent row (the
+  last apps `omamobile-launch` started, from
+  `~/.local/state/omamobile/recent-apps`, one row of `columns`), then every
+  app as a list: icon, name, and its generic name on the right ("Web
+  Browser") when that says more than the name. Typing filters the list; the
+  best match is on top, highlighted.
+* **Ask the agent.** Any text also offers an "Ask Claude" row under the input.
   Text that reads as a prompt (3+ words, ends in `?`, `.` or `!`, or matches no
   app) makes that row the primary action: it is highlighted, the input glyph
   turns into the agent, and Enter asks the agent instead of launching the top
@@ -345,9 +347,10 @@ wallpaper, swiped sideways, with page dots above the dock.
 
 | Widget | Sizes | What it shows |
 | --- | --- | --- |
-| Clock | 2x1-4x3 | Time and date, Qt formats in its settings |
+| Clock | 2x1-4x3 | Time and date, Qt formats in its settings; on a card (the day, the time, the date) unless **On a card** is off, then on the wallpaper |
 | Weather | 2x1-4x2 | Off until turned on with a place; then Open-Meteo (below) |
-| Battery | 1x1-4x2 | UPower's display device: level, charging, time left |
+| Battery | 1x1-4x2 | UPower's display device: level, charging, time left; the battery's temperature from `power_supply` every 5 min |
+| This phone | 2x1-4x3 | Omarchy Mobile, the OS (`/etc/os-release`'s name and version, and the distribution under it: Arch Linux ARM on an ARM phone), and uptime, then the device, SoC, kernel and boot path (`device.conf`'s `NAME`, `SOC_NAME` or `SOC`, and `BOOT_LABEL`, or memory without one); at 3 rows also memory and the battery (UPower, plus temperature and health from `power_supply`). Read when it appears and every 5 min while home is on top; nothing animates. Under the clock in the default layout |
 | Media | 3x1-4x2 | MPRIS: cover, title, artist; previous, play/pause, next |
 | Calendar | 2x2-4x4 | The next 7 days from khal when it's installed, else the month |
 | Note | 1x1-4x6 | Your text, kept in `home.json`; tap to edit |
@@ -371,6 +374,11 @@ An unreadable file is left alone and the default is shown; the next edit
 saves the old file as `home.json.bad` first. The first start puts a clock and
 the first four of a short list of installed apps on page 1, and the media and
 battery widgets on page 2.
+
+Dock. Under the pages, one row of apps (`"dock"` in `home.json`, desktop ids,
+at most one per column), as on any phone's home screen; the first start puts
+a terminal, Chromium and Files there. In edit mode a cross takes an app out
+and an empty slot opens the app list to add one.
 
 Why a layer surface and not Hyprland workspaces. Each page could be an empty
 workspace with a widget layer per workspace, and Hyprland would animate the

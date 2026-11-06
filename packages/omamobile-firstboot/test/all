@@ -37,6 +37,8 @@ mkdir -p "$R"/etc/omamobile "$R"/etc/ufw "$R"/usr/share/zoneinfo/Europe "$R"/usr
 : > "$R/usr/share/zoneinfo/Europe/Paris"
 : > "$R/usr/local/share/wayland-sessions/omarchy.desktop"
 echo 'ENABLED=no' > "$R/etc/ufw/ufw.conf"
+mkdir -p "$R/etc/default"
+printf 'IPV6=yes\nDEFAULT_INPUT_POLICY="DROP"\n' > "$R/etc/default/ufw"
 cat > "$R/etc/passwd" <<'EOF'
 root:x:0:0::/root:/bin/bash
 bin:x:1:1::/:/usr/bin/nologin
@@ -127,6 +129,7 @@ done
 fake useradd 'echo "useradd $*" >> "$CALLS"; u=${@: -1}; echo "$u:x:1000:1000::/home/$u:/bin/bash" >> "$R/etc/passwd"; mkdir -p "$R/home/$u"'
 fake chpasswd 'echo "chpasswd $* $(cat)" >> "$CALLS.secret"'
 fake id 'echo 1000'
+fake modprobe 'exit 0'
 fake runuser 'echo "runuser $*" >> "$CALLS"; shift 3; [[ $1 == env ]] && { shift; while [[ $1 == -i || $1 == *=* ]]; do shift; done; }; case $1 in mkdir|touch|sh) "$@" ;; esac'
 export CALLS R
 run() { OMAMOBILE_FIRSTBOOT_ROOT=$R OMARCHY_PATH=$t/no-omarchy PATH="$F:$PATH" bin/omamobile-firstboot > "$t/run.out" 2>&1; }
@@ -158,6 +161,20 @@ grep -qx pin "$R/home/alice/.config/omamobile/credential" || fail "the credentia
 grep -qF "$PSK" "$R/var/log/omamobile/firstboot.log" "$t/run.out" && fail "the log never has the passphrase"
 grep -qF "$HASH" "$R/var/log/omamobile/firstboot.log" "$t/run.out" && fail "the log never has the hash"
 pass "a run sets everything up and deletes the conf"
+
+usb_ssh=$(grep -n '^ufw allow in on usb0 to any port 22 proto tcp$' "$CALLS" | head -1 | cut -d: -f1)
+deny=$(grep -n '^ufw default deny incoming$' "$CALLS" | head -1 | cut -d: -f1)
+((usb_ssh < deny)) || fail "SSH on usb0 is allowed before the firewall is set up"
+grep -qx 'IPV6=yes' "$R/etc/default/ufw" || fail "a kernel with ufw's IPv6 matches keeps IPv6 filtering"
+pass "SSH on usb0 comes first, and IPv6 filtering stays where the kernel has it"
+
+# A kernel without xt_hl or ip6t_rt (postmarketOS msm8953): IPv4 only
+fake modprobe '[[ ${@: -1} != xt_hl ]]'
+good > "$R/etc/omamobile/firstboot.conf"
+run || { cat "$t/run.out"; fail "a run on a kernel without ufw's IPv6 matches succeeds"; }
+grep -qx 'IPV6=no' "$R/etc/default/ufw" || fail "ufw filters IPv4 only without xt_hl"
+grep -q 'ufw filters IPv4 only' "$t/run.out" "$R/var/log/omamobile/firstboot.log" || fail "the log says so"
+pass "a kernel without ufw's IPv6 matches gets IPv4 filtering, not a locked SSH"
 
 : > "$CALLS"
 run || fail "without a conf, nothing to do"

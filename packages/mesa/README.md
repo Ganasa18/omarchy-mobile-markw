@@ -26,14 +26,16 @@ driver bails out on an unknown model, and PanVK returns
 
 - The patches above.
 - `arch=(aarch64)`.
-- Only drivers this phone can use:
-  - Gallium `panfrost` (which brings `kmsro`), `llvmpipe`, `softpipe` and `zink`.
+- Only drivers these phones can use:
+  - Gallium `panfrost` (which brings `kmsro`), `freedreno` (msm KMD, for the
+    Redmi 4 Prime's Adreno 506), `llvmpipe`, `softpipe` and `zink`. Freedreno
+    is not yet tested on the phone; see `device/markw/ENGINEERING-PLAN.md` M5.
   - Vulkan `panfrost` (PanVK).
   - The `device-select` and `anti-lag` layers.
 - Only three split packages: `mesa`, `vulkan-panfrost` and
   `vulkan-mesa-implicit-layers` (which `vulkan-panfrost` depends on).
-- `pkgrel=1.4`. makepkg only accepts `integer[.integer]`, so the Omarchy Mobile
-  marker is in Mesa's version string instead: `26.2.4-arch1.1.4.omamobile4`.
+- `pkgrel=1.5`. makepkg only accepts `integer[.integer]`, so the Omarchy Mobile
+  marker is in Mesa's version string instead: `26.2.4-arch1.1.5.omamobile5`.
   That string shows up in `GL_VERSION` and in the `libgallium-*.so` file name.
 
 The other ALARM split packages (`vulkan-swrast`, `opencl-mesa` and so on)
@@ -99,9 +101,9 @@ sudo pacman -S --needed base-devel
 gpg --recv-keys 57551DE15B968F6341C248F68D8E31AFC32428A6   # Eric Engestrom, signed 26.2.4
 cd packages/mesa
 makepkg -s                       # pulls the makedepends listed in the PKGBUILD
-sudo pacman -U mesa-1:26.2.4-1.4-aarch64.pkg.tar.zst \
-  vulkan-panfrost-1:26.2.4-1.4-aarch64.pkg.tar.zst \
-  vulkan-mesa-implicit-layers-1:26.2.4-1.4-aarch64.pkg.tar.zst
+sudo pacman -U mesa-1:26.2.4-1.5-aarch64.pkg.tar.zst \
+  vulkan-panfrost-1:26.2.4-1.5-aarch64.pkg.tar.zst \
+  vulkan-mesa-implicit-layers-1:26.2.4-1.5-aarch64.pkg.tar.zst
 ```
 
 Until Panthor exposes `/dev/dri/renderD128`, nothing changes visibly:

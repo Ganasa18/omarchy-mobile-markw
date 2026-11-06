@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: MIT
+# Maintainer: Derek Ross <derekross@gmail.com>
+pkgname=omamobile-flash
+pkgver=$(cat "${startdir:-.}/version")
+pkgrel=1
+pkgdesc="Omarchy Mobile Flash: build, upload and watch PlatformIO projects (ESP32, Arduino) from a phone window"
+arch=(any)
+url="https://github.com/derekross/omarchy-mobile"
+license=(MIT)
+depends=(bash quickshell python systemd)
+optdepends=('platformio-core: used when ~/.platformio has no PlatformIO (Flash installs one there)')
+
+check() {
+  "$startdir/test/all"
+}
+
+package() {
+  "$startdir/install" "$pkgdir"
+}

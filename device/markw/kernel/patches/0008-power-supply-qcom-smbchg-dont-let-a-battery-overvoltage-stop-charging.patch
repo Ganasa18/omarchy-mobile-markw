@@ -1,0 +1,82 @@
+From: Omarchy Mobile <omamobile@localhost>
+Subject: [PATCH] power: supply: qcom-smbchg: don't let a battery overvoltage stop charging
+
+CHGR_CFG2 bit 4 (CHG_BAT_OV_ECC) makes a battery overvoltage disable
+charging. The driver leaves it as it finds it, and on a Redmi 4 Prime
+(PMI8950, msm8953-xiaomi-markw) it is set (CHGR_CFG2 0x51). The battery
+overvoltage comparator (BAT_IF RT_STS bit 4) trips at the top of every
+charge: at 4.35-4.37 V with a 4.38 V float, at about 4.30 V with a
+4.35 V float, right after termination. Each time chg-error latched and
+charging stayed stopped until the charge path restarted, so the battery
+sat at about 90 %.
+
+Qualcomm's downstream qpnp-smbcharger clears this bit at init on
+PMI8950, PMI8937 and PMI8940, as on PMI8994. It also restarts charging
+if an overvoltage is already latched (SMBCHG_BATT_OV_WA,
+batt_ov_wa_check()). Do the same.
+
+---
+ drivers/power/supply/qcom-smbchg.c | 21 ++++++++++++++++++++-
+ drivers/power/supply/qcom-smbchg.h |  1 +
+ 2 files changed, 21 insertions(+), 1 deletion(-)
+
+--- a/drivers/power/supply/qcom-smbchg.c
++++ b/drivers/power/supply/qcom-smbchg.c
+@@ -16,6 +16,7 @@
+ #include <linux/of_irq.h>
+ #include <linux/interrupt.h>
+ #include <linux/cleanup.h>
++#include <linux/delay.h>
+ #include <linux/mutex.h>
+ #include <linux/platform_device.h>
+ #include <linux/power_supply.h>
+@@ -1466,6 +1467,7 @@
+  */
+ static int smbchg_init(struct smbchg_chip *chip)
+ {
++	unsigned int value;
+ 	int ret;
+ 
+ 	/*
+@@ -1498,12 +1500,30 @@
+ 	ret = qcom_pmic_sec_masked_write(
+ 		chip->regmap, chip->base + SMBCHG_CHGR_CHGR_CFG2,
+ 		CHARGER_INHIBIT_BIT | AUTO_RECHG_BIT | I_TERM_BIT |
+-			P2F_CHG_TRAN_BIT | CHG_EN_SRC_BIT,
++			CHG_BAT_OV_ECC_BIT | P2F_CHG_TRAN_BIT | CHG_EN_SRC_BIT,
+ 		CHG_INHIBIT_EN | AUTO_RCHG_EN | CURRENT_TERM_EN |
+ 			PRE_FAST_AUTO | CHG_EN_SRC_CMD);
+ 	if (ret)
+ 		return ret;
+ 
++	/*
++	 * The configuration above also clears CHG_BAT_OV_ECC, so that a
++	 * battery overvoltage no longer stops charging. With it set, the
++	 * charger stopped at the top of every charge and stayed stopped. If
++	 * an overvoltage has already stopped it, restart charging: disable
++	 * it here, and the enable below turns it back on.
++	 */
++	ret = regmap_read(chip->regmap, chip->base + SMBCHG_BAT_IF_RT_STS,
++			  &value);
++	if (ret)
++		return ret;
++	if (value & BAT_OV_BIT) {
++		ret = smbchg_charging_enable(chip, false);
++		if (ret)
++			return ret;
++		msleep(200);
++	}
++
+ 	/* Set recharge threshold to 100mV */
+ 	ret = qcom_pmic_sec_masked_write(chip->regmap,
+ 					 chip->base + SMBCHG_CHGR_CFG,
+--- a/drivers/power/supply/qcom-smbchg.h
++++ b/drivers/power/supply/qcom-smbchg.h
+@@ -101,6 +101,7 @@
+ #define CHARGER_INHIBIT_BIT		BIT(0)
+ #define AUTO_RECHG_BIT			BIT(2)
+ #define I_TERM_BIT			BIT(3)
++#define CHG_BAT_OV_ECC_BIT		BIT(4)
+ #define P2F_CHG_TRAN_BIT		BIT(5)
+ #define CHG_EN_POLARITY_BIT		BIT(6)
+ #define CHG_EN_SRC_BIT			BIT(7)

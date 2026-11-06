@@ -1,0 +1,33 @@
+From: Omarchy Mobile <omamobile@localhost>
+Subject: [PATCH] iio: light: ltr501: wait for the start-up time after power-on
+
+The probe enables the vdd and vddio supplies and reads the part ID
+straight away. The LTR-559 needs 100 ms after power-on before it
+answers on the bus, so on a board where the supplies are switched on by
+this probe the read fails and the probe returns the I2C error without a
+message.
+
+On a Redmi 4 Prime (LTR-559 on an i2c-gpio bus, vdd from a PM8953 LDO)
+the sensor was left unbound at every boot, while binding it by hand
+after boot read part ID 0x92 and probed cleanly. Wait the start-up time
+after enabling the supplies.
+
+---
+ drivers/iio/light/ltr501.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+--- a/drivers/iio/light/ltr501.c
++++ b/drivers/iio/light/ltr501.c
+@@ -1449,6 +1449,12 @@
+ 		return dev_err_probe(&client->dev, ret,
+ 				     "Failed to get regulators\n");
+ 
++	/*
++	 * The chip ignores the bus until its start-up time after power-on
++	 * has passed (100 ms on the LTR-559).
++	 */
++	msleep(100);
++
+ 	data->reg_it = devm_regmap_field_alloc(&client->dev, regmap,
+ 					       reg_field_it);
+ 	if (IS_ERR(data->reg_it)) {

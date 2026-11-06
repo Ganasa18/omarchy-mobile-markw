@@ -1,0 +1,75 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Bring the USB gadget back when a computer is plugged in and the link
+# doesn't come up (device/markw/NOTES.md, 2026-11-06).
+#
+# qcom-smbchg switches the USB role, and DWC3 runs its gadget both at
+# "none" and at "device" (its role-switch default mode is peripheral). So
+# a replug asks DWC3 for the mode it is already in, which it skips: once
+# the device side has wedged (after a burst of resets from the computer,
+# or after host mode), no replug restarts it and Windows says "USB device
+# not recognized" until a reboot. Unbinding the gadget from the controller
+# and binding it again restarts it.
+#
+# Run by udev at each USB role change (omamobile-markw-usb-rescue.service).
+# It acts only for the device role on a computer's port (SDP or CDP; a
+# wall charger has no host to enumerate the gadget), waits for the gadget
+# to gain carrier, and rebinds at most twice.
+set -u
+sys=${OMAMOBILE_SYSFS:-/sys}
+cfs=${OMAMOBILE_CONFIGFS:-/sys/kernel/config}
+wait=${OMAMOBILE_USB_RESCUE_WAIT:-15}
+settle=${OMAMOBILE_USB_RESCUE_SETTLE:-1}
+
+say() { echo "omamobile-markw-usb-rescue: $*"; }
+
+role() { cat "$sys"/class/usb_role/*/role 2>/dev/null | head -n1; }
+carrier() { [[ $(cat "$sys/class/net/usb0/carrier" 2>/dev/null) == 1 ]]; }
+# The selected entry of the USB supply's usb_type, "[SDP] DCP CDP".
+port() {
+  local f
+  for f in "$sys"/class/power_supply/*/usb_type; do
+    [[ -f $f ]] && sed -n 's/.*\[\([A-Za-z_]*\)\].*/\1/p' "$f" && return
+  done
+}
+
+# Carrier within $wait seconds while the role stays device.
+link_up() {
+  local i
+  for ((i = 0; i < wait; i++)); do
+    carrier && return 0
+    [[ $(role) == device ]] || return 1
+    sleep 1
+  done
+  carrier
+}
+
+[[ $(role) == device ]] || exit 0
+case $(port) in
+  SDP|CDP) ;;
+  *) exit 0 ;;
+esac
+link_up && exit 0
+[[ $(role) == device ]] || exit 0
+
+for gadget in "$cfs"/usb_gadget/*/; do
+  [[ -f $gadget/UDC ]] && break
+done
+[[ -f ${gadget:-}UDC ]] || { say "no USB gadget"; exit 0; }
+udc=$(cat "${gadget}UDC")
+[[ -n $udc ]] || udc=$(ls "$sys/class/udc" 2>/dev/null | head -n1)
+[[ -n $udc ]] || { say "no USB device controller"; exit 0; }
+
+for try in 1 2; do
+  say "computer's port, no link after ${wait}s: rebinding the gadget to $udc (try $try)"
+  echo "" > "${gadget}UDC" 2>/dev/null
+  sleep "$settle"
+  echo "$udc" > "${gadget}UDC" || { say "binding to $udc failed"; exit 1; }
+  if link_up; then
+    say "link back"
+    exit 0
+  fi
+  [[ $(role) == device ]] || exit 0
+done
+say "still no link; unplug and plug the cable again"
+exit 1

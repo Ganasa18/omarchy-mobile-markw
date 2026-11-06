@@ -54,7 +54,7 @@ diff --git i/bin/omarchy-screensaver w/bin/omarchy-screensaver
 index acd3868..8802d3a 100755
 --- i/bin/omarchy-screensaver
 +++ w/bin/omarchy-screensaver
-@@ -6,8 +6,34 @@ screensaver_in_focus() {
+@@ -6,8 +6,37 @@ screensaver_in_focus() {
    hyprctl activewindow -j | jq -e '.class == "org.omarchy.screensaver"' >/dev/null 2>&1
  }
  
@@ -69,15 +69,18 @@ index acd3868..8802d3a 100755
 +
 +# Turn the on-screen keyboard back on if omarchy-launch-screensaver turned it off.
 +# With lock-after-screensaver, wait until the lock screen is up: until then this
-+# terminal still has focus and the keyboard would flash on the way out.
++# terminal still has focus and the keyboard would flash on the way out. Then
++# unfold it: the lock's field took its focus while the keyboard was off, and
++# squeekboard doesn't open for a field that already has focus.
 +restore_osk() {
 +  local marker="${XDG_RUNTIME_DIR:-/tmp}/omarchy-screensaver-osk-off"
 +  [[ -f $marker ]] || return 0
 +  rm -f "$marker"
 +  local enable="gsettings set org.gnome.desktop.a11y.applications screen-keyboard-enabled true"
++  local unfold="busctl --user call sm.puri.OSK0 /sm/puri/OSK0 sm.puri.OSK0 SetVisible b true"
 +  if omarchy-toggle-enabled lock-after-screensaver; then
 +    # Detached: this script is about to be stopped by the lock.
-+    setsid -f bash -c "for _ in \$(seq 50); do omarchy-shell lock status 2>/dev/null | grep -q '\"secure\":true' && break; sleep 0.1; done; $enable" &>/dev/null
++    setsid -f bash -c "for _ in \$(seq 50); do omarchy-shell lock status 2>/dev/null | grep -q '\"secure\":true' && break; sleep 0.1; done; $enable; sleep 0.3; $unfold" &>/dev/null
 +  else
 +    $enable &>/dev/null || true
 +  fi

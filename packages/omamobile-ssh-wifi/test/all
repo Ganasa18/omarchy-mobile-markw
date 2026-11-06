@@ -1,0 +1,106 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Checks for omamobile-ssh-wifi: syntax, the staged layout, the polkit rule's
+# scope, and the script against fake systemctl, ss, ip, ufw, kill and id:
+# on/off idempotence, the minutes, the firewall rule (Wi-Fi interface and
+# port 22 only), ending Wi-Fi sessions and never USB ones, and status.
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
+fail() { echo "FAIL: $*" >&2; exit 1; }
+pass() { echo "ok - $*"; }
+for f in bin/omamobile-ssh-wifi install; do bash -n "$f" || fail "syntax: $f"; done
+
+t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
+
+./install "$t/stage"
+for f in usr/bin/omamobile-ssh-wifi usr/lib/systemd/system/omamobile-ssh-wifi@.service \
+         usr/share/polkit-1/rules.d/50-omamobile-ssh-wifi.rules usr/share/licenses/omamobile-ssh-wifi/LICENSE \
+         usr/share/omamobile/ssh-wifi/version; do
+  [[ -e $t/stage/$f ]] || fail "not staged: $f"
+done
+[[ -z $(find "$t/stage" -path '*.wants/*') ]] || fail "something is enabled"
+grep -c '^\[Install\]' systemd/system/omamobile-ssh-wifi@.service >/dev/null && fail "the unit must not be installable"
+grep -cF '/^omamobile-ssh-wifi@[0-9]{1,4}\.service$/' polkit/50-omamobile-ssh-wifi.rules >/dev/null || fail "polkit names the unit exactly"
+pass "staged, nothing enabled, polkit scoped to the unit"
+
+# Fakes: wlan0 is the Wi-Fi interface at 192.0.2.17, usb0 the USB link.
+fb=$t/bin; log=$t/calls; s=$t/state
+mkdir -p "$fb" "$s" "$t/net/wlan0/wireless" "$t/net/usb0" "$t/run"
+: >"$log"
+fake() { printf '#!/bin/bash\n%s\n' "$2" >"$fb/$1"; chmod +x "$fb/$1"; }
+fake id '[[ $1 == -u ]] && { cat '"$s"'/uid; exit; }; echo user'
+fake ip 'echo "3: wlan0    inet 192.0.2.17/24 brd 192.0.2.255 scope global wlan0"'
+fake systemctl '
+case $1 in
+  list-units) cat '"$s"'/active 2>/dev/null ;;
+  show) cat '"$s"'/enter ;;
+  start) echo "systemctl start $2" >>'"$log"'; echo "$2 loaded active running x" >'"$s"'/active ;;
+  stop) echo "systemctl stop $2" >>'"$log"'; rm -f '"$s"'/active ;;
+esac'
+fake ss '
+if [[ $1 == -Htnp ]]; then cat '"$s"'/ssp; else cat '"$s"'/ss; fi'
+fake ufw '
+case $1 in status) echo "Status: active" ;; *) echo "ufw $*" >>'"$log"' ;; esac'
+# kill is a shell builtin: an exported function stands in for it.
+kill() { echo "kill $*" >>"$KILL_LOG"; }
+export -f kill
+export KILL_LOG=$log
+echo 1000 >"$s/uid"
+printf '0 0 192.0.2.17:22 192.0.2.40:51234\n0 0 172.16.42.1:22 172.16.42.2:40000\n' >"$s/ss"
+printf '0 0 192.0.2.17:22 192.0.2.40:51234 users:(("sshd-session",pid=411,fd=4),("sshd-session",pid=409,fd=4))\n0 0 172.16.42.1:22 172.16.42.2:40000 users:(("sshd-session",pid=77,fd=4))\n' >"$s/ssp"
+
+run() {
+  PATH="$fb:$PATH" OMAMOBILE_SSH_WIFI_NET=$t/net OMAMOBILE_SSH_WIFI_STATE=$t/run bash bin/omamobile-ssh-wifi "$@"
+}
+
+: >"$log"; run on
+[[ $(cat "$log") == "systemctl start omamobile-ssh-wifi@30.service" ]] || fail "on starts 30 minutes by default: $(cat "$log")"
+: >"$log"; run on 30
+[[ ! -s $log ]] || fail "on again with the same minutes does nothing"
+: >"$log"; run on 0
+[[ $(cat "$log") == $'systemctl stop omamobile-ssh-wifi@30.service\nsystemctl start omamobile-ssh-wifi@0.service' ]] \
+  || fail "new minutes replace the running instance: $(cat "$log")"
+for bad in 5000 abc -1 ""; do
+  [[ -z $bad ]] && continue
+  run on "$bad" 2>/dev/null && fail "on $bad is refused"
+done
+: >"$log"; run off; run off
+[[ $(cat "$log") == "systemctl stop omamobile-ssh-wifi@0.service" ]] || fail "off stops once and is idempotent: $(cat "$log")"
+pass "on/off: default 30 min, idempotent, minutes checked"
+
+# status: 30 minutes, started 4.5 minutes ago (monotonic microseconds).
+echo "omamobile-ssh-wifi@30.service loaded active running x" >"$s/active"
+up=$(awk '{ printf "%d", $1 * 1000000 }' /proc/uptime)
+echo $(( up - 270000000 )) >"$s/enter"
+kv=$(run status --kv)
+for line in sshwifi=on sshwifi_addr=192.0.2.17 sshwifi_left=26 sshwifi_sessions=1; do
+  grep -cx "$line" <<<"$kv" >/dev/null || fail "status --kv prints $line (got: $(tr '\n' ' ' <<<"$kv"))"
+done
+json=$(run status --json)
+python3 -I -c '
+import json, sys
+d = json.loads(sys.argv[1])
+assert d["on"] is True and d["minutes"] == 30 and d["left"] == 26, d
+assert d["iface"] == "wlan0" and d["address"] == "192.0.2.17", d
+assert d["sessions"] == ["192.0.2.40"], d
+' "$json" || fail "status --json: $json"
+run status | grep -cx "connect:   ssh user@192.0.2.17" >/dev/null || fail "status prints the ssh command"
+rm "$s/active"
+[[ $(run status --kv | head -n1) == sshwifi=off ]] || fail "status off"
+rm -r "$t/net/wlan0/wireless"
+[[ $(run status --kv) == sshwifi=none ]] || fail "no Wi-Fi interface: none"
+mkdir "$t/net/wlan0/wireless"
+pass "status: minutes left, address, Wi-Fi sessions only"
+
+# Firewall: root only; the rule names wlan0 and port 22; close ends only the
+# Wi-Fi session's processes.
+run firewall open 2>/dev/null && fail "firewall needs root"
+echo 0 >"$s/uid"
+: >"$log"; run firewall open >/dev/null
+[[ $(cat "$log") == "ufw allow in on wlan0 to any port 22 proto tcp comment omamobile-ssh-wifi" ]] || fail "open: $(cat "$log")"
+: >"$log"; run firewall close
+[[ $(head -n1 "$log") == "ufw --force delete allow in on wlan0 to any port 22 proto tcp" ]] || fail "close deletes the rule: $(cat "$log")"
+grep -cx "kill 409 411" "$log" >/dev/null || fail "close ends the Wi-Fi session: $(cat "$log")"
+grep -c "77" "$log" >/dev/null && fail "close never ends a USB session"
+run hold 99999 2>/dev/null && fail "hold checks the minutes"
+pass "firewall: Wi-Fi interface and port 22 only; close ends Wi-Fi sessions, never USB ones"

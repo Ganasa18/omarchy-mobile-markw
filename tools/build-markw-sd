@@ -1,0 +1,170 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Turn an Omarchy Mobile root image into a microSD card image for the Redmi 4
+# Prime (markw). Never connects to a phone and never writes a card: it leaves
+# an image file for you to write (balenaEtcher, Rufus, or dd on Linux).
+#
+# Usage: tools/build-markw-sd --rootfs out/omamobile-rootfs-V-aarch64.img.zst \
+#          --out DIR [--card-size SIZE] [--firstboot FILE --ssh-key FILE]
+#
+# Without --firstboot it asks for the owner's answers, as tools/install-phone
+# does, and writes /etc/omamobile/firstboot.conf and root's authorized_keys
+# into a copy of the root image. The copy gets a new random file system UUID.
+#
+# DIR gets:
+#   markw-sd.img          MBR, one Linux partition from 1 MiB holding the root
+#   markw-sd.img.sha256
+#   root-uuid             the UUID for tools/build-markw-probe --root-uuid
+#
+# --card-size (like 29G or 31914983424) makes the partition span the card,
+# so the initramfs grows the file system into it on the first boot; the file
+# still holds only the root image's data. Use at most the card's real size.
+# Without it the partition is the root image's size. markw-sd.img holds the
+# owner's password hash: keep it private and delete it after writing.
+set -euo pipefail
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+rootfs="" out="" card="" firstboot="" key=""
+die() { echo "error: $*" >&2; exit 1; }
+say() { printf '\e[1m==> %s\e[0m\n' "$*"; }
+while (($#)); do
+  case $1 in
+    --rootfs) rootfs=${2:?}; shift ;;
+    --out) out=${2:?}; shift ;;
+    --card-size) card=${2:?}; shift ;;
+    --firstboot) firstboot=${2:?}; shift ;;
+    --ssh-key) key=${2:?}; shift ;;
+    -h|--help) sed -n '3,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) die "unknown argument: $1" ;;
+  esac
+  shift
+done
+command -v docker >/dev/null || die 'Docker is required'
+command -v python3 >/dev/null || die 'Python 3 is required'
+[[ -n $rootfs && -f $rootfs ]] || die 'supply --rootfs FILE (tools/build-rootfs)'
+[[ $rootfs == *.img.zst ]] || die '--rootfs must be a .img.zst root image'
+[[ -n $out ]] || die 'supply --out DIR'
+[[ -z $firstboot || -n $key ]] || die '--firstboot needs --ssh-key'
+[[ ! -e $out/markw-sd.img ]] || die "$out/markw-sd.img already exists; choose a fresh directory"
+card_bytes=0
+if [[ -n $card ]]; then
+  [[ $card =~ ^([1-9][0-9]*)([MG]?)$ ]] || die '--card-size is bytes, or a number with M or G'
+  case ${BASH_REMATCH[2]} in
+    M) card_bytes=$((BASH_REMATCH[1] << 20)) ;;
+    G) card_bytes=$((BASH_REMATCH[1] << 30)) ;;
+    *) card_bytes=${BASH_REMATCH[1]} ;;
+  esac
+  ((card_bytes <= 2199023255040)) || die 'an MBR partition ends below 2 TiB'
+fi
+
+# --- What goes in -----------------------------------------------------------
+[[ -f $rootfs.sha256 ]] || die "no $rootfs.sha256"
+(cd "$(dirname "$rootfs")" && sha256sum -c --quiet "$(basename "$rootfs").sha256") \
+  || die "$rootfs doesn't match its .sha256"
+manifest=${rootfs%.img.zst}.MANIFEST
+[[ -f $manifest ]] || die "no $manifest"
+built_for=$(sed -n 's/^device: \([a-z0-9]*\).*/\1/p' "$manifest")
+[[ $built_for == markw ]] || die "the root image was built for '${built_for:-?}', not markw (DEVICE=markw tools/build-rootfs)"
+modules=$(sed -n 's/^kernel modules: \([^ ]*\).*/\1/p' "$manifest")
+say "Root image for markw, kernel modules ${modules:-unknown}"
+
+SSHKEY_RE='^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com) [A-Za-z0-9+/]+={0,3}( [[:print:]]*)?$'
+# A .pub saved on Windows ends in CRLF: the key is the first line without it.
+keyline() { head -1 "$1" | tr -d '\r'; }
+valid_key() { [[ -f $1 && $(keyline "$1") =~ $SSHKEY_RE && $(tr -d '\r' < "$1" | grep -c .) == 1 ]]; }
+work=$(mktemp -d); chmod 700 "$work"
+cleanup() { rm -rf "$work"; }
+trap cleanup EXIT
+conf=$work/firstboot.conf keys=$work/authorized_keys
+
+if [[ -n $firstboot ]]; then
+  [[ -f $firstboot ]] || die "no $firstboot"
+  valid_key "$key" || die '--ssh-key must be a single OpenSSH public key file'
+  grep -q '^USERNAME=[a-z_][a-z0-9_-]*$' "$firstboot" || die "$firstboot has no USERNAME="
+  grep -q '^PASSWORD_HASH=\$6\$' "$firstboot" || die "$firstboot has no SHA-512 PASSWORD_HASH="
+  (umask 077; cp "$firstboot" "$conf"; keyline "$key" > "$keys")
+else
+  command -v openssl >/dev/null || die 'openssl is required to hash the password'
+  RESERVED='^(root|alarm|omamobile|omandroid|omarchy|bin|daemon|mail|ftp|http|nobody|dbus|systemd-.*|tss|uuidd|alpm|git|avahi|cups|cups-browsed|lp|_talkd|polkitd|rtkit|qemu|brltty|gluster|rpc|libvirt-qemu|pcscd|nvidia-persistenced|sddm|builder|admin)$'
+  ask() { local answer; printf '%s%s: ' "$1" "${2:+ [$2]}" >&2; IFS= read -r answer || die "no answer"; printf '%s' "${answer:-${2:-}}"; }
+  ask_secret() { local answer; printf '%s: ' "$1" >&2; IFS= read -rs answer || die "no answer"; printf '\n' >&2; printf '%s' "$answer"; }
+  say "About the phone's owner"
+  while true; do
+    username=$(ask "User name")
+    if [[ ! $username =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then echo "  lower-case letters, digits, - and _" >&2
+    elif [[ $username =~ $RESERVED ]]; then echo "  '$username' is reserved" >&2
+    else break; fi
+  done
+  while true; do
+    password=$(ask_secret "Password or PIN (unlocks the phone, and for sudo)")
+    again=$(ask_secret "Again")
+    if [[ -z $password ]]; then echo "  it can't be empty" >&2
+    elif [[ $password != "$again" ]]; then echo "  they don't match" >&2
+    else break; fi
+  done
+  credential=password
+  [[ $password =~ ^[0-9]+$ ]] && credential=pin
+  password_hash=$(printf '%s\n' "$password" | openssl passwd -6 -stdin)
+  unset password again
+  [[ $password_hash == '$6$'* ]] || die "openssl passwd -6 failed"
+  while true; do
+    hostname=$(ask "Host name" "$username-redmi")
+    [[ $hostname =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]] && break
+    echo "  1-63 letters, digits or dashes" >&2
+  done
+  while true; do
+    timezone=$(ask "Time zone (like Asia/Jakarta)" "UTC")
+    [[ $timezone =~ ^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$ ]] && break
+    echo "  not a time zone" >&2
+  done
+  wifi_ssid=$(ask "Wi-Fi network name (optional; Wi-Fi is not driven yet on markw)")
+  wifi_psk=""
+  if [[ -n $wifi_ssid ]]; then
+    (( ${#wifi_ssid} <= 32 )) || die "a Wi-Fi network name is at most 32 characters"
+    wifi_psk=$(ask_secret "Wi-Fi password (Enter for an open network)")
+  fi
+  while true; do
+    key=$(ask "SSH public key for root and $username" "$HOME/.ssh/id_ed25519.pub")
+    key=${key/#\~/$HOME}
+    valid_key "$key" && break
+    echo "  not a single OpenSSH public key file (a .pub, never the private key)" >&2
+  done
+  (
+    umask 077
+    {
+      echo "# Written by build-markw-sd on the laptop; omamobile-firstboot reads and deletes it."
+      echo "USERNAME=$username"
+      echo "PASSWORD_HASH=$password_hash"
+      echo "HOSTNAME=$hostname"
+      echo "TIMEZONE=$timezone"
+      echo "SSH_KEY=$(keyline "$key")"
+      echo "CREDENTIAL=$credential"
+      if [[ -n $wifi_ssid ]]; then
+        echo "WIFI_SSID=$wifi_ssid"
+        [[ -n $wifi_psk ]] && echo "WIFI_PSK=$wifi_psk"
+      fi
+    } > "$conf"
+    keyline "$key" > "$keys"
+  )
+  unset wifi_psk
+fi
+
+# --- The card image, built in a container -----------------------------------
+absolute() { python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$1"; }
+mkdir -p "$out"
+rootfs=$(absolute "$rootfs") out=$(absolute "$out") work_abs=$(absolute "$work")
+for path in "$ROOT" "$rootfs" "$out" "$work_abs"; do
+  [[ $path != *,* ]] || die 'Docker bind paths cannot contain commas'
+done
+say "Building the card image"
+docker run --rm \
+  --mount "type=bind,source=$ROOT,target=/src,readonly" \
+  --mount "type=bind,source=$rootfs,target=/input/rootfs.img.zst,readonly" \
+  --mount "type=bind,source=$work_abs,target=/input/owner,readonly" \
+  --mount "type=bind,source=$out,target=/out" \
+  -e CARD_BYTES="$card_bytes" \
+  debian:bookworm-slim bash /src/device/markw/sd-image
+uuid=$(cat "$out/root-uuid")
+say "Done: $out/markw-sd.img (root UUID $uuid)"
+echo "Next: write it to the card, then build the boot image with"
+echo "  tools/build-markw-probe ... --root-uuid $uuid"
+echo "markw-sd.img holds the password hash: delete it once the card is written."

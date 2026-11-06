@@ -11,6 +11,7 @@ mkdir -p "$t/bin" "$t/run"
 log=$t/calls
 cat >"$t/bin/hyprctl" <<STUB
 #!/bin/bash
+[[ \$1 == dispatch ]] && { echo "hyprctl \$*" >>"$log"; exit 0; }
 printf '{"class": "%s"}\n' "\$(cat "$t/class")"
 STUB
 cat >"$t/bin/omacam" <<STUB
@@ -23,8 +24,17 @@ echo "volume \$*" >>"$log"
 STUB
 cat >"$t/bin/omarchy-shell" <<STUB
 #!/bin/bash
+[[ "\$1 \$2" == "lock status" ]] && { echo '{"secure":true}'; exit 0; }
+[[ \$1 == shell ]] && { echo "omarchy-shell \$*" >>"$log"; exit 0; }
 cat "$t/locked"
 STUB
+for stub in omarchy-menu omarchy-system-lock omarchy-brightness-display; do
+  cat >"$t/bin/$stub" <<STUB
+#!/bin/bash
+echo "$stub \$*" >>"$log"
+STUB
+done
+echo '#!/bin/bash' >"$t/bin/omarchy-hw-display"
 chmod +x "$t"/bin/*
 export PATH="$t/bin:$PATH" XDG_RUNTIME_DIR="$t/run"
 keys() { bash "$here/bin/omamobile-keys" "$@"; }
@@ -44,3 +54,30 @@ reset; keys volume-up; keys volume-up; keys volume-up
 echo true >"$t/locked"
 reset; keys volume-up; [[ $(cat "$log") == "volume raise" ]] || fail "a locked phone changes the volume, never takes a photo"
 echo "ok - volume keys: camera shutter in front, volume otherwise"
+
+# The power key bounces on markw: held, it reports a release and a new press
+# about 20 ms apart. That is still one press: a hold opens the system menu
+# and doesn't lock; a tap locks.
+echo foot >"$t/class"; echo false >"$t/locked"
+reset; keys power-down; sleep 0.03; keys power-up & sleep 0.02; keys power-down; sleep 0.9
+grep -qx 'omarchy-menu toggle system' "$log" || fail "a bounced hold opens the system menu"
+keys power-up; wait
+! grep -q 'omarchy-system-lock' "$log" || fail "a bounced hold doesn't lock"
+reset; keys power-down; sleep 0.05; keys power-up
+grep -q '^omarchy-system-lock' "$log" || fail "a tap locks"
+! grep -q 'omarchy-menu' "$log" || fail "a tap doesn't open the menu"
+echo "ok - power key: a bounce is the same press"
+
+# The touch keys (markw): home closes the panels and shows the home screen,
+# menu toggles recent apps, back only closes the panels (the app gets the key
+# from Hyprland itself).
+reset; keys home
+[[ $(grep -c '^omarchy-shell shell hide ' "$log") == 3 ]] || fail "home closes the launcher, switcher and quick settings"
+grep -q '^hyprctl dispatch hl.dsp.focus({ workspace = "empty" })$' "$log" || fail "home shows the empty workspace"
+grep -q '^omarchy-shell shell call omamobile.home goHome' "$log" || fail "home turns to the home page"
+reset; keys recents
+[[ $(cat "$log") == "omarchy-shell shell toggle omamobile.switcher {}" ]] || fail "menu toggles recent apps"
+reset; keys back
+[[ $(grep -c '^omarchy-shell shell hide ' "$log") == 3 ]] || fail "back closes the panels"
+! grep -q -E 'dispatch|goHome|toggle' "$log" || fail "back does nothing else"
+echo "ok - touch keys: home, recent apps, back"

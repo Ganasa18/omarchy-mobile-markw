@@ -1,0 +1,75 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Stage omamobile-device-markw into DESTDIR. Nothing is enabled that would
+# start a remote processor, the radio, the charger, or a camera (it enables
+# zram swap and the copy of the phone's own firmware, nothing else).
+#   ./install DESTDIR [BUILDDIR]
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+destination=${1:?Usage: ./install DESTDIR [BUILDDIR]}
+build=${2:-build}
+[[ $destination == /* && $destination != "/" ]] || { echo "Use an absolute staging directory" >&2; exit 1; }
+install -Dm755 "$build/reboot-to" "$destination/usr/bin/reboot-to"
+install -Dm644 vendor/udev/rules.d/10-omamobile-storage.rules \
+  "$destination/usr/lib/udev/rules.d/10-omamobile-storage.rules"
+install -Dm644 vendor/udev/rules.d/80-omamobile-markw-proximity.rules \
+  "$destination/usr/lib/udev/rules.d/80-omamobile-markw-proximity.rules"
+install -Dm644 vendor/systemd/network/20-usb-gadget.network \
+  "$destination/usr/lib/systemd/network/20-usb-gadget.network"
+install -Dm644 vendor/systemd/logind.conf.d/10-omamobile-power-key.conf \
+  "$destination/usr/lib/systemd/logind.conf.d/10-omamobile-power-key.conf"
+install -Dm644 vendor/NetworkManager/conf.d/10-omamobile-usb.conf \
+  "$destination/usr/lib/NetworkManager/conf.d/10-omamobile-usb.conf"
+install -Dm644 vendor/NetworkManager/conf.d/zz-omamobile-wifi-powersave.conf \
+  "$destination/etc/NetworkManager/conf.d/zz-omamobile-wifi-powersave.conf"
+install -Dm755 vendor/omamobile-zram "$destination/usr/lib/omamobile/omamobile-zram"
+install -Dm755 vendor/omamobile-markw-firmware "$destination/usr/lib/omamobile/omamobile-markw-firmware"
+install -Dm644 vendor/systemd/system/omamobile-markw-firmware.service \
+  "$destination/usr/lib/systemd/system/omamobile-markw-firmware.service"
+install -d "$destination/usr/lib/systemd/system/sysinit.target.wants"
+ln -sf ../omamobile-markw-firmware.service \
+  "$destination/usr/lib/systemd/system/sysinit.target.wants/omamobile-markw-firmware.service"
+install -Dm644 vendor/systemd/system/omamobile-zram.service \
+  "$destination/usr/lib/systemd/system/omamobile-zram.service"
+install -d "$destination/usr/lib/systemd/system/swap.target.wants"
+ln -sf ../omamobile-zram.service \
+  "$destination/usr/lib/systemd/system/swap.target.wants/omamobile-zram.service"
+# The light and proximity sensor misses its probe at boot; bind it after.
+install -Dm644 vendor/systemd/system/omamobile-markw-light.service   "$destination/usr/lib/systemd/system/omamobile-markw-light.service"
+install -d "$destination/usr/lib/systemd/system/multi-user.target.wants"
+ln -sf ../omamobile-markw-light.service   "$destination/usr/lib/systemd/system/multi-user.target.wants/omamobile-markw-light.service"
+# rmtfs on RAM copies of the modem's NV (device/markw/BRINGUP-MODEM.md):
+# installed, not enabled.
+install -Dm755 vendor/omamobile-markw-rmtfs "$destination/usr/lib/omamobile/omamobile-markw-rmtfs"
+install -Dm644 vendor/systemd/system/omamobile-markw-rmtfs.service \
+  "$destination/usr/lib/systemd/system/omamobile-markw-rmtfs.service"
+# Rebind the USB gadget when a computer's port gives no link after a role
+# change (device/markw/NOTES.md, 2026-11-06): started by udev, not enabled.
+install -Dm755 vendor/omamobile-markw-usb-rescue "$destination/usr/lib/omamobile/omamobile-markw-usb-rescue"
+install -Dm644 vendor/systemd/system/omamobile-markw-usb-rescue.service   "$destination/usr/lib/systemd/system/omamobile-markw-usb-rescue.service"
+install -Dm644 vendor/udev/rules.d/80-omamobile-markw-usb-role.rules   "$destination/usr/lib/udev/rules.d/80-omamobile-markw-usb-role.rules"
+# Suspend when the screen has been off a while: installed, not enabled.
+install -Dm755 vendor/omamobile-autosuspend "$destination/usr/lib/omamobile/omamobile-autosuspend"
+install -Dm644 vendor/systemd/system/omamobile-autosuspend.service \
+  "$destination/usr/lib/systemd/system/omamobile-autosuspend.service"
+# The sound card's UCM profile (device/markw/BRINGUP-AUDIO.md); the card
+# itself needs the ADSP, so without it this does nothing.
+install -Dm644 vendor/ucm2/conf.d/xiaomi-markw/xiaomi-markw.conf \
+  "$destination/usr/share/alsa/ucm2/conf.d/xiaomi-markw/xiaomi-markw.conf"
+install -Dm644 vendor/ucm2/Xiaomi/markw/HiFi.conf \
+  "$destination/usr/share/alsa/ucm2/Xiaomi/markw/HiFi.conf"
+# PipeWire plays the card in S16_LE: in S24_LE the speaker stays silent.
+install -Dm644 vendor/wireplumber/wireplumber.conf.d/51-xiaomi-markw.conf   "$destination/usr/share/wireplumber/wireplumber.conf.d/51-xiaomi-markw.conf"
+# The default microphone: AMIC1 through a filter that drops the board's
+# 12.7 kHz tone and lifts the voice band.
+install -Dm644 vendor/pipewire/pipewire.conf.d/51-xiaomi-markw-mic.conf   "$destination/usr/share/pipewire/pipewire.conf.d/51-xiaomi-markw-mic.conf"
+install -Dm644 vendor/tmpfiles.d/omamobile-schedutil.conf \
+  "$destination/usr/lib/tmpfiles.d/omamobile-schedutil.conf"
+install -Dm644 vendor/sysctl.d/90-omamobile-zram.conf \
+  "$destination/usr/lib/sysctl.d/90-omamobile-zram.conf"
+install -Dm644 device.conf \
+  "$destination/usr/share/omamobile/device.conf"
+install -Dm644 etc/omamobile-mirrorlist \
+  "$destination/etc/pacman.d/omamobile-mirrorlist"
+install -Dm644 LICENSE "$destination/usr/share/licenses/omamobile-device-markw/LICENSE"
+install -Dm644 version "$destination/usr/share/omamobile/device-markw/version"

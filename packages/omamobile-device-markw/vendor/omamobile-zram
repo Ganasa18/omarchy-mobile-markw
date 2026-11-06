@@ -1,0 +1,24 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Set up or take down zram0 as swap (omamobile-zram.service).
+#   omamobile-zram start|stop
+dev=/dev/zram0
+sys=/sys/block/zram0
+case ${1:-} in
+  start)
+    grep -q "^$dev " /proc/swaps && exit 0
+    echo zstd >"$sys/comp_algorithm" 2>/dev/null || true
+    kib=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
+    echo "$((kib / 2))K" >"$sys/disksize" || exit 1
+    mkswap -q "$dev" || exit 1
+    swapon -p 100 "$dev"
+    ;;
+  stop)
+    grep -q "^$dev " /proc/swaps && swapoff "$dev"
+    echo 1 >"$sys/reset"
+    ;;
+  *)
+    echo "Usage: omamobile-zram start|stop" >&2
+    exit 2
+    ;;
+esac

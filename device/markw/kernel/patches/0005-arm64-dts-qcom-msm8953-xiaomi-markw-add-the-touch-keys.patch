@@ -1,0 +1,27 @@
+From: Omarchy Mobile <omamobile@localhost>
+Subject: [PATCH] arm64: dts: qcom: msm8953-xiaomi-markw: add the touch keys
+
+The Redmi 4 Prime has three touch keys under the screen: menu, home and
+back. They belong to the maXTouch controller, which reports them through
+its T15 key array (enabled, one by three keys on this unit's
+configuration), but without a keymap atmel_mxt_ts drops the messages.
+
+Map the three keys, left to right, to KEY_MENU, KEY_HOMEPAGE and
+KEY_BACK.
+
+---
+ arch/arm64/boot/dts/qcom/msm8953-xiaomi-markw.dts | 3 +++
+ 1 file changed, 3 insertions(+)
+
+--- a/arch/arm64/boot/dts/qcom/msm8953-xiaomi-markw.dts
++++ b/arch/arm64/boot/dts/qcom/msm8953-xiaomi-markw.dts
+@@ -270,6 +270,9 @@
+ 		vdd-supply = <&pm8953_l10>;
+ 
+ 		atmel,wakeup-method = <ATMEL_MXT_WAKEUP_I2C_SCL>;
++
++		/* The touch keys under the screen, left to right */
++		linux,keycodes = <KEY_MENU KEY_HOMEPAGE KEY_BACK>;
+ 		status = "disabled";
+ 	};
+ };

@@ -94,6 +94,7 @@ assert m.NAME == "sm.puri.OSK0" and m.PATH == "/sm/puri/OSK0"
 ' || fail "omamobile-osk-watch lines"
 grep -c "omamobile-osk-watch" plugins/omamobile.fingerprint/Fingerprint.qml >/dev/null || fail "the fingerprint plugin runs the keyboard watcher"
 grep -c "omamobile-osk-watch" plugins/omamobile.keyboard/Keyboard.qml >/dev/null || fail "the keyboard button follows the watcher"
+grep -c 'exclusionMode: ExclusionMode.Ignore' plugins/omamobile.keyboard/Keyboard.qml >/dev/null || fail "the folded keyboard button sits in the dock, not over the app"
 grep -c 'namespace = "^omamobile-osk-hide\$" }, above_lock = 2' hypr/phone.lua >/dev/null || fail "the hide button works over the lock"
 python3 -c 'import json; assert {"id": "omamobile.keyboard"} in json.load(open("profile/shell.json"))["plugins"]' || fail "the profile enables the keyboard button"
 pass "on-screen keyboard watcher"
@@ -114,6 +115,9 @@ pass "PIN or password"
 python3 -c 'import json; assert {"id": "omamobile.home"} in json.load(open("profile/shell.json"))["plugins"]' \
   || fail "the phone profile enables the home screens"
 grep -c 'add_plugin omamobile.home' bin/omamobile-setup-user >/dev/null || fail "existing users get the home screens"
+grep -c "grep -qx 'LOW_MOTION=1' /usr/share/omamobile/device.conf" bin/omamobile-setup-user >/dev/null \
+  && grep -c '^hl.config({ animations = { enabled = false } })$' bin/omamobile-setup-user >/dev/null \
+  || fail "a descriptor's LOW_MOTION=1 turns Hyprland's animations off"
 if command -v node >/dev/null; then
   for type in $(node -e 'console.log(Object.keys(require("./plugins/omamobile.home/HomeModel.js").REGISTRY).filter((t) => !t.startsWith("owl:")).join(" "))'); do
     [[ -f plugins/omamobile.home/${type^}Widget.qml ]] || fail "widget $type has ${type^}Widget.qml"
@@ -202,6 +206,10 @@ eq(L.promptArgv("  fix it  "), ["omamobile-launch", "cmd", "--", "omarchy-agent-
 eq(H.appLaunchArgv("foot"), ["omamobile-launch", "app", "foot"])
 eq(H.commandLaunchArgv(["a", 1]), ["omamobile-launch", "cmd", "--", "a", "1"])
 eq(H.urlLaunchArgv("https://x"), ["omamobile-launch", "url", "https://x"])
+eq(L.recentIds("foot\n\nchromium\r\nfoot\n"), ["foot", "chromium"])
+eq(L.recentIds(""), [])
+eq(L.sideText("Chromium", "Web Browser"), "Web Browser")
+eq(L.sideText("Files", " files "), "")
 ' || fail "launch argv"
 fi
 pass "one app per screen"
@@ -313,6 +321,33 @@ tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 [[ -x $tmp/root/usr/bin/omamobile-setup-user && -f $tmp/root/usr/share/omamobile/shell/profile/shell.json ]] \
   || fail "install stages the setup script and the profile"
 [[ -f $tmp/root/usr/share/applications/omamobile-agent.desktop ]] || fail "install stages the AI Agent shortcut"
+# The Clean themes, light and dark: what Omarchy's theme-set needs, every
+# palette key the bundled themes carry, their pastel icon theme, and
+# setup-user links them and makes them the two sides of the Dark theme tile.
+for theme in omamobile-clean:light omamobile-clean-dark:dark; do
+  clean=$tmp/root/usr/share/omamobile/shell/themes/${theme%%:*}
+  for f in colors.toml icons.theme hyprland.lua preview.png; do
+    [[ -f $clean/$f ]] || fail "install stages ${theme%%:*}/$f"
+  done
+  ls "$clean"/backgrounds/*.png >/dev/null 2>&1 || fail "${theme%%:*} has a wallpaper"
+  for key in mode accent selection muted background dark_background darker_background lighter_background \
+             foreground dark_foreground light_foreground bright_foreground red yellow orange green cyan blue magenta brown \
+             bright_red bright_yellow bright_green bright_cyan bright_blue bright_magenta; do
+    grep -qE "^$key = \"[^\"]+\"$" "$clean/colors.toml" || fail "${theme%%:*} sets $key"
+  done
+  grep -qx "mode = \"${theme#*:}\"" "$clean/colors.toml" || fail "${theme%%:*} is a ${theme#*:} theme"
+  [[ $(cat "$clean/icons.theme") == Omamobile-Pastel ]] || fail "${theme%%:*} uses the pastel icons"
+done
+icons=$tmp/root/usr/share/icons/Omamobile-Pastel
+grep -qx 'Inherits=Yaru-blue,Adwaita,hicolor' "$icons/index.theme" || fail "the pastel icons fall back to Yaru"
+for app in chromium foot org.gnome.Nautilus btop mpv omacam omacalc org.gnome.Maps; do
+  [[ -f $icons/scalable/apps/$app.svg ]] || fail "a pastel icon for $app"
+done
+grep -c 'ln -s "$share/themes/$theme" ~/.config/omarchy/themes/$theme' bin/omamobile-setup-user >/dev/null \
+  && grep -c 'echo omamobile-clean >~/.local/state/omamobile/theme-light' bin/omamobile-setup-user >/dev/null \
+  && grep -c 'echo omamobile-clean-dark >~/.local/state/omamobile/theme-dark' bin/omamobile-setup-user >/dev/null \
+  || fail "setup-user links the Clean themes and makes them the light and dark sides"
+pass "the Clean themes and their pastel icons"
 if command -v desktop-file-validate >/dev/null; then
   desktop-file-validate "$tmp/root/usr/share/applications/omamobile-agent.desktop" || fail "AI Agent desktop entry validates"
 fi
@@ -342,3 +377,10 @@ grep -c 'd355bdb2789f7bd1023d88b17f8a2898dc0ffa2b' widgets/OWL.md >/dev/null || 
 pass "install stages the package"
 
 test/keys.sh || fail "omamobile-keys volume keys"
+grep -c '^o.bind("XF86HomePage", "Home key", "omamobile-keys home")$' hypr/phone.lua >/dev/null \
+  || fail "the home key shows the home screen"
+grep -c '^o.bind("Menu", "Recent apps key", "omamobile-keys recents")$' hypr/phone.lua >/dev/null \
+  || fail "the menu key opens recent apps"
+grep -c '^o.bind("XF86Back", "Back key", "omamobile-keys back", { non_consuming = true })$' hypr/phone.lua >/dev/null \
+  || fail "the back key reaches the app too"
+pass "the touch keys are bound, back without taking the key from the app"

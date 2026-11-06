@@ -1,0 +1,257 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Redmi 4 Prime RAM-loaded initramfs. Never writes the eMMC. Without a root
+# UUID (M1) every disk stays read-only; with one (/etc/omamobile-sd-root,
+# packed by tools/build-markw-probe --root-uuid) exactly that ext4 partition
+# on the microSD card is writable and Arch starts from it.
+export PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# PID 1 exiting on a mount or initial guard failure panics (panic=10), rather
+# than exposing a root shell with an uninitialized storage guard.
+mount -t proc proc /proc || exit 1
+mount -t sysfs sysfs /sys || exit 1
+mount -t devtmpfs devtmpfs /dev || exit 1
+mkdir -p /dev/pts /run
+mount -t devpts devpts /dev/pts || exit 1
+mount -t tmpfs tmpfs /run || exit 1
+mount -t configfs configfs /sys/kernel/config || exit 1
+
+say() {
+    echo "omamobile-markw: $*" > /dev/kmsg
+    echo "omamobile-markw: $*" > /dev/tty0 2>/dev/null
+}
+
+# The Arch root on the microSD card, by file system UUID. omamobile.initramfs
+# on the command line keeps every disk read-only and stays here.
+ROOT_UUID=""
+[ -s /etc/omamobile-sd-root ] && read -r ROOT_UUID < /etc/omamobile-sd-root
+case $ROOT_UUID in
+    ????????-????-????-????-????????????) ;;
+    *) ROOT_UUID="" ;;
+esac
+case $ROOT_UUID in *[!0-9a-f-]*) ROOT_UUID="" ;; esac
+grep -q omamobile.initramfs /proc/cmdline && ROOT_UUID=""
+mkdir -p /run/omamobile-rw
+
+# Writable: the microSD card's whole disk (the kernel writes a partition only
+# if its disk is writable; its node is removed below) and its partition that
+# carries ROOT_UUID. Never anything on the eMMC (type MMC), its boot0/boot1
+# hardware partitions, or any card when no root UUID is set.
+sd_writable() {
+    [ -n "$ROOT_UUID" ] || return 1
+    [ -e "/run/omamobile-rw/$2" ] && return 0
+    if [ -e "$1/partition" ]; then
+        [ "$(cat "/sys/class/block/${2%p*}/device/type" 2>/dev/null)" = SD ] || return 1
+        [ "$(blkid -s UUID -o value "/dev/$2" 2>/dev/null)" = "$ROOT_UUID" ] || return 1
+    else
+        [ "$(cat "$1/device/type" 2>/dev/null)" = SD ] || return 1
+        rm -f "/dev/$2"
+    fi
+    : > "/run/omamobile-rw/$2"
+}
+
+# Everything else is set read-only, on every pass. No udev, mdev or
+# firmware service runs here.
+storage_guard() {
+    for s in /sys/class/block/mmcblk* /sys/class/block/sd*; do
+        [ -r "$s/ro" ] || continue
+        name=${s##*/}
+        [ -b "/dev/$name" ] || continue
+        [ "$(cat "$s/ro")" = 1 ] && continue
+        sd_writable "$s" "$name" && continue
+        if ! blockdev --setro "/dev/$name" || [ "$(cat "$s/ro")" != 1 ]; then
+            say "FAILED to protect /dev/$name; stop bring-up"
+            return 1
+        fi
+    done
+}
+
+# Prints every writable disk or partition the guard did not allow. Empty
+# means it holds; checked once more just before switching to Arch.
+storage_unguarded() {
+    for s in /sys/class/block/mmcblk* /sys/class/block/sd*; do
+        [ -r "$s/ro" ] || continue
+        name=${s##*/}
+        [ "$(cat "$s/ro")" = 0 ] || continue
+        [ -e "/run/omamobile-rw/$name" ] && continue
+        echo "$name"
+    done
+}
+storage_guard || exit 1
+(
+    while :; do
+        if ! storage_guard; then
+            killall dropbear getty 2>/dev/null
+            # The same panic recovery used by the flame and cheetah probes.
+            echo c > /proc/sysrq-trigger
+            exit 1
+        fi
+        sleep 0.2
+    done
+) &
+
+hostname omamobile-markw
+say "RAM-loaded initramfs: $(uname -r)${ROOT_UUID:+; root UUID $ROOT_UUID}"
+
+# The USB gadget functions and the PON reboot-mode driver are modules in the
+# postmarketOS MSM8953 kernel; the builder lists them in dependency order.
+# A failed load is reported, not fatal: SSH needs only the gadget modules.
+while read -r module; do
+    insmod "/lib/modules/$module" || say "insmod $module failed"
+done < /etc/omamobile-modules
+
+# MSM8953's mainline DT has no APSS watchdog node, so nothing resets a hung
+# kernel: the USB keeper below covers a lost link, a hang needs the buttons.
+
+# CDC NCM works with Linux and macOS without a proprietary host driver.
+g=/sys/kernel/config/usb_gadget/omamobile
+mkdir -p "$g/strings/0x409" "$g/configs/c.1/strings/0x409"
+echo 0x1d6b > "$g/idVendor"
+echo 0x0104 > "$g/idProduct"
+echo 'Omarchy Mobile' > "$g/strings/0x409/manufacturer"
+echo 'Redmi 4 Prime (Omarchy Mobile)' > "$g/strings/0x409/product"
+echo omamobile-markw > "$g/strings/0x409/serialnumber"
+echo 'NCM + ACM' > "$g/configs/c.1/strings/0x409/configuration"
+mkdir -p "$g/functions/ncm.usb0" "$g/functions/acm.GS0"
+ln -s "$g/functions/ncm.usb0" "$g/configs/c.1/"
+ln -s "$g/functions/acm.GS0" "$g/configs/c.1/"
+
+udc=""
+for _ in $(seq 1 30); do
+    for controller in /sys/class/udc/*; do
+        [ -e "$controller" ] && udc=${controller##*/} && break
+    done
+    [ -n "$udc" ] && break
+    sleep 1
+done
+if [ -n "$udc" ] && echo "$udc" > "$g/UDC"; then
+    say "USB gadget bound to $udc"
+else
+    say 'No USB controller; return to fastboot with the buttons'
+fi
+
+ip link set lo up
+ip addr add 172.16.42.1/24 dev usb0
+ip link set usb0 up
+cat > /run/udhcpd.conf <<'CONF'
+start 172.16.42.2
+end 172.16.42.2
+interface usb0
+option subnet 255.255.255.0
+lease_file /run/udhcpd.leases
+CONF
+touch /run/udhcpd.leases
+udhcpd /run/udhcpd.conf
+
+# Only the locally supplied public key grants SSH access. Host keys are
+# generated in the RAM filesystem; no identity or vendor firmware is shipped.
+mkdir -p /etc/dropbear
+dropbear -R -E -s -j -k -p 172.16.42.1:22
+say 'SSH ready: root@172.16.42.1'
+
+# Keep the serial console available even if NCM cannot establish a link.
+(
+    while :; do
+        setsid getty -n -l /bin/sh 115200 ttyGS0 vt100
+        sleep 1
+    done
+) &
+
+# Recover both an initial failure and a later disconnection. RESTART2 with
+# "bootloader" asks the PON for fastboot (stock aboot, since lk2nd was only
+# RAM-loaded); without qcom-pon it is a plain restart into the stock OS.
+(
+    missing=0
+    while :; do
+        if grep -qx configured /sys/class/udc/*/state 2>/dev/null; then
+            missing=0
+        else
+            missing=$((missing + 1))
+        fi
+        if [ "$missing" -ge 90 ]; then
+            say 'USB disconnected for 90 s; returning to bootloader'
+            reboot-to bootloader
+        fi
+        sleep 1
+    done
+) &
+
+# First boot of a written card (tools/build-markw-sd): the image is a few GB,
+# so grow its file system to the whole partition once. omamobile.noresize
+# skips it.
+grow_root() {
+    grep -q omamobile.noresize /proc/cmdline && return 0
+    info=$(dumpe2fs -h "$1" 2>/dev/null)
+    [ "$(echo "$info" | sed -n 's/^Filesystem volume name: *//p')" = omamobile-root ] || return 0
+    blocks=$(echo "$info" | sed -n 's/^Block count: *//p')
+    bsize=$(echo "$info" | sed -n 's/^Block size: *//p')
+    part_bytes=$(blockdev --getsize64 "$1" 2>/dev/null)
+    [ -n "$blocks" ] && [ -n "$bsize" ] && [ -n "$part_bytes" ] || return 0
+    fs_bytes=$((blocks * bsize))
+    [ $((part_bytes - fs_bytes)) -gt 67108864 ] || return 0
+    say "arch: growing the root file system to fill $1"
+    e2fsck -f -p "$1" >/dev/null 2>&1
+    resize2fs "$1" > /run/resize2fs.log 2>&1 || say 'arch: resize2fs failed; booting at the old size'
+}
+
+# Hand over to Arch on the microSD card. Everything is checked before the
+# irreversible exec; if anything is missing we stay here, with SSH up.
+boot_arch() {
+    [ -n "$ROOT_UUID" ] || return 1
+    # omamobile.stay: keep the guard's allowlist (the card's root partition
+    # writable) but stay here, to repair an Arch that can't be reached.
+    if grep -q omamobile.stay /proc/cmdline; then
+        say 'arch: omamobile.stay; staying in the initramfs (SSH up)'
+        return 1
+    fi
+    dev=""
+    for _ in $(seq 1 20); do
+        storage_guard || return 1
+        for f in /run/omamobile-rw/*p*; do
+            [ -e "$f" ] && dev=/dev/${f##*/}
+        done
+        [ -n "$dev" ] && break
+        sleep 1
+    done
+    [ -n "$dev" ] || { say "arch: no microSD partition with UUID $ROOT_UUID"; return 1; }
+    e2fsck -p "$dev" >/dev/null 2>&1
+    grow_root "$dev"
+    mkdir -p /newroot
+    mount -t ext4 -o rw,relatime "$dev" /newroot || { say "arch: cannot mount $dev"; return 1; }
+    if [ ! -x /newroot/usr/lib/systemd/systemd ]; then
+        say "arch: no systemd on $dev"; umount /newroot; return 1
+    fi
+    storage_guard
+    open=$(storage_unguarded)
+    if [ -n "$open" ]; then
+        say "arch: writable outside the allowlist: $(echo "$open" | tr '\n' ' ')(staying here)"
+        umount /newroot
+        return 1
+    fi
+    # Dead-man switch for the Arch boot: the USB keeper below dies with the
+    # initramfs, and a hung boot then needs the buttons (2026-10-27). /run is
+    # moved into Arch, so systemd reads this drop-in: if multi-user.target is
+    # not reached in 60 min, it forces a reboot to the bootloader. It must
+    # outlast omamobile-firstboot.service (TimeoutStartSec=45min), which
+    # multi-user.target waits for. omamobile.nodeadman leaves it out.
+    if ! grep -q omamobile.nodeadman /proc/cmdline; then
+        mkdir -p /run/systemd/system/multi-user.target.d
+        printf '[Unit]\nJobTimeoutSec=60min\nJobTimeoutAction=reboot-force\nJobTimeoutRebootArgument=bootloader\n' \
+            > /run/systemd/system/multi-user.target.d/omamobile-deadman.conf
+    fi
+    say "arch: switching to Arch Linux on $dev"
+    # Stop the initramfs helpers (dropbear, getty, guard, USB keeper); the
+    # kernel keeps the USB gadget and the read-only flags across the switch.
+    kill -9 -1 2>/dev/null
+    sleep 1
+    for m in /dev /proc /sys /run; do
+        mkdir -p "/newroot$m" && mount --move "$m" "/newroot$m"
+    done
+    exec switch_root /newroot /usr/lib/systemd/systemd
+}
+boot_arch
+
+# PID 1 must never exit.
+while :; do
+    sleep 60
+done

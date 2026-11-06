@@ -13,6 +13,10 @@
 #   either volume key while the Camera app (omacam) is in front and the phone
 #                       is unlocked: take a photo (omacam --remote shutter),
 #                       as Android's camera does; held keys take one photo
+#   home (touch key)    the shell's panels close and the home screen shows
+#   menu (touch key)    recent apps (omamobile.switcher), or closes them
+#   back (touch key)    the shell's panels close; Hyprland passes the key on
+#                       to the app too, which goes back if it knows how
 # Hyprland can't bind a chord of two plain keys or a long press that fires
 # while held, so each key reports here and the gesture is worked out from
 # when the keys went down. Hyprland cancels power's release bind once another
@@ -30,9 +34,18 @@ window=500
 hold=0.6
 # Volume down waits this long for power before it lowers the volume.
 volume_wait=0.15
+# A release followed by a new press within this many milliseconds is a
+# bounce of the same press. markw's power key reports a release and a press
+# about 20 ms apart while held (its PMIC debounces 15.6 ms), so the release
+# locked the phone and the hold never reached the system menu (2026-11-01).
+bounce=80
 
 recent() {
-  [[ -f $state/$1 ]] && (($(now) - $(<"$state/$1") <= window))
+  recent_ms "$1" "$window"
+}
+
+recent_ms() {
+  [[ -f $state/$1 ]] && (($(now) - $(<"$state/$1") <= $2))
 }
 
 locked() {
@@ -125,8 +138,33 @@ short_press() {
   fi
 }
 
+# The panels a home or back key closes, as Android's keys close sheets.
+close_panels() {
+  local panel
+  for panel in omamobile.launcher omamobile.switcher omamobile.quicksettings; do
+    omarchy-shell shell hide "$panel" >/dev/null 2>&1
+  done
+}
+
 case "${1:-}" in
+  home)
+    close_panels
+    # As the gesture bar's tap: the empty workspace, on the home page.
+    hyprctl dispatch 'hl.dsp.focus({ workspace = "empty" })' >/dev/null 2>&1
+    omarchy-shell shell call omamobile.home goHome '' >/dev/null 2>&1
+    ;;
+  recents)
+    omarchy-shell shell toggle omamobile.switcher '{}' >/dev/null 2>&1
+    ;;
+  back)
+    close_panels
+    ;;
   power-down)
+    # The key bounced: the press goes on, and the pending release is void.
+    if recent_ms power-release "$bounce"; then
+      rm -f "$state/power-release"
+      exit 0
+    fi
     rm -f "$state/chord" "$state/long"
     press=$(now)
     echo "$press" >"$state/power"
@@ -176,6 +214,12 @@ case "${1:-}" in
     fi
     ;;
   power-up)
+    # Act only if no new press follows: a bounce takes this release back.
+    release=$(now)
+    echo "$release" >"$state/power-release"
+    sleep "$(printf '0.%03d' "$bounce")"
+    [[ $(cat "$state/power-release" 2>/dev/null) == "$release" ]] || exit 0
+    rm -f "$state/power-release"
     if [[ -f $state/chord ]]; then
       rm -f "$state/chord"
     elif [[ -f $state/long ]]; then
@@ -186,7 +230,7 @@ case "${1:-}" in
     rm -f "$state/power"
     ;;
   *)
-    echo "Usage: omamobile-keys power-down|power-up|volume-down|volume-up" >&2
+    echo "Usage: omamobile-keys power-down|power-up|volume-down|volume-up|home|recents|back" >&2
     exit 1
     ;;
 esac

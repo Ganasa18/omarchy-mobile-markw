@@ -49,7 +49,7 @@ echo '{"enabled":false,"temperature":6500}' >"$tmp/state/night"
 
 out=$(run "$dir/tile-state.sh")
 for line in airplane=off hotspot=off powerprofile=balanced theme_mode=dark theme_name=tokyo-night \
-            nightlight=off stayawake=off record=none data=none; do
+            nightlight=off stayawake=off record=none data=none sshwifi=none; do
   grep -cx "$line" <<<"$out" >/dev/null || fail "tile-state.sh prints $line (got: $(tr '\n' ' ' <<<"$out"))"
 done
 pass "tile-state.sh reads every probed tile"

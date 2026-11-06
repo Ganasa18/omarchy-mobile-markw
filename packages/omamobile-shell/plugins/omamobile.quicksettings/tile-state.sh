@@ -18,6 +18,9 @@
 #   data          on while omamobile-sit-data.service is active; none
 #                 without omamobile-sitd running
 #   data_status   the operator and technology, when registered
+#   sshwifi       on while omamobile-ssh-wifi has SSH open on Wi-Fi; none
+#                 without the package or a Wi-Fi interface (with
+#                 sshwifi_addr, sshwifi_left minutes, sshwifi_sessions)
 
 t() { timeout 3 "$@" 2>/dev/null; }
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -93,4 +96,11 @@ print("data_status=" + " ".join(words))
 ' "$state"
 else
   echo "data=none"
+fi
+
+# sshwifi
+if have omamobile-ssh-wifi; then
+  t omamobile-ssh-wifi status --kv || echo "sshwifi=none"
+else
+  echo "sshwifi=none"
 fi

@@ -1,0 +1,54 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Copy the modem's NV partitions into RAM for rmtfs, so the modem runs on
+# copies and the eMMC is never written (BRINGUP-MODEM.md):
+#
+#   modemst1 -> modem_fs1   modemst2 -> modem_fs2
+#   fsg      -> modem_fsg   fsc      -> modem_fsc
+#
+# in /run/omamobile-rmtfs, the directory omamobile-markw-rmtfs.service hands
+# rmtfs with -o. Whatever the modem writes there is lost at shutdown; the
+# next boot starts again from the partitions. They hold this phone's IMEI
+# and calibration: the copies stay in RAM, readable by root only.
+#
+# Partitions are found by PARTNAME on the eMMC and must be read-only at the
+# block layer (the storage guard); each is read twice and the copy kept
+# only when both reads agree.
+set -u
+dir=${OMAMOBILE_RMTFS_DIR:-/run/omamobile-rmtfs}
+sys=${OMAMOBILE_SYSFS:-/sys}
+dev=${OMAMOBILE_DEV:-/dev}
+
+say() { echo "omamobile-markw-rmtfs: $*" >&2; }
+
+# The eMMC partition whose PARTNAME is $1 (never the microSD card).
+partition() {
+  local u
+  for u in "$sys"/class/block/mmcblk*p*/uevent; do
+    [[ -f $u ]] || continue
+    [[ $(sed -n 's/^PARTNAME=//p' "$u") == "$1" ]] || continue
+    [[ $(cat "${u%/uevent}/../device/type" 2>/dev/null) == MMC ]] || continue
+    basename "${u%/uevent}"
+    return 0
+  done
+  return 1
+}
+
+umask 077
+mkdir -p "$dir" || exit 1
+for pair in modemst1:modem_fs1 modemst2:modem_fs2 fsg:modem_fsg fsc:modem_fsc; do
+  name=${pair%%:*} file=${pair#*:}
+  part=$(partition "$name") || { say "no $name partition"; exit 1; }
+  if [[ $(cat "$sys/class/block/$part/ro") != 1 ]]; then
+    say "$part ($name) is not read-only: the storage guard is off, so nothing is read"
+    exit 1
+  fi
+  cat "$dev/$part" >"$dir/$file.new" || { say "could not read $part ($name)"; exit 1; }
+  if [[ $(sha256sum <"$dev/$part") != "$(sha256sum <"$dir/$file.new")" ]]; then
+    say "two reads of $part ($name) differ"
+    rm -f "$dir/$file.new"
+    exit 1
+  fi
+  mv -f "$dir/$file.new" "$dir/$file"
+done
+say "modem NV copied to $dir"

@@ -1,0 +1,16 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Stage omamobile-flash into DESTDIR. Enables nothing.
+#   ./install DESTDIR
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+d=${1:?Usage: ./install DESTDIR}
+[[ $d == /* && $d != "/" ]] || { echo "Use an absolute staging directory" >&2; exit 1; }
+install -Dm755 bin/omamobile-flash "$d/usr/bin/omamobile-flash"
+install -Dm644 app/shell.qml "$d/usr/share/omamobile-flash/shell.qml"
+install -Dm644 example/blink/platformio.ini "$d/usr/share/omamobile-flash/example/blink/platformio.ini"
+install -Dm644 example/blink/src/main.cpp "$d/usr/share/omamobile-flash/example/blink/src/main.cpp"
+install -Dm644 share/omamobile-flash.desktop "$d/usr/share/applications/omamobile-flash.desktop"
+install -Dm644 README.md "$d/usr/share/doc/omamobile-flash/README.md"
+install -Dm644 LICENSE "$d/usr/share/licenses/omamobile-flash/LICENSE"
+install -Dm644 version "$d/usr/share/omamobile-flash/version"

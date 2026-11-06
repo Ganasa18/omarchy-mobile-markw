@@ -1,0 +1,31 @@
+From: Omarchy Mobile <omamobile@localhost>
+Subject: [PATCH] arm64: dts: qcom: msm8953-xiaomi-markw: route the speaker amplifier
+
+The AW8738 loudspeaker amplifier is an aux device of the sound card,
+but no route connects its input to the codec, so DAPM treats it as an
+always-on path and keeps the amplifier's enable GPIO driven whether or
+not anything plays.
+
+On a Redmi 4 Prime the amplifier is fed from the PM8953 codec's line
+output: with "RX3 MIX1 INP1" set to RX1 and the LINEOUT and LINEOUT Ext
+switches on, a tone from MultiMedia1 plays on the loudspeaker, while
+the SPK DAC path and the HPHR path stay silent (each tested alone).
+Route the amplifier's input from LINEOUT_OUT, so it is powered only
+while the line output is.
+
+---
+ arch/arm64/boot/dts/qcom/msm8953-xiaomi-markw.dts | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+--- a/arch/arm64/boot/dts/qcom/msm8953-xiaomi-markw.dts
++++ b/arch/arm64/boot/dts/qcom/msm8953-xiaomi-markw.dts
+@@ -302,7 +302,8 @@
+ 		"MM_DL1", "MultiMedia1 Playback",
+ 		"MM_DL3", "MultiMedia3 Playback",
+ 		"MM_DL4", "MultiMedia4 Playback",
+-		"MultiMedia2 Capture", "MM_UL2";
++		"MultiMedia2 Capture", "MM_UL2",
++		"Speaker Amp IN", "LINEOUT_OUT";
+ 
+ 	pinctrl-0 = <&cdc_pdm_lines_default
+ 		     &cdc_pdm_lines_2_default

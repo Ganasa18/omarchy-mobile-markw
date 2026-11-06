@@ -1,0 +1,293 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Flash: build, upload, monitor and clean PlatformIO projects from a phone
+# window (/usr/share/omamobile-flash/shell.qml). Without arguments it opens
+# the window; the subcommands are what the window asks, as JSON:
+#
+#   omamobile-flash                  open the window
+#   omamobile-flash projects         folders under ~ with a platformio.ini or an Arduino .ino, newest first
+#   omamobile-flash dirs DIR         DIR's folders for the folder browser, projects marked
+#   omamobile-flash sketch DIR       an Arduino sketch's .ino, likely board and serial speed
+#   omamobile-flash init DIR BOARD [SPEED]   write a platformio.ini beside the sketch
+#   omamobile-flash envs DIR         the [env:NAME] sections, default first, with monitor and upload speeds
+#   omamobile-flash upload-speed DIR ENV [BAUD]   set the env's upload_speed (none: the board's default)
+#   omamobile-flash ports            USB serial ports (ttyUSB*, ttyACM*) with the adapter's name
+#   omamobile-flash monitor PORT [BAUD]   print the port's lines until stopped
+#   omamobile-flash example          copy the blink example to ~/proyek/blink (once)
+#   omamobile-flash status           {"pio": PATH or "", "version": ...}
+#   omamobile-flash setup            install PlatformIO Core into ~/.platformio/penv
+#   omamobile-flash run CMD...       run CMD (the window's pio calls), its output also in the log
+#
+# Build, upload and clean are plain "pio run" calls the window makes itself.
+# PlatformIO lives in the user's ~/.platformio (a Python virtualenv from
+# PyPI, as PlatformIO's own installer does), so no system package changes;
+# a pio on PATH (Arch's platformio-core) is used when that is missing.
+set -u
+
+SHARE=${OMAMOBILE_FLASH_SHARE:-/usr/share/omamobile-flash}
+DEV=${OMAMOBILE_FLASH_DEV:-/dev}
+PENV=${OMAMOBILE_FLASH_PENV:-$HOME/.platformio/penv}
+# Everything the window shows (pio, setup, the serial monitor) is also
+# appended here, so a session can be followed from elsewhere (over Wi-Fi
+# SSH while the USB port holds the board) and read after a crash.
+LOG=${OMAMOBILE_FLASH_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/omamobile-flash/flash.log}
+
+# Send this script's output to the log as well, with a header line; the log
+# rolls over to flash.log.1 past 2 MB.
+log_output() {
+  mkdir -p "${LOG%/*}" || return 0
+  if [[ $(stat -c %s "$LOG" 2>/dev/null || echo 0) -gt 2097152 ]]; then mv -f "$LOG" "$LOG.1"; fi
+  printf '=== %s %s\n' "$(date -u +%FT%TZ)" "$*" >>"$LOG"
+  exec > >(tee -a "$LOG") 2>&1
+}
+
+# The pio to run, or nothing.
+pio_path() {
+  if [[ -x $PENV/bin/pio ]]; then echo "$PENV/bin/pio"; return; fi
+  command -v pio 2>/dev/null
+}
+
+# The penv's Python has pyserial (PlatformIO depends on it).
+serial_python() {
+  if [[ -x $PENV/bin/python ]]; then echo "$PENV/bin/python"; else echo python3; fi
+}
+
+die() { echo "omamobile-flash: $*" >&2; exit 1; }
+json_str() { printf '"%s"' "$(sed 's/["\\]/\\&/g' <<<"$1")"; }
+
+# "pio" for a folder with platformio.ini, "ino" for an Arduino sketch
+# folder without one, else nothing.
+kind_of() {
+  local f
+  [[ -f $1/platformio.ini ]] && { echo pio; return; }
+  for f in "$1"/*.ino; do [[ -f $f ]] && { echo ino; return; }; done
+}
+
+cmd_projects() {
+  local first=1 kind dir
+  printf '['
+  # Hidden folders (PlatformIO's ~/.platformio and .pio, caches) are skipped.
+  # An .ino inside a PlatformIO project (its src/) is that project's, not a
+  # sketch of its own.
+  while IFS=$'\t' read -r kind dir; do
+    (( first )) || printf ','; first=0
+    printf '{"path":%s,"kind":"%s"}' "$(json_str "$dir")" "$kind"
+  done < <(find "$HOME" -mindepth 1 -maxdepth 4 \( -name '.*' -o -name node_modules \) -prune \
+             -o \( -name platformio.ini -o -name '*.ino' \) -type f -printf '%T@\t%h\t%f\n' 2>/dev/null |
+           awk -F'\t' '
+             { if ($3 == "platformio.ini") pio[$2] = 1; if (!($2 in t) || $1 > t[$2]) t[$2] = $1 }
+             END { for (d in t) {
+                     k = (d in pio) ? "pio" : "ino"; up = d; sub(/\/[^\/]*$/, "", up)
+                     if (k == "ino" && (up in pio)) continue
+                     printf "%s\t%s\t%s\n", t[d], k, d } }' | sort -t$'\t' -k1,1rn | cut -f2-)
+  printf ']\n'
+}
+
+# The folder browser: DIR's own mark and its folders (hidden ones left out)
+# by name, each marked like kind_of.
+cmd_dirs() {
+  local dir=${1:?dirs DIR} sub first=1
+  [[ -d $dir ]] || die "not a folder: $dir"
+  printf '{"kind":"%s","dirs":[' "$(kind_of "$dir")"
+  for sub in "$dir"/*/; do
+    [[ -d $sub ]] || continue
+    sub=${sub%/}
+    (( first )) || printf ','; first=0
+    printf '{"name":%s,"kind":"%s"}' "$(json_str "${sub##*/}")" "$(kind_of "$sub")"
+  done
+  printf ']}\n'
+}
+
+# An Arduino IDE sketch: its .ino (the one named after the folder first), the
+# board from arduino-cli's build folder (build/esp32.esp32.nodemcu-32s) or
+# esp32dev, and the speed of its Serial.begin() or 115200.
+cmd_sketch() {
+  local dir=${1:?sketch DIR} ino="" board=esp32dev speed f b
+  for f in "$dir"/*.ino; do [[ -f $f ]] && { ino=${f##*/}; break; }; done
+  [[ -n $ino ]] || die "no .ino in $dir"
+  [[ -f $dir/${dir##*/}.ino ]] && ino=${dir##*/}.ino
+  for b in "$dir"/build/*.*.*/; do
+    [[ -d $b ]] || continue
+    b=${b%/}; b=${b##*.}
+    [[ $b =~ ^[A-Za-z0-9_-]+$ ]] && { board=$b; break; }
+  done
+  # Arduino's generic ESP32 is PlatformIO's esp32dev.
+  [[ $board == esp32 ]] && board=esp32dev
+  speed=$(grep -ohE 'Serial\.begin\( *[0-9]+' "$dir/$ino" 2>/dev/null | head -n1 | grep -oE '[0-9]+$')
+  printf '{"ino":%s,"board":%s,"speed":%d}\n' "$(json_str "$ino")" "$(json_str "$board")" "${speed:-115200}"
+}
+
+# A platformio.ini that builds the sketch where it is (src_dir = .), so the
+# Arduino IDE still opens the folder; only the sketch's top-level sources and
+# its src/ are built, never build/ or .pio/. Never replaces one.
+cmd_init() {
+  local dir=${1:?init DIR BOARD [SPEED]} board=${2:?init DIR BOARD [SPEED]} speed=${3:-115200} platform=espressif32
+  [[ -e $dir/platformio.ini ]] && die "$dir already has a platformio.ini"
+  [[ $(kind_of "$dir") == ino ]] || die "no .ino in $dir"
+  [[ $board =~ ^[A-Za-z0-9_-]+$ ]] || die "board: a PlatformIO board id"
+  [[ $speed =~ ^[0-9]+$ ]] || die "speed: a number"
+  case $board in nodemcuv2|d1_mini|esp01_1m|esp12e) platform=espressif8266 ;; esac
+  cat >"$dir/platformio.ini" <<EOF || die "cannot write $dir/platformio.ini"
+; Written by Flash (omamobile-flash) for the Arduino sketch in this folder.
+[platformio]
+src_dir = .
+
+[env:$board]
+platform = $platform
+board = $board
+framework = arduino
+monitor_speed = $speed
+build_src_filter = +<*.ino> +<*.cpp> +<*.c> +<*.S> +<src/>
+EOF
+  echo "$dir"
+}
+
+# [env:NAME] sections in file order, default_envs first; monitor_speed from
+# the env, else the shared [env] section, else 115200; upload_speed the
+# same way, else 0 (the board's own default).
+cmd_envs() {
+  local ini=${1:?envs DIR}/platformio.ini
+  [[ -r $ini ]] || die "no platformio.ini in $1"
+  awk '
+    function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+    /^[ \t]*[;#]/ { next }
+    /^[ \t]*\[/ { sec = trim($0); gsub(/^\[|\]$/, "", sec)
+                  if (sec ~ /^env:/) { name = substr(sec, 5); order[++n] = name } ; next }
+    /=/ { key = trim(substr($0, 1, index($0, "=") - 1)); val = trim(substr($0, index($0, "=") + 1))
+          if (sec == "platformio" && key == "default_envs") { split(val, d, /[ ,]+/); def = d[1] }
+          if (key == "monitor_speed") { if (sec == "env") common = val; else if (sec ~ /^env:/) speed[substr(sec, 5)] = val }
+          if (key == "upload_speed") { if (sec == "env") cup = val; else if (sec ~ /^env:/) up[substr(sec, 5)] = val } }
+    END {
+      printf "["
+      first = 1
+      if (def != "") { emit(def); }
+      for (i = 1; i <= n; i++) if (order[i] != def) emit(order[i])
+      print "]"
+    }
+    function emit(e,   s, u) {
+      s = (e in speed) ? speed[e] : (common != "" ? common : "115200")
+      u = (e in up) ? up[e] : (cup != "" ? cup : 0)
+      if (!first) printf ","
+      first = 0
+      printf "{\"name\":\"%s\",\"speed\":%d,\"upload\":%d}", e, s, u
+    }' "$ini"
+}
+
+# Set the env's upload_speed in platformio.ini (no BAUD: remove it, back to
+# the board's default). Only that env's upload_speed lines change; the file
+# keeps its owner and mode.
+cmd_upload_speed() {
+  local dir=${1:?upload-speed DIR ENV [BAUD]} env=${2:?upload-speed DIR ENV [BAUD]} baud=${3:-} ini tmp
+  ini=$dir/platformio.ini
+  [[ -w $ini ]] || die "cannot write $ini"
+  [[ -z $baud || $baud =~ ^[0-9]+$ ]] || die "baud: a number"
+  tmp=$(mktemp "${TMPDIR:-/tmp}/omamobile-flash.XXXXXX") || die "mktemp failed"
+  if ! awk -v env="env:$env" -v baud="$baud" '
+    function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+    /^[ \t]*\[/ { sec = trim($0); gsub(/^\[|\]$/, "", sec); print
+                  if (sec == env) { found = 1; if (baud != "") print "upload_speed = " baud }
+                  next }
+    sec == env && /^[ \t]*upload_speed[ \t]*=/ { next }
+    { print }
+    END { if (!found) exit 3 }' "$ini" >"$tmp"; then
+    rm -f "$tmp"; die "no [env:$env] in $ini"
+  fi
+  cat "$tmp" >"$ini"; rm -f "$tmp"
+}
+
+cmd_ports() {
+  local first=1 dev name props
+  printf '['
+  for dev in "$DEV"/ttyUSB* "$DEV"/ttyACM*; do
+    [[ -e $dev ]] || continue
+    props=$(udevadm info -q property -n "$dev" 2>/dev/null)
+    # The usual ESP32 and Arduino adapters by USB vendor, else udev's model.
+    case $(sed -n 's/^ID_VENDOR_ID=//p' <<<"$props") in
+      10c4) name=CP210x ;;
+      1a86) name=CH340 ;;
+      0403) name=FTDI ;;
+      303a) name="ESP32 USB" ;;
+      *) name=$(sed -n 's/^ID_MODEL=//p' <<<"$props" | head -n1 | tr '_' ' ') ;;
+    esac
+    (( first )) || printf ','; first=0
+    printf '{"path":%s,"name":%s}' "$(json_str "$dev")" "$(json_str "${name:-serial}")"
+  done
+  printf ']\n'
+}
+
+# pyserial comes with PlatformIO. Lines go out as they arrive; a board that
+# resets or a cable that goes leaves the loop with a message, not a trace.
+cmd_monitor() {
+  local port=${1:?monitor PORT [BAUD]} baud=${2:-115200}
+  [[ $baud =~ ^[0-9]+$ ]] || die "baud: a number"
+  log_output monitor "$port" "$baud"
+  exec "$(serial_python)" -I -u -c '
+import sys, serial
+port, baud = sys.argv[1], int(sys.argv[2])
+try:
+    s = serial.Serial(port, baud, timeout=0.2)
+except (OSError, serial.SerialException) as e:
+    sys.exit("cannot open %s: %s" % (port, e))
+print("--- %s at %d baud" % (port, baud), flush=True)
+buf = b""
+try:
+    while True:
+        buf += s.read(256)
+        # Noise at the wrong speed may never hold a newline.
+        if len(buf) > 4096 and b"\n" not in buf:
+            buf += b"\n"
+        while b"\n" in buf:
+            line, buf = buf.split(b"\n", 1)
+            print(line.rstrip(b"\r").decode("utf-8", "replace"), flush=True)
+except (OSError, serial.SerialException) as e:
+    print("--- port closed: %s" % e, flush=True)
+' "$port" "$baud"
+}
+
+cmd_example() {
+  local dest=$HOME/proyek/blink
+  if [[ -e $dest ]]; then echo "$dest"; return 0; fi
+  mkdir -p "$HOME/proyek"
+  cp -r "$SHARE/example/blink" "$dest"
+  echo "$dest"
+}
+
+cmd_status() {
+  local pio version=""
+  pio=$(pio_path)
+  [[ -n $pio ]] && version=$("$pio" --version 2>/dev/null | sed -n 's/.*version //p' | head -n1)
+  printf '{"pio":%s,"version":%s}\n' "$(json_str "$pio")" "$(json_str "$version")"
+}
+
+# Output goes to the window line by line. Idempotent: an existing penv is
+# upgraded in place.
+cmd_setup() {
+  mkdir -p "${PENV%/*}"
+  if [[ ! -x $PENV/bin/python ]]; then
+    echo "creating $PENV"
+    python3 -m venv "$PENV" || die "python3 -m venv failed"
+  fi
+  echo "installing PlatformIO Core from PyPI"
+  "$PENV/bin/python" -m pip install --disable-pip-version-check --progress-bar off -U platformio || die "pip install failed"
+  "$PENV/bin/pio" --version
+}
+
+case ${1:-} in
+  # From home: pio returns to the folder it started in, and fails when the
+  # window was opened from one the user can't enter (a root shell's /root).
+  "") cd "$HOME" && exec quickshell -p "$SHARE/shell.qml" ;;
+  status) cmd_status ;;
+  setup) log_output setup; cmd_setup ;;
+  # exec keeps CMD's pid, so the window's cancel stops pio itself.
+  run) shift; (( $# )) || die "run CMD..."; log_output "$@"; exec "$@" ;;
+  projects) cmd_projects ;;
+  dirs) cmd_dirs "${2:-}" ;;
+  sketch) cmd_sketch "${2:-}" ;;
+  init) cmd_init "${2:-}" "${3:-}" "${4:-}" ;;
+  envs) cmd_envs "${2:-}" ;;
+  upload-speed) cmd_upload_speed "${2:-}" "${3:-}" "${4:-}" ;;
+  ports) cmd_ports ;;
+  monitor) cmd_monitor "${2:-}" "${3:-}" ;;
+  example) cmd_example ;;
+  *) sed -n '7,19s/^#   //p' "$0" >&2; exit 2 ;;
+esac

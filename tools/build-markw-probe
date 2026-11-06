@@ -1,0 +1,93 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Build a RAM-only Redmi 4 Prime probe for lk2nd; never connect to or write a phone.
+#
+# Usage: tools/build-markw-probe --kernel Image.gz \
+#          --dtb msm8953-xiaomi-markw.dtb --modules lib/modules/RELEASE \
+#          --ssh-key ~/.ssh/id_ed25519.pub --mkbootimg /path/to/mkbootimg.py \
+#          --out /path/to/output [--root-uuid UUID] [--usb-role otg] [--adsp] [--modem]
+#
+# --usb-role otg keeps the kernel's USB role switch, so an OTG adapter
+# turns the port into a host (the charger supplies VBUS); the default,
+# peripheral, keeps the port a gadget whatever is plugged in.
+# --adsp keeps the LPASS ADSP (audio DSP) enabled; its firmware must be on
+# the root (omamobile-markw-firmware). Without it the node is disabled.
+# --modem keeps the modem (MPSS) enabled the same way (BRINGUP-MODEM.md).
+# Without --root-uuid the probe keeps every disk read-only and stops at SSH
+# (M1). With it, the initramfs switches to the Arch root on the microSD
+# partition whose ext4 file system has that UUID (tools/build-markw-sd).
+# The kernel must have eMMC/SD, USB DWC3 and QUSB2, configfs and devtmpfs
+# built in (the MSM8953 postmarketOS kernel does). From --modules only the
+# NCM/ACM gadget functions and qcom-pon, with their dependencies, are copied.
+# Supply the kernel's own msm8953-xiaomi-markw.dtb and its matching modules.
+# mkbootimg.py and its gki/ helpers come from AOSP system/tools/mkbootimg.
+# Docker runs an aarch64 Alpine builder; x86 hosts need a binfmt handler.
+# Boot this image from a RAM-loaded lk2nd's fastboot, never flash it.
+set -euo pipefail
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+kernel="" dtb="" modules="" key="" mkbootimg="" out="" root_uuid="" usb_role=peripheral adsp=0 mpss=0
+die() { echo "error: $*" >&2; exit 1; }
+while (($#)); do
+  case $1 in
+    --kernel) kernel=${2:?}; shift ;;
+    --dtb) dtb=${2:?}; shift ;;
+    --modules) modules=${2:?}; shift ;;
+    --ssh-key) key=${2:?}; shift ;;
+    --mkbootimg) mkbootimg=${2:?}; shift ;;
+    --out) out=${2:?}; shift ;;
+    --root-uuid) root_uuid=${2:?}; shift ;;
+    --usb-role) usb_role=${2:?}; shift ;;
+    --adsp) adsp=1 ;;
+    --modem) mpss=1 ;;
+    -h|--help) sed -n '3,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) die "unknown argument: $1" ;;
+  esac
+  shift
+done
+command -v docker >/dev/null || die 'Docker is required'
+command -v python3 >/dev/null || die 'Python 3 is required'
+for path in "$kernel" "$dtb" "$key" "$mkbootimg"; do
+  [[ -n $path && -f $path ]] || die 'supply --kernel, --dtb, --modules, --ssh-key and --mkbootimg'
+done
+[[ -n $modules && -f $modules/modules.order ]] || die '--modules must be the kernel'\''s lib/modules/RELEASE directory'
+[[ -n $out ]] || die 'supply --out DIR'
+[[ -z $root_uuid || $root_uuid =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] \
+  || die '--root-uuid must be a lower-case file system UUID'
+[[ $usb_role == peripheral || $usb_role == otg ]] || die '--usb-role must be peripheral or otg'
+
+# Normalize paths portably (macOS readlink lacks -f on older releases), so
+# relative paths and spaces survive Docker's bind mount parsing.
+absolute() { python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$1"; }
+kernel=$(absolute "$kernel") dtb=$(absolute "$dtb") key=$(absolute "$key")
+modules=$(absolute "$modules")
+mkbootimg=$(absolute "$mkbootimg") out=$(absolute "$out")
+for path in "$ROOT" "$kernel" "$dtb" "$modules" "$key" "$mkbootimg" "$out"; do
+  [[ $path != *,* ]] || die 'Docker bind paths cannot contain commas'
+done
+[[ $(basename "$mkbootimg") == mkbootimg.py ]] || die '--mkbootimg must name AOSP mkbootimg.py'
+[[ ! -e $out/boot.img ]] || die "$out/boot.img already exists; choose a fresh output directory"
+python3 - "$key" <<'PY'
+import base64, pathlib, struct, sys
+data = pathlib.Path(sys.argv[1]).read_text().split()
+if len(data) < 2 or data[0] not in ('ssh-ed25519', 'ssh-rsa', 'ecdsa-sha2-nistp256'):
+    sys.exit('--ssh-key must be an OpenSSH PUBLIC key, never a private key')
+try:
+    raw = base64.b64decode(data[1], validate=True)
+    n, = struct.unpack('>I', raw[:4])
+    assert raw[4:4+n].decode() == data[0]
+except (ValueError, struct.error, AssertionError, UnicodeError):
+    sys.exit('invalid SSH public key')
+PY
+
+mkdir -p "$out"
+docker run --rm --platform linux/arm64 \
+  --mount "type=bind,source=$ROOT,target=/src,readonly" \
+  --mount "type=bind,source=$kernel,target=/input/kernel,readonly" \
+  --mount "type=bind,source=$dtb,target=/input/markw.dtb,readonly" \
+  --mount "type=bind,source=$modules,target=/input/modules,readonly" \
+  --mount "type=bind,source=$key,target=/input/key.pub,readonly" \
+  --mount "type=bind,source=$(dirname "$mkbootimg"),target=/mkbootimg,readonly" \
+  --mount "type=bind,source=$out,target=/out" \
+  -e ROOT_UUID="$root_uuid" -e USB_ROLE="$usb_role" -e ADSP="$adsp" -e MPSS="$mpss" \
+  alpine:3.22 sh /src/device/markw/initramfs/build
+echo "Built $out/boot.img (lk2nd RAM-loaded image${root_uuid:+, root UUID $root_uuid}; no phone was accessed)"

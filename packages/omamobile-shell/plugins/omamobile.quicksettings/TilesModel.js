@@ -31,7 +31,8 @@ var CATALOG = [
   { id: "screenshot", label: "Screenshot" },
   { id: "screen-record", label: "Screen record" },
   { id: "fingerprint", label: "Fingerprint" },
-  { id: "keyboard", label: "Keyboard" }
+  { id: "keyboard", label: "Keyboard" },
+  { id: "ssh-wifi", label: "SSH Wi-Fi" }
 ]
 
 // The first four are the collapsed sheet's row, as on Android: the toggles

@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: MIT
+# rmtfs for markw's modem, on RAM copies of its NV partitions
+# (omamobile-markw-rmtfs), so the eMMC is never written: the modem's own
+# writes are lost at shutdown. Not enabled; the modem bring-up starts it
+# (BRINGUP-MODEM.md). Without -s: rmtfs doesn't start or stop the modem's
+# remoteproc itself (with -s it exits while there is none).
+[Unit]
+Description=Qualcomm remotefs for the modem, on RAM copies
+Conflicts=rmtfs.service rmtfs-dir.service
+
+[Service]
+ExecStartPre=/usr/lib/omamobile/omamobile-markw-rmtfs
+ExecStart=/usr/bin/rmtfs -v -o /run/omamobile-rmtfs
+Restart=on-failure

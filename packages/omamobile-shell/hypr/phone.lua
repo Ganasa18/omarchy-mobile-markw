@@ -44,6 +44,14 @@ o.bind("XF86AudioLowerVolume", "Volume down", "omamobile-keys volume-down", { lo
 hl.unbind("XF86AudioRaiseVolume")
 o.bind("XF86AudioRaiseVolume", "Volume up", "omamobile-keys volume-up", { locked = true, repeating = true })
 
+-- Touch keys under the screen, on phones that have them (markw: menu, home,
+-- back). Home shows the home screen, menu the recent apps, and back closes
+-- the shell's panels while the app still gets the key (non_consuming):
+-- browsers and Nautilus go back on XF86Back. Not while locked.
+o.bind("XF86HomePage", "Home key", "omamobile-keys home")
+o.bind("Menu", "Recent apps key", "omamobile-keys recents")
+o.bind("XF86Back", "Back key", "omamobile-keys back", { non_consuming = true })
+
 -- A fresh phone (no name and email, or no PIN): a notification offers the
 -- onboarding that Omarchy's installer does on a computer.
 o.launch_on_start("omamobile-onboarding --nudge")
@@ -78,3 +86,8 @@ hl.layer_rule({ match = { namespace = "^omamobile-osk-hide$" }, above_lock = 2, 
 -- call is answered from the lock screen, and the in-call controls stay
 -- reachable while it's locked. The card offers call actions only.
 hl.layer_rule({ match = { namespace = "^omamobile-call(-top)?$" }, above_lock = 2 })
+
+-- Flash (omamobile-flash) is a log and small text: opaque, not Omarchy's
+-- default 0.985/0.96, which lets the home screen show through. This file
+-- loads after Omarchy's rules, so its opacity wins.
+o.window({ class = "^org\\.quickshell$", title = "^Flash$" }, { tag = "-default-opacity", opacity = "1 1" })

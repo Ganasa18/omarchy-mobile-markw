@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: MIT
+# Maintainer: Derek Ross <derekross@gmail.com>
+pkgname=omamobile-ssh-wifi
+pkgver=$(cat "${startdir:-.}/version")
+pkgrel=1
+pkgdesc="Omarchy Mobile: SSH over Wi-Fi for a while, from quick settings (ufw opens port 22 on Wi-Fi only while it is on)"
+arch=(any)
+url="https://github.com/derekross/omarchy-mobile"
+license=(MIT)
+depends=(bash openssh iproute2 systemd polkit)
+optdepends=('ufw: without it sshd answers on every interface and there is nothing to open')
+install=omamobile-ssh-wifi.install
+
+check() {
+  "$startdir/test/all"
+}
+
+package() {
+  "$startdir/install" "$pkgdir"
+}

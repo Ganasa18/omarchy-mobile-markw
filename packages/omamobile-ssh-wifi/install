@@ -1,0 +1,15 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Stage omamobile-ssh-wifi into DESTDIR. Enables nothing: SSH stays on the
+# USB link until "omamobile-ssh-wifi on" (or the quick-settings tile).
+#   ./install DESTDIR
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+d=${1:?Usage: ./install DESTDIR}
+[[ $d == /* && $d != "/" ]] || { echo "Use an absolute staging directory" >&2; exit 1; }
+install -Dm755 bin/omamobile-ssh-wifi "$d/usr/bin/omamobile-ssh-wifi"
+install -Dm644 systemd/system/omamobile-ssh-wifi@.service "$d/usr/lib/systemd/system/omamobile-ssh-wifi@.service"
+install -Dm644 polkit/50-omamobile-ssh-wifi.rules "$d/usr/share/polkit-1/rules.d/50-omamobile-ssh-wifi.rules"
+install -Dm644 README.md "$d/usr/share/doc/omamobile-ssh-wifi/README.md"
+install -Dm644 LICENSE "$d/usr/share/licenses/omamobile-ssh-wifi/LICENSE"
+install -Dm644 version "$d/usr/share/omamobile/ssh-wifi/version"

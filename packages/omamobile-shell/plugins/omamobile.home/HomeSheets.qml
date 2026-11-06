@@ -1151,6 +1151,21 @@ Item {
           text: settingsFlick.config.dateFormat || ""
           onTextEdited: settingsFlick.put("dateFormat", text)
         }
+        // -- clock and weather: on a card, or on the wallpaper itself
+        Item {
+          visible: settingsFlick.item && (settingsFlick.item.type === "clock" || settingsFlick.item.type === "weather")
+          width: parent.width; height: sheets.touch
+          Text {
+            anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
+            textFormat: Text.PlainText; text: "On a card"
+            color: sheets.fg; font.family: Style.font.family; font.pixelSize: Style.font.title
+          }
+          ToggleSwitch {
+            anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+            checked: settingsFlick.value("card") === true
+            onToggled: settingsFlick.put("card", !checked)
+          }
+        }
 
         // -- weather
         Item {
@@ -1348,7 +1363,7 @@ Item {
 
         // -- the rest
         Label {
-          visible: settingsFlick.item && ["battery", "media", "agenda", "toggles"].indexOf(settingsFlick.item.type) >= 0
+          visible: settingsFlick.item && ["battery", "system", "media", "agenda", "toggles"].indexOf(settingsFlick.item.type) >= 0
           width: parent.width
           text: !settingsFlick.item ? "" : settingsFlick.item.type === "agenda"
             ? "Events come from khal (the local calendar vdirsyncer syncs), when it's installed. Without it, the month is shown."

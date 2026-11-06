@@ -1,0 +1,220 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Tests for omamobile-device-markw. reboot-to is compiled from
+# src/reboot-to.c in this directory, so a copied package still builds.
+# Do not execute reboot-to.
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
+fail() { printf 'not ok - %s\n' "$1" >&2; exit 1; }
+pass() { printf 'ok - %s\n' "$1"; }
+tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+
+bash -n build || fail "build parses"
+bash -n install || fail "install parses"
+pass "scripts parse"
+
+grep -q '\.\./\.\.' build install && fail "build or install reaches outside the package directory"
+pass "build and install stay inside the package directory"
+
+if [[ -f ../omamobile-device-cheetah/src/reboot-to.c ]]; then
+  cmp -s src/reboot-to.c ../omamobile-device-cheetah/src/reboot-to.c \
+    || fail "reboot-to.c drifted from the cheetah package"
+  pass "reboot-to.c matches the cheetah source"
+  cmp -s etc/omamobile-mirrorlist ../omamobile-device-cheetah/etc/omamobile-mirrorlist \
+    || fail "the mirrorlist drifted from the cheetah package"
+  pass "the mirrorlist matches the cheetah package"
+  cmp -s vendor/systemd/logind.conf.d/10-omamobile-power-key.conf \
+    ../omamobile-device-cheetah/vendor/systemd/logind.conf.d/10-omamobile-power-key.conf \
+    || fail "the power-key drop-in drifted from the cheetah package"
+  pass "the power-key drop-in matches the cheetah package"
+  cmp -s omamobile-device-markw.install \
+    ../omamobile-device-cheetah/omamobile-device-cheetah.install \
+    || fail "the pacman install script drifted from the cheetah package"
+  pass "the pacman install script matches the cheetah package"
+fi
+grep -q 'omamobile-keyring' PKGBUILD || fail "pacman needs omamobile-keyring"
+grep -q '^install=omamobile-device-markw.install$' PKGBUILD \
+  || fail "the pacman install script is not named"
+pass "pacman gets the keyring, the mirrorlist, and the install script"
+if [[ -f ../../device/markw/device.conf ]]; then
+  cmp -s device.conf ../../device/markw/device.conf \
+    || fail "device.conf drifted from the descriptor"
+  pass "device.conf matches the descriptor"
+fi
+
+./build "$tmp/build" || fail "reboot-to compiles"
+[[ -x $tmp/build/reboot-to ]] || fail "reboot-to is not executable"
+pass "reboot-to compiles"
+
+./install "$tmp/root" "$tmp/build"
+for f in usr/bin/reboot-to \
+         usr/lib/udev/rules.d/10-omamobile-storage.rules \
+         usr/lib/systemd/network/20-usb-gadget.network \
+         usr/lib/systemd/logind.conf.d/10-omamobile-power-key.conf \
+         usr/lib/NetworkManager/conf.d/10-omamobile-usb.conf \
+         etc/NetworkManager/conf.d/zz-omamobile-wifi-powersave.conf \
+         usr/lib/systemd/system/omamobile-zram.service \
+         usr/lib/sysctl.d/90-omamobile-zram.conf \
+         usr/lib/tmpfiles.d/omamobile-schedutil.conf \
+         usr/share/omamobile/device.conf \
+         usr/share/omamobile/device-markw/version \
+         usr/share/licenses/omamobile-device-markw/LICENSE \
+         etc/pacman.d/omamobile-mirrorlist; do
+  [[ -f $tmp/root/$f ]] || fail "install stages $f"
+done
+rules="$tmp/root/usr/lib/udev/rules.d/10-omamobile-storage.rules"
+grep -q 'ATTRS{type}=="MMC", MODE="0000", ENV{UDISKS_IGNORE}="1"' "$rules" \
+  || fail "every eMMC node is made inaccessible, matched by card type"
+grep -q 'ENV{DEVTYPE}=="disk", ATTRS{type}=="SD", MODE="0000"' "$rules" \
+  || fail "the microSD whole-disk node is made inaccessible"
+grep -v '^#' "$rules" | grep -q 'mmcblk[0-9]' && fail "the rule must not rely on mmcblk numbering"
+grep -q 'Address=172.16.42.1/24' "$tmp/root/usr/lib/systemd/network/20-usb-gadget.network" \
+  || fail "usb0 keeps the initramfs address"
+awk '/^\[Route\]/{r=1} r && /^Metric=/{m=$0} END{exit m == "Metric=1000" ? 0 : 1}' \
+  "$tmp/root/usr/lib/systemd/network/20-usb-gadget.network" \
+  || fail "the host's gateway is only a fallback behind Wi-Fi (metric 1000)"
+grep -q '^\[Network\]' "$tmp/root/usr/lib/systemd/network/20-usb-gadget.network" \
+  && ! awk '/^\[Network\]/{n=1;next} /^\[/{n=0} n && /^Gateway=/{f=1} END{exit !f}' \
+    "$tmp/root/usr/lib/systemd/network/20-usb-gadget.network" \
+  || fail "no metric-0 gateway in [Network]"
+[[ -x $tmp/root/usr/lib/omamobile/omamobile-zram ]] || fail "the zram helper is executable"
+[[ -L $tmp/root/usr/lib/systemd/system/swap.target.wants/omamobile-zram.service ]] \
+  || fail "zram swap starts with swap.target"
+sh -n vendor/omamobile-zram || fail "the zram helper parses"
+[[ -x $tmp/root/usr/lib/omamobile/omamobile-markw-firmware ]] || fail "the firmware copy is executable"
+[[ -L $tmp/root/usr/lib/systemd/system/sysinit.target.wants/omamobile-markw-firmware.service ]] \
+  || fail "the firmware copy runs at every boot"
+grep -q '^Before=systemd-udev-trigger.service' vendor/systemd/system/omamobile-markw-firmware.service \
+  || fail "the firmware is in place before udev loads the drivers"
+bash -n vendor/omamobile-markw-firmware || fail "the firmware copy parses"
+grep -q 'mount -o ro ' vendor/omamobile-markw-firmware || fail "Android partitions are mounted read-only"
+grep -qF '/ro") != 1' vendor/omamobile-markw-firmware || fail "a partition that isn't read-only is never mounted"
+grep -qF "copy modem . image/adsp.mdt 'image/adsp.b??'" vendor/omamobile-markw-firmware \
+  || fail "the audio DSP firmware is copied from the modem partition"
+grep -qF "copy modem . image/mba.mbn image/modem.mdt 'image/modem.b??'" vendor/omamobile-markw-firmware \
+  || fail "the modem firmware is copied from the modem partition"
+
+# rmtfs on RAM copies: a fake eMMC (and a microSD it must skip), read-only.
+[[ -x $tmp/root/usr/lib/omamobile/omamobile-markw-rmtfs ]] || fail "the rmtfs copy is staged"
+[[ -f $tmp/root/usr/lib/systemd/system/omamobile-markw-rmtfs.service ]] || fail "the rmtfs unit is staged"
+[[ -e $tmp/root/usr/lib/systemd/system/multi-user.target.wants/omamobile-markw-rmtfs.service ]] \
+  && fail "the rmtfs unit is not enabled"
+grep -qx 'ExecStart=/usr/bin/rmtfs -v -o /run/omamobile-rmtfs' vendor/systemd/system/omamobile-markw-rmtfs.service \
+  || fail "rmtfs runs on the RAM directory, never with -P"
+# As in the kernel, class/block entries link into the device tree, so a
+# partition's ../device/type names its card; the microSD's decoy modemst1
+# (listed first by name: mmcblk0 is the SD here) must be skipped.
+fs=$tmp/rmtfs; mkdir -p "$fs/sys/class/block" "$fs/dev"
+disk() { mkdir -p "$fs/sys/devices/$1/device"; echo "$2" >"$fs/sys/devices/$1/device/type"; }
+part() { # DISK PART NAME CONTENT
+  mkdir -p "$fs/sys/devices/$1/$2"
+  printf 'PARTNAME=%s
+' "$3" >"$fs/sys/devices/$1/$2/uevent"; echo 1 >"$fs/sys/devices/$1/$2/ro"
+  ln -s "../../devices/$1/$2" "$fs/sys/class/block/$2"; printf '%s' "$4" >"$fs/dev/$2"
+}
+disk mmcblk0 SD; part mmcblk0 mmcblk0p1 modemst1 decoy
+disk mmcblk1 MMC; n=1
+for name in modemst1 modemst2 fsg fsc; do part mmcblk1 "mmcblk1p$n" "$name" "nv-$name"; n=$((n + 1)); done
+rt() { OMAMOBILE_RMTFS_DIR=$fs/run OMAMOBILE_SYSFS=$fs/sys OMAMOBILE_DEV=$fs/dev bash vendor/omamobile-markw-rmtfs 2>/dev/null; }
+rt || fail "the rmtfs copy runs"
+[[ $(cat "$fs/run/modem_fs1") == nv-modemst1 && $(cat "$fs/run/modem_fsc") == nv-fsc ]] || fail "each partition lands in its rmtfs file"
+[[ $(stat -c %a "$fs/run/modem_fsg") == 600 ]] || fail "the copies are root's only"
+echo 0 >"$fs/sys/devices/mmcblk1/mmcblk1p2/ro"
+rt && fail "a partition that isn't read-only is never read"
+pass "rmtfs: modem NV copied to RAM from read-only partitions only, unit not enabled"
+# USB rescue: a fake sysfs and configfs. The script must leave a working
+# link, a wall charger and the other roles alone, and rebind otherwise.
+[[ -x $tmp/root/usr/lib/omamobile/omamobile-markw-usb-rescue ]] || fail "the USB rescue is staged"
+[[ -f $tmp/root/usr/lib/systemd/system/omamobile-markw-usb-rescue.service ]] || fail "the USB rescue unit is staged"
+rule=$tmp/root/usr/lib/udev/rules.d/80-omamobile-markw-usb-role.rules
+grep -q 'SUBSYSTEM=="usb_role", ATTR{role}=="device", RUN+="/usr/bin/systemctl --no-block start omamobile-markw-usb-rescue.service"' "$rule" \
+  || fail "the role rule starts the rescue unit without blocking udev"
+find "$tmp/root" -lname '*omamobile-markw-usb-rescue.service' | grep -c . >/dev/null \
+  && fail "the rescue unit is started by udev, never enabled"
+us=$tmp/usb; mkdir -p "$us/sys/class/usb_role/sw" "$us/sys/class/net/usb0" "$us/sys/class/power_supply/usb" \
+  "$us/sys/class/udc/7000000.usb" "$us/cfs/usb_gadget/g"
+setusb() { echo "$1" >"$us/sys/class/usb_role/sw/role"; echo "$2" >"$us/sys/class/power_supply/usb/usb_type"
+           echo "$3" >"$us/sys/class/net/usb0/carrier"; echo 7000000.usb >"$us/cfs/usb_gadget/g/UDC"; }
+ur() { OMAMOBILE_SYSFS=$us/sys OMAMOBILE_CONFIGFS=$us/cfs OMAMOBILE_USB_RESCUE_WAIT=1 OMAMOBILE_USB_RESCUE_SETTLE=0 \
+       bash vendor/omamobile-markw-usb-rescue >"$us/out" 2>&1; }
+setusb device 'Unknown [SDP] DCP CDP' 1; ur || fail "a working link is left alone"
+grep -c rebinding "$us/out" >/dev/null && fail "a working link is never rebound"
+setusb device 'Unknown SDP [DCP] CDP' 0; ur || fail "a wall charger is left alone"
+grep -c rebinding "$us/out" >/dev/null && fail "a wall charger is never rebound"
+setusb none 'Unknown [SDP] DCP CDP' 0; ur || fail "role none is left alone"
+grep -c rebinding "$us/out" >/dev/null && fail "role none is never rebound"
+setusb device 'Unknown [SDP] DCP CDP' 0; ur && fail "a dead link that stays dead is reported"
+[[ $(grep -c rebinding "$us/out") == 2 ]] || fail "a dead link is rebound twice at most"
+[[ $(cat "$us/cfs/usb_gadget/g/UDC") == 7000000.usb ]] || fail "the gadget ends up bound to the controller"
+pass "USB rescue: rebinds a dead link on a computer's port only, at most twice"
+grep -qx 'w /sys/devices/system/cpu/cpufreq/schedutil/rate_limit_us - - - - 20000' \
+  "$tmp/root/usr/lib/tmpfiles.d/omamobile-schedutil.conf" \
+  || fail "schedutil changes the clock at most every 20 ms"
+grep -qx 'wifi.powersave=3' "$tmp/root/etc/NetworkManager/conf.d/zz-omamobile-wifi-powersave.conf" \
+  || fail "Wi-Fi power save is on"
+power="$tmp/root/usr/lib/systemd/logind.conf.d/10-omamobile-power-key.conf"
+grep -q '^HandlePowerKey=ignore$' "$power" \
+  || fail "a short press must not power the phone off"
+grep -q '^PACKAGE=omamobile-device-markw$' "$tmp/root/usr/share/omamobile/device.conf" \
+  || fail "the installed descriptor is markw"
+grep -q '^MONITOR_SCALE=2$' "$tmp/root/usr/share/omamobile/device.conf" \
+  || fail "the descriptor carries the panel's output scale"
+grep -q '^LOW_MOTION=1$' "$tmp/root/usr/share/omamobile/device.conf" \
+  || fail "the descriptor asks for low motion"
+grep -q '^AUTO_SUSPEND_DELAY=10$' "$tmp/root/usr/share/omamobile/device.conf" \
+  || fail "the descriptor sets the auto-suspend delay"
+[[ -x $tmp/root/usr/lib/omamobile/omamobile-autosuspend && -f $tmp/root/usr/lib/systemd/system/omamobile-autosuspend.service ]] \
+  || fail "install stages auto-suspend"
+! find "$tmp/root" -lname '*omamobile-autosuspend.service' | grep -c . >/dev/null \
+  || fail "auto-suspend ships disabled until it is proven"
+bash test/autosuspend.sh || fail "auto-suspend decisions"
+ucm=$tmp/root/usr/share/alsa/ucm2
+hifi=$ucm/Xiaomi/markw/HiFi.conf
+[[ -f $ucm/conf.d/xiaomi-markw/xiaomi-markw.conf && -f $hifi ]] || fail "install stages the UCM profile"
+grep -q 'File "/Xiaomi/markw/HiFi.conf"' "$ucm/conf.d/xiaomi-markw/xiaomi-markw.conf" \
+  || fail "the card's UCM entry names the HiFi verb"
+for f in "$ucm/conf.d/xiaomi-markw/xiaomi-markw.conf" "$hifi"; do
+  [[ $(tr -cd '{' <"$f" | wc -c) == $(tr -cd '}' <"$f" | wc -c) &&
+     $(tr -cd '[' <"$f" | wc -c) == $(tr -cd ']' <"$f" | wc -c) ]] || fail "$f has unbalanced brackets"
+done
+grep -qF "cset \"name='LINEOUT Ext' Switch\"" "$hifi" || fail "the speaker plays through the line output"
+grep -qF "cset \"name='PRI_MI2S_RX Audio Mixer MultiMedia1' 1\"" "$hifi" || fail "the verb routes MultiMedia1"
+# The AW8738 has no speaker protection: no hardware gain at 0 dB (84) or above,
+# and PipeWire's volume stays in software.
+sed -n "s/.*Digital Volume' \([0-9]*\)\".*/\1/p" "$hifi" | awk '$1 >= 84 { bad = 1 } END { exit bad }' \
+  || fail "a digital volume reaches 0 dB"
+grep -c 'PlaybackMixerElem\|PlaybackVolume' "$hifi" >/dev/null && fail "PipeWire must not own the hardware gain"
+pass "the UCM profile: speaker on the line output, gains below 0 dB"
+wp=$tmp/root/usr/share/wireplumber/wireplumber.conf.d/51-xiaomi-markw.conf
+[[ -f $wp ]] || fail "install stages the WirePlumber rule"
+grep -q 'audio.format = "S16LE"' "$wp" || fail "the WirePlumber rule pins S16LE"
+grep -q 'platform-c051000.sound-card' "$wp" || fail "the WirePlumber rule matches the markw card"
+[[ $(tr -cd '{' <"$wp" | wc -c) == $(tr -cd '}' <"$wp" | wc -c) &&
+   $(tr -cd '[' <"$wp" | wc -c) == $(tr -cd ']' <"$wp" | wc -c) ]] || fail "the WirePlumber rule has unbalanced brackets"
+pass "the WirePlumber rule: the markw card plays S16LE"
+mic=$tmp/root/usr/share/pipewire/pipewire.conf.d/51-xiaomi-markw-mic.conf
+[[ -f $mic ]] || fail "install stages the microphone filter"
+grep -q 'target.object = "alsa_input.platform-c051000.sound-card.HiFi__Mic__source"' "$mic"   || fail "the microphone filter captures the card's Mic source"
+grep -q 'label = bq_notch' "$mic" && grep -q '"Freq" = 12720.0' "$mic" || fail "the microphone filter notches the 12.7 kHz tone"
+grep -q 'audio.position = \[ FL \]' "$mic" || fail "the microphone filter takes only the left channel"
+[[ $(tr -cd '{' <"$mic" | wc -c) == $(tr -cd '}' <"$mic" | wc -c) &&
+   $(tr -cd '[' <"$mic" | wc -c) == $(tr -cd ']' <"$mic" | wc -c) ]] || fail "the microphone filter has unbalanced brackets"
+pass "the microphone filter: AMIC1, the 12.7 kHz tone notched"
+light=$tmp/root/usr/lib/systemd/system/omamobile-markw-light.service
+[[ -f $light && -L $tmp/root/usr/lib/systemd/system/multi-user.target.wants/omamobile-markw-light.service ]]   || fail "install stages and enables the light sensor bind"
+grep -q 'echo 0-0023 > /sys/bus/i2c/drivers/ltr501/bind' "$light" || fail "the light unit binds only the LTR-559"
+[[ $(grep -o '/bind' "$light" | wc -l) == $(grep -o 'ltr501/bind' "$light" | wc -l) ]] || fail "the light unit binds nothing but ltr501"
+! grep -q -E 'unbind|new_device|delete_device' "$light" || fail "the light unit only binds"
+pass "the light unit: binds the LTR-559 to ltr501 when nothing owns it"
+prox=$tmp/root/usr/lib/udev/rules.d/80-omamobile-markw-proximity.rules
+[[ -f $prox ]] || fail "install stages the proximity rule"
+grep -q 'ATTR{name}=="ltr559", ENV{PROXIMITY_NEAR_LEVEL}="50"' "$prox" || fail "the proximity rule sets the near level on the LTR-559"
+[[ $(grep -v '^#' "$prox" | grep -c .) == 1 ]] || fail "the proximity rule is one line"
+pass "the proximity rule: near at 50 on the LTR-559"
+for absent in usr/bin/omamobile-boot-success usr/bin/omamobile-bootctl \
+              usr/lib/systemd/system/omamobile-boot-success.service \
+              usr/bin/omamobile-wifi-start usr/bin/omamobile-charge-guard \
+              usr/bin/omamobile-camera-start usr/lib/firmware; do
+  [[ ! -e $tmp/root/$absent ]] || fail "install includes $absent"
+done
+pass "install stages the udev rule, the USB link, and the mirrorlist, and nothing that starts hardware or ships firmware"

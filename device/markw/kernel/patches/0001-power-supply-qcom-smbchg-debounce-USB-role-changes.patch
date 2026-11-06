@@ -1,0 +1,74 @@
+From: Omarchy Mobile <omamobile@localhost>
+Subject: [PATCH] power: supply: qcom-smbchg: debounce USB role changes
+
+Every USB ID and USB source-detect interrupt schedules the detect work
+20 ms out, and the work switches the DWC3 role at once. While a cable
+goes in or out, the ID pin and VBUS bounce, so the controller is
+switched between host and device mode faster than one switch can tear
+down.
+
+On a Redmi 4 Prime (msm8953-xiaomi-markw) this hung the SoC: the journal
+of the frozen boot shows the xHCI host added, removed, the gadget bound
+and the host added again within 1.6 s, then nothing. There was no oops;
+the screen froze until a held power key reset the phone.
+
+Restart a 500 ms timer on each interrupt instead, so the role follows
+the cable only once it has settled. The delay still covers the 15 ms the
+fuel gauge's ADC needs for the ID resistance. Log each role change, so
+that the next hang shows which switch it was in.
+
+---
+ drivers/power/supply/qcom-smbchg.c | 19 +++++++++++++++----
+ 1 file changed, 15 insertions(+), 4 deletions(-)
+
+--- a/drivers/power/supply/qcom-smbchg.c
++++ b/drivers/power/supply/qcom-smbchg.c
+@@ -30,6 +30,13 @@
+
+ #include "qcom-smbchg.h"
+
++/*
++ * A plug or unplug makes the ID pin and VBUS bounce. Act on them only once
++ * they have been stable this long, so that DWC3 is not switched between
++ * host and device mode while a previous switch is still tearing down.
++ */
++#define SMBCHG_DETECT_DEBOUNCE_MS	500
++
+ /**
+  * find_closest_smaller - locate the closest smaller element in a sorted array
+  * @x: The reference value.
+@@ -957,6 +964,9 @@
+ 	}
+
+ 	if (usb_role != chip->last_role) {
++		dev_info(chip->dev, "USB role %s -> %s\n",
++			 usb_role_string(chip->last_role),
++			 usb_role_string(usb_role));
+ 		usb_role_switch_set_role(chip->role_sw, usb_role);
+ 		chip->last_role = usb_role;
+ 	}
+@@ -1041,7 +1051,8 @@
+ {
+ 	struct smbchg_chip *chip = data;
+
+-	schedule_delayed_work(&chip->detect_work, msecs_to_jiffies(20));
++	mod_delayed_work(system_percpu_wq, &chip->detect_work,
++			 msecs_to_jiffies(SMBCHG_DETECT_DEBOUNCE_MS));
+ 	power_supply_changed(chip->usb_psy);
+
+ 	return IRQ_HANDLED;
+@@ -1054,11 +1065,11 @@
+ 	/*
+ 	 * ADC conversion for USB ID resistance in the fuel gauge can take
+ 	 * up to 15ms to finish after the USB ID change interrupt is fired.
+-	 * Wait for it to finish before detecting OTG presence. Add an extra
+-	 * 5ms for good measure.
++	 * The debounce delay below covers it.
+ 	 */
+
+-	schedule_delayed_work(&chip->detect_work, msecs_to_jiffies(20));
++	mod_delayed_work(system_percpu_wq, &chip->detect_work,
++			 msecs_to_jiffies(SMBCHG_DETECT_DEBOUNCE_MS));
+
+ 	return IRQ_HANDLED;
+ }

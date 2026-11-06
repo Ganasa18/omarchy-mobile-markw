@@ -41,20 +41,80 @@ Item {
 
   readonly property bool wide: width > height * 1.6
 
+  // With no card behind it (Home.qml's `bare`), a raised outline keeps the
+  // text readable on a light wallpaper; a text style, not a shadow effect.
+  readonly property bool bare: config.card !== true
+  readonly property color shade: Qt.rgba(0, 0, 0, 0.55)
+  // "align": "left" puts it at the start of its cell (beside a weather widget).
+  readonly property int alignment: config.align === "left" ? Text.AlignLeft : Text.AlignHCenter
+
+  readonly property string textFont: home && home.textFont ? home.textFont : Style.font.family
+
+  // On a card ("card": true): the day as a small label, the time, the date,
+  // all from the start edge.
+  Text {
+    visible: !widget.bare && widget.height >= 110
+    x: 18; y: 18
+    width: widget.width - 36
+    textFormat: Text.PlainText
+    text: Qt.formatDateTime(clock.date, "dddd").toUpperCase()
+    color: widget.home ? widget.home.dimForeground : "white"
+    font.family: widget.textFont
+    font.pixelSize: 13
+    font.weight: Font.DemiBold
+    font.letterSpacing: 0.6
+    elide: Text.ElideRight
+  }
   Column {
-    anchors.centerIn: parent
+    visible: !widget.bare
+    anchors.bottom: parent.bottom
+    anchors.bottomMargin: 18
+    x: 18
+    width: widget.width - 36
+    spacing: 6
+
+    Text {
+      width: parent.width
+      textFormat: Text.PlainText
+      text: Qt.formatDateTime(clock.date, widget.timeFormat)
+      color: widget.home ? widget.home.foreground : "white"
+      font.family: widget.textFont
+      font.pixelSize: Math.min(52, widget.height * 0.34)
+      font.weight: Font.Light
+      font.letterSpacing: -2
+      fontSizeMode: Text.HorizontalFit
+      minimumPixelSize: Style.font.title
+    }
+    Text {
+      width: parent.width
+      visible: widget.height >= 80
+      textFormat: Text.PlainText
+      text: Qt.formatDateTime(clock.date, widget.config.dateFormat && widget.config.dateFormat !== "dddd d MMMM" ? widget.config.dateFormat : "d MMMM")
+      color: widget.home ? widget.home.dimForeground : "white"
+      font.family: widget.textFont
+      font.pixelSize: 14
+      elide: Text.ElideRight
+    }
+  }
+
+  Column {
+    visible: widget.bare
+    anchors.verticalCenter: parent.verticalCenter
+    x: Style.spacing.xxl
     width: widget.width - Style.spacing.xxl * 2
     spacing: Style.spacing.xs
 
     Text {
       width: parent.width
-      horizontalAlignment: Text.AlignHCenter
+      horizontalAlignment: widget.alignment
       textFormat: Text.PlainText
       text: Qt.formatDateTime(clock.date, widget.timeFormat)
       color: widget.home ? widget.home.foreground : "white"
       font.family: Style.font.family
-      font.pixelSize: Math.max(Style.font.display, Math.min(widget.height * 0.46, widget.width * 0.26))
+      font.pixelSize: Math.max(Style.font.display, Math.min(widget.height * 0.46, widget.width * (config.align === "left" ? 0.42 : 0.26)))
       font.weight: Font.Light
+      style: widget.bare ? Text.Raised : Text.Normal
+      styleColor: widget.shade
       fontSizeMode: Text.HorizontalFit
       minimumPixelSize: Style.font.title
     }
@@ -62,12 +122,14 @@ Item {
     Text {
       width: parent.width
       visible: widget.height >= 80
-      horizontalAlignment: Text.AlignHCenter
+      horizontalAlignment: widget.alignment
       textFormat: Text.PlainText
       text: Qt.formatDateTime(clock.date, widget.config.dateFormat || "dddd d MMMM")
       color: widget.home ? widget.home.dimForeground : "white"
       font.family: Style.font.family
       font.pixelSize: Style.font.heading
+      style: widget.bare ? Text.Raised : Text.Normal
+      styleColor: widget.shade
       elide: Text.ElideRight
     }
   }

@@ -1,0 +1,29 @@
+From: Omarchy Mobile <omamobile@localhost>
+Subject: [PATCH] arm64: dts: qcom: msm8953: add the APSS watchdog, disabled
+
+MSM8953 has the APSS watchdog at the same address as its siblings
+MSM8937 and MSM8917, whose device trees already describe it with the
+QCS404 compatible. Add the node, disabled: whether this SoC's firmware
+lets Linux run it is to be checked on a device, one boot at a time,
+before any board enables it.
+
+---
+ arch/arm64/boot/dts/qcom/msm8953.dtsi | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+--- a/arch/arm64/boot/dts/qcom/msm8953.dtsi
++++ b/arch/arm64/boot/dts/qcom/msm8953.dtsi
+@@ -2899,6 +2899,13 @@
+ 			#interconnect-cells = <1>;
+ 		};
+ 
++		watchdog@b017000 {
++			compatible = "qcom,apss-wdt-qcs404", "qcom,kpss-wdt";
++			reg = <0x0b017000 0x1000>;
++			clocks = <&sleep_clk>;
++			status = "disabled";
++		};
++
+ 		cpr: power-controller@b018000 {
+ 			compatible = "qcom,msm8953-cpr4pd";
+ 

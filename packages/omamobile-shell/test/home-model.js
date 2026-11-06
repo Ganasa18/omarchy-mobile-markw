@@ -107,7 +107,11 @@ test("normalize repairs what it can", () => {
 
 test("widget config keeps known keys of the right type", () => {
   const c = M.mergeConfig(M.REGISTRY.weather.config, { enabled: "yes", place: "Oslo", latitude: 59.9, extra: 1 })
-  assert.deepStrictEqual(c, { enabled: false, useLocation: true, place: "Oslo", latitude: 59.9, longitude: null, units: "celsius" })
+  assert.deepStrictEqual(c, { enabled: false, useLocation: true, place: "Oslo", latitude: 59.9, longitude: null, units: "celsius", card: false })
+  // The clock's look: on a card unless the user put it on the wallpaper.
+  assert.strictEqual(M.mergeConfig(M.REGISTRY.clock.config, {}).card, true)
+  assert.deepStrictEqual(M.mergeConfig(M.REGISTRY.clock.config, { card: false, align: "left" }),
+    { timeFormat: "", dateFormat: "dddd d MMMM", card: false, align: "left" })
 })
 
 test("missing apps stay on the layout and are reported", () => {
@@ -182,7 +186,7 @@ test("remove and config", () => {
   let l = layoutOf([widget("w1", "weather", 0, 0, 4, 1)])
   l = M.setConfig(l, "w1", { enabled: true, place: "Paris", latitude: 48.85, bogus: 1 })
   assert.deepStrictEqual(M.findItem(l, "w1").item.config,
-    { enabled: true, useLocation: true, place: "Paris", latitude: 48.85, longitude: null, units: "celsius" })
+    { enabled: true, useLocation: true, place: "Paris", latitude: 48.85, longitude: null, units: "celsius", card: false })
   l = M.removeItem(l, "w1")
   assert.deepStrictEqual(l.pages[0].items, [])
 })
@@ -261,6 +265,57 @@ test("month grid", () => {
 test("command output", () => {
   assert.strictEqual(M.commandText("one\ntwo\nthree\n\n", 2), "one\ntwo")
   assert.strictEqual(M.commandText("", 3), "")
+})
+
+test("this phone: the system read, in display units", () => {
+  const i = M.systemInfo([
+    'osname="Omarchy"', 'osversion="4.0.6"', "osid=omarchy", "oslike=arch", "machine=aarch64",
+    "kernel=7.1.3-msm8953-oma2", 'device="Xiaomi Redmi 4 Prime"', "soc=msm8953",
+    "codename=markw", "memkb=2871404", "uptime=15720.41",
+    "temp=290", "voltage_now=4244359", "health=Good", "charge_full_design=4000000", "osname=ignored"
+  ].join("\n"))
+  assert.deepStrictEqual(i, { os: "Omarchy 4.0.6", base: "Arch Linux ARM", machine: "aarch64",
+    kernel: "7.1.3-msm8953-oma2", device: "Xiaomi Redmi 4 Prime",
+    soc: "MSM8953", boot: "", codename: "markw", temperature: 29, voltage: 4.24, health: "Good", designMah: 4000,
+    memoryGb: 3, uptime: 15720 })
+  // The descriptor's own names for the chip and the boot path win.
+  const named = M.systemInfo('soc=msm8953\nsocname="Snapdragon 625"\nboot="microSD · lk2nd"')
+  assert.strictEqual(named.soc, "Snapdragon 625")
+  assert.strictEqual(named.boot, "microSD · lk2nd")
+  // The base only when it says more than the name.
+  assert.strictEqual(M.systemInfo("osname=Omarchy\noslike=arch\nmachine=x86_64").base, "Arch Linux")
+  assert.strictEqual(M.systemInfo("osname=Arch Linux\nosid=arch\nmachine=x86_64").base, "")
+  assert.strictEqual(M.systemInfo('osname="Arch Linux ARM"\nosid=archarm\noslike=arch\nmachine=aarch64').base, "")
+  // A phone without a battery reading, or an empty read, still draws.
+  const none = M.systemInfo("temp=\nvoltage_now=\nhealth=Unknown\n")
+  assert.strictEqual(none.temperature, null)
+  assert.strictEqual(none.voltage, null)
+  assert.strictEqual(none.health, "")
+  assert.strictEqual(M.systemInfo("").os, "")
+  assert.strictEqual(M.uptimeText(15720), "4 h 22 min")
+  assert.strictEqual(M.uptimeText(3 * 86400 + 7200), "3 d 2 h")
+  assert.strictEqual(M.uptimeText(null), "")
+})
+
+test("the default layout puts this phone under the clock", () => {
+  const l = M.defaultLayout([], grid)
+  const s = l.pages[0].items.find((i) => i.type === "system")
+  assert.ok(s && s.x === 0 && s.y === M.REGISTRY.clock.size[1])
+  const short = M.defaultLayout([], { columns: 4, rows: 4 })
+  assert.ok(!short.pages[0].items.some((i) => i.type === "system"))
+})
+
+test("the dock: one row of installed apps, kept across a save", () => {
+  const l = M.defaultLayout(["foot", "Alacritty", "chromium", "org.gnome.Nautilus", "omarchy-menu", "btop"], grid)
+  assert.deepStrictEqual(l.dock, ["foot", "chromium", "org.gnome.Nautilus", "omarchy-menu"])
+  assert.deepStrictEqual(M.parse(M.serialize(l)).dock, l.dock)
+  // Ids cleaned, each once, no more than the columns; none is fine.
+  const raw = { pages: [{ items: [] }], grid: { columns: 3, rows: 6 }, dock: ["a.desktop", "a", 3, "", "b", "c", "d"] }
+  assert.deepStrictEqual(M.parse(JSON.stringify(raw)).dock, ["a", "b", "c"])
+  assert.deepStrictEqual(M.parse('{"pages": [{"items": []}]}').dock, [])
+  assert.ok(!("dock" in JSON.parse(M.serialize(M.emptyLayout(grid)))))
+  assert.deepStrictEqual(M.setDock(l, ["x", "x", "y"]).dock, ["x", "y"])
+  assert.deepStrictEqual(l.dock.length, 4)
 })
 
 test("the clock follows the system's 12- or 24-hour choice", () => {
