@@ -54,11 +54,11 @@ Verified on one phone, newest details in [device/markw/NOTES.md](device/markw/NO
 | Speaker and microphone | works |
 | Light and proximity sensor | works |
 | Camera | reported working by the owner, not documented yet |
-| Charging | partial: stops at about 90 % (a battery-overvoltage latch); a kernel fix is under test |
+| Charging | works past 90 % since kernel oma6 (the overvoltage latch is fixed); from a laptop USB port it creeps up in short cycles, a 150 mA termination fix is next |
 | Suspend | testing: short sleeps wake reliably, a long unattended sleep once didn't; auto-suspend stays off |
 | Mobile data | in progress: the modem boots on Linux, a SIM test is next (SMS and calls are out of scope for now) |
 | USB OTG host | testing: flashing an ESP32 works; getting the laptop link back afterwards is being fixed |
-| Bluetooth | not tested yet |
+| Bluetooth | the controller comes up and scans; pairing not tested yet |
 | Persistent install | not yet |
 
 ## Branches
