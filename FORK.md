@@ -5,6 +5,12 @@ This repository is a **fork of [Omarchy Mobile](https://github.com/derekross/oma
 
 All the credit for Omarchy Mobile itself belongs to the original project: the shell, the packages, the build and install tooling, the safety model, and the Pixel 7 Pro bring-up this port builds on. Read the original [README](README.md), [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/DEVICES.md](docs/DEVICES.md) for the project as a whole. This fork adds a device; it does not replace the upstream project.
 
+<p align="center">
+  <img src="docs/screenshots/markw/home.png" width="30%" alt="The home screen on the Redmi 4 Prime">
+  <img src="docs/screenshots/markw/apps.png" width="30%" alt="The app list on the Redmi 4 Prime">
+  <img src="docs/screenshots/markw/quick-settings.png" width="30%" alt="Quick settings on the Redmi 4 Prime">
+</p>
+
 ## What Omarchy Mobile is
 
 Omarchy Mobile runs native [Omarchy](https://omarchy.org) on phones: Arch Linux ARM, Hyprland and Omarchy's own packages, on a mainline Linux kernel, with no Android underneath. The upstream reference device is the Google Pixel 7 Pro (`cheetah`).
