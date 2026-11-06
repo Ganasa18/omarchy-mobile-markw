@@ -43,6 +43,11 @@ ln -sf ../omamobile-markw-light.service   "$destination/usr/lib/systemd/system/m
 install -Dm755 vendor/omamobile-markw-rmtfs "$destination/usr/lib/omamobile/omamobile-markw-rmtfs"
 install -Dm644 vendor/systemd/system/omamobile-markw-rmtfs.service \
   "$destination/usr/lib/systemd/system/omamobile-markw-rmtfs.service"
+# Rebind the USB gadget when a computer's port gives no link after a role
+# change (device/markw/NOTES.md, 2026-11-06): started by udev, not enabled.
+install -Dm755 vendor/omamobile-markw-usb-rescue "$destination/usr/lib/omamobile/omamobile-markw-usb-rescue"
+install -Dm644 vendor/systemd/system/omamobile-markw-usb-rescue.service   "$destination/usr/lib/systemd/system/omamobile-markw-usb-rescue.service"
+install -Dm644 vendor/udev/rules.d/80-omamobile-markw-usb-role.rules   "$destination/usr/lib/udev/rules.d/80-omamobile-markw-usb-role.rules"
 # Suspend when the screen has been off a while: installed, not enabled.
 install -Dm755 vendor/omamobile-autosuspend "$destination/usr/lib/omamobile/omamobile-autosuspend"
 install -Dm644 vendor/systemd/system/omamobile-autosuspend.service \

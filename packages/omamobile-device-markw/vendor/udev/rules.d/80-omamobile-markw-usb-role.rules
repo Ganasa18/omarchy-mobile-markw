@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: MIT
+# qcom-smbchg sends a change uevent at each USB role switch; at "device"
+# the gadget may need a rebind (omamobile-markw-usb-rescue.service). udev
+# must not run long jobs itself, so it only starts the unit.
+ACTION=="change", SUBSYSTEM=="usb_role", ATTR{role}=="device", RUN+="/usr/bin/systemctl --no-block start omamobile-markw-usb-rescue.service"

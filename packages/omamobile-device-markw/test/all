@@ -122,6 +122,31 @@ rt || fail "the rmtfs copy runs"
 echo 0 >"$fs/sys/devices/mmcblk1/mmcblk1p2/ro"
 rt && fail "a partition that isn't read-only is never read"
 pass "rmtfs: modem NV copied to RAM from read-only partitions only, unit not enabled"
+# USB rescue: a fake sysfs and configfs. The script must leave a working
+# link, a wall charger and the other roles alone, and rebind otherwise.
+[[ -x $tmp/root/usr/lib/omamobile/omamobile-markw-usb-rescue ]] || fail "the USB rescue is staged"
+[[ -f $tmp/root/usr/lib/systemd/system/omamobile-markw-usb-rescue.service ]] || fail "the USB rescue unit is staged"
+rule=$tmp/root/usr/lib/udev/rules.d/80-omamobile-markw-usb-role.rules
+grep -q 'SUBSYSTEM=="usb_role", ATTR{role}=="device", RUN+="/usr/bin/systemctl --no-block start omamobile-markw-usb-rescue.service"' "$rule" \
+  || fail "the role rule starts the rescue unit without blocking udev"
+find "$tmp/root" -lname '*omamobile-markw-usb-rescue.service' | grep -c . >/dev/null \
+  && fail "the rescue unit is started by udev, never enabled"
+us=$tmp/usb; mkdir -p "$us/sys/class/usb_role/sw" "$us/sys/class/net/usb0" "$us/sys/class/power_supply/usb" \
+  "$us/sys/class/udc/7000000.usb" "$us/cfs/usb_gadget/g"
+setusb() { echo "$1" >"$us/sys/class/usb_role/sw/role"; echo "$2" >"$us/sys/class/power_supply/usb/usb_type"
+           echo "$3" >"$us/sys/class/net/usb0/carrier"; echo 7000000.usb >"$us/cfs/usb_gadget/g/UDC"; }
+ur() { OMAMOBILE_SYSFS=$us/sys OMAMOBILE_CONFIGFS=$us/cfs OMAMOBILE_USB_RESCUE_WAIT=1 OMAMOBILE_USB_RESCUE_SETTLE=0 \
+       bash vendor/omamobile-markw-usb-rescue >"$us/out" 2>&1; }
+setusb device 'Unknown [SDP] DCP CDP' 1; ur || fail "a working link is left alone"
+grep -c rebinding "$us/out" >/dev/null && fail "a working link is never rebound"
+setusb device 'Unknown SDP [DCP] CDP' 0; ur || fail "a wall charger is left alone"
+grep -c rebinding "$us/out" >/dev/null && fail "a wall charger is never rebound"
+setusb none 'Unknown [SDP] DCP CDP' 0; ur || fail "role none is left alone"
+grep -c rebinding "$us/out" >/dev/null && fail "role none is never rebound"
+setusb device 'Unknown [SDP] DCP CDP' 0; ur && fail "a dead link that stays dead is reported"
+[[ $(grep -c rebinding "$us/out") == 2 ]] || fail "a dead link is rebound twice at most"
+[[ $(cat "$us/cfs/usb_gadget/g/UDC") == 7000000.usb ]] || fail "the gadget ends up bound to the controller"
+pass "USB rescue: rebinds a dead link on a computer's port only, at most twice"
 grep -qx 'w /sys/devices/system/cpu/cpufreq/schedutil/rate_limit_us - - - - 20000' \
   "$tmp/root/usr/lib/tmpfiles.d/omamobile-schedutil.conf" \
   || fail "schedutil changes the clock at most every 20 ms"
