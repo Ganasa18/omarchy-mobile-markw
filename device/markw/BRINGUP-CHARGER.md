@@ -89,13 +89,10 @@ observation: nothing writes to the charger.
 
 From the oma3 source (`drivers/power/supply/qcom-smbchg.c`):
 
-- The driver never writes the charger's recharge and termination
-  configuration: `CHGR_CFG1` 0x10fb (recharge and termination source,
-  analog or fuel gauge), `CHGR_CFG2` 0x10fc (auto-recharge, current
-  termination, charge-enable source) and `CHGR_CFG` 0x10ff (recharge
-  threshold, 100 or 200 mV below float) keep what the bootloader or the
-  PMIC's reset left. Its recharge handler says "Auto-recharge is enabled,
-  nothing to do here", which nobody checked on markw.
+- (Corrected 2026-11-06: `smbchg_init()` does write them.) `CHGR_CFG1`
+  0x10fb selects termination and recharge on the fuel gauge, `CHGR_CFG2`
+  0x10fc enables auto-recharge and current termination, and `CHGR_CFG`
+  0x10ff sets the recharge threshold to 100 mV below float.
 - `batt-ov` has no handler, and `chg-error` only logs and notifies. So
   nothing in Linux restarts charging after a batt-ov.
 - With a 200 mV threshold, recharge would start at about 4.18 V. On the
@@ -120,3 +117,31 @@ until the charge path restarts. Only then a fix: likely a driver change
 that sets recharge and termination explicitly (as the battery node
 asks) and restarts the charge path after a batt-ov once the voltage
 has dropped, with a patch in `device/markw/kernel/patches`.
+
+### Results (2026-11-06)
+
+- **C1** (`7.1.3-msm8953-oma3`, charging in taper): `CHGR_CFG1` 0x47
+  (termination and recharge on the fuel gauge), `CHGR_CFG2` 0x51
+  (inhibit on, auto-recharge on, current termination on), `CHGR_CFG`
+  0x08 (100 mV), `TCC_CFG` 0x05 (300 mA). The battery took 147 mA at
+  4.368 V, below the termination current, and the charger kept going:
+  `pmi8994_fg` never sets the fuel gauge up for termination, so with
+  those sources it never fires. Kernel patch 0006 (`-oma4`) moves both
+  to the charger's analog sensing.
+- **oma4 boot** (`probe-m11-oma4`, owner's go): `CHGR_CFG1` 0x41 as
+  meant. Still a chg-error with batt-ov at 65 s of uptime, the battery
+  at 4.19 V afterwards.
+- **C3** (owner's go), stuck as in C1: `online` 0 cleared chg-error and
+  batt-ov at once (the battery took over, about 60 mA at 4.10 V). `online`
+  1: charging resumed and, new with oma4, terminated: `Full`, the tcc bit
+  set. It then cycled every few seconds between `Full` and recharging,
+  the battery between 4.28 and 4.37 V: the 100 mV recharge threshold is
+  4.28 V, where the battery relaxes to. 1 s after a termination at
+  354 s, batt-ov latched again and charging stopped at 4.19 V.
+- So batt-ov trips near the top of a charge (4.35-4.37 V by the fuel
+  gauge, and right after termination), below the 4.38 V float the
+  battery node asks for, and nothing clears it but a charge path
+  restart. Next, one change per boot, owner's go each: C4, float 4.35 V
+  (`voltage-max-design-microvolt`), to see whether batt-ov stops; then a
+  200 mV recharge threshold against the cycling; then, if batt-ov still
+  comes, a driver handler that restarts the charge path after it.
