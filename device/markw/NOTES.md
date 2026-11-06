@@ -3,6 +3,26 @@
 
 Findings from real hardware, newest first. Plan: [ENGINEERING-PLAN.md](ENGINEERING-PLAN.md); first-light runbook: [BRINGUP-M1.md](BRINGUP-M1.md).
 
+## 2026-11-06: Omarchy held at 4.0.6, charging to the top (7.1.3-msm8953-oma6)
+
+- **`omarchy update` would have taken Omarchy to 4.5.0-3, which our
+  patch series doesn't apply to.** `omamobile-update check` showed no
+  blockers and 84 updates. The series tested against the real aarch64
+  4.5.0-3 package (`test/patches.py` with `OMARCHY_PKG`, in an alpine
+  container for `bsdtar`): 12 of 16 patches fail with `--fuzz=0`, among
+  them 0003 (the lock's number pad), 0011 (PIN or password) and 0012 (the
+  update wrapper); only 0007, 0009, 0010 and 0013 apply. The hook applies
+  all or nothing, so the update would have left a touch-only phone with
+  Omarchy's own lock. Upstream holds Omarchy at 4.0.6 for the same reason
+  (#434) by pinning it in its signed `[omamobile]`. This fork has no
+  such repository, so `rootfs/pacman.conf` and the phone's
+  `/etc/pacman.conf` (owner's go) carry `IgnorePkg = omarchy
+  omarchy-settings` until the series is rebased. The update check still
+  lists the two; pacman skips them.
+- **Charging:** oma6 goes past the old stop at about 90 %; the
+  termination current fix (patch 0009, 150 mA) is in
+  [BRINGUP-CHARGER.md](BRINGUP-CHARGER.md).
+
 ## 2026-11-06: the laptop link died without OTG (7.1.3-msm8953-oma3)
 
 - **"USB device not recognized" again, with no OTG in the boot.** The
