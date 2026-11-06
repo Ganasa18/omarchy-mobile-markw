@@ -1,5 +1,7 @@
 # Omarchy Mobile
 
+> **This is a fork** of [derekross/omarchy-mobile](https://github.com/derekross/omarchy-mobile) that adds the Xiaomi Redmi 4 Prime (`markw`). See [FORK.md](FORK.md) for what it adds and its status; the rest of this README is the original project's.
+
 Native Omarchy on mobile devices: Arch Linux ARM, Hyprland and Omarchy's own packages running directly on the device with a mainline kernel, with Android apps in Waydroid as a later goal. The reference device is the Pixel 7 Pro (cheetah, gs201); community ports cover more Pixels and the first non-Pixel phones ([docs/DEVICES.md](docs/DEVICES.md)).
 
 <p align="center">
