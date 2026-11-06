@@ -145,3 +145,17 @@ has dropped, with a patch in `device/markw/kernel/patches`.
   (`voltage-max-design-microvolt`), to see whether batt-ov stops; then a
   200 mV recharge threshold against the cycling; then, if batt-ov still
   comes, a driver handler that restarts the charge path after it.
+- **C4** (`7.1.3-msm8953-oma5`, float 4.35 V, `FV_CFG` 0x2b; owner's
+  go): batt-ov latched at 92 s of uptime, in taper at about 4.28-4.30 V,
+  and charging stopped at 4.19 V as before. So batt-ov follows the
+  float voltage; a lower float doesn't help, and oma6 floats at 4.38 V
+  again.
+- **The cause, from Qualcomm's downstream `qpnp-smbcharger.c`**
+  (LineageOS `android_kernel_xiaomi_msm8953`, lineage-18.1, GPL):
+  `CHGR_CFG2` bit 4 is `CHG_BAT_OV_ECC`, the "battery OV disables
+  charging" feature. Downstream sets `SMBCHG_BATT_OV_WA` for PMI8950 (and
+  PMI8937, PMI8940, PMI8994) and, in `batt_ov_wa_check()` at init, clears
+  that bit. If `BAT_IF RT_STS` shows an overvoltage, it then disables
+  charging, waits 200 ms and enables it again. Here `CHGR_CFG2` reads
+  0x51: the bit is set, and the mainline driver never touches it. Kernel
+  patch 0008 (`-oma6`) clears it and restarts charging the same way.
