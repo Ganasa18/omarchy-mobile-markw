@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: MIT
+# The notification LED shows charging: red while charging, green when
+# full (omamobile-markw-charge-led). The battery's LED triggers exist only
+# once the fuel gauge has registered, which may come after the AW2013, so
+# the LEDs' add and the battery's change events both run it.
+ACTION=="add", SUBSYSTEM=="leds", KERNEL=="red:indicator|green:indicator", RUN+="/usr/lib/omamobile/omamobile-markw-charge-led"
+ACTION=="add|change", SUBSYSTEM=="power_supply", KERNEL=="qcom-battery", RUN+="/usr/lib/omamobile/omamobile-markw-charge-led"

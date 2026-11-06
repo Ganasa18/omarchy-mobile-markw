@@ -147,6 +147,25 @@ setusb device 'Unknown [SDP] DCP CDP' 0; ur && fail "a dead link that stays dead
 [[ $(grep -c rebinding "$us/out") == 2 ]] || fail "a dead link is rebound twice at most"
 [[ $(cat "$us/cfs/usb_gadget/g/UDC") == 7000000.usb ]] || fail "the gadget ends up bound to the controller"
 pass "USB rescue: rebinds a dead link on a computer's port only, at most twice"
+# Charge LED: a fake sysfs. Triggers go only to LEDs with none set, and
+# only once the fuel gauge offers them.
+[[ -x $tmp/root/usr/lib/omamobile/omamobile-markw-charge-led ]] || fail "the charge LED script is staged"
+grep -c 'KERNEL=="qcom-battery"' "$tmp/root/usr/lib/udev/rules.d/81-omamobile-markw-charge-led.rules" >/dev/null \
+  || fail "the battery's events run the charge LED script"
+cl=$tmp/cled; mkdir -p "$cl/class/leds/red:indicator" "$cl/class/leds/green:indicator"
+setled() { echo "$2" >"$cl/class/leds/$1/trigger"; }
+led() { sed -E 's/.*\[([^]]*)\].*/\1/' "$cl/class/leds/$1/trigger"; }
+crun() { OMAMOBILE_SYSFS=$cl bash vendor/omamobile-markw-charge-led || fail "the charge LED script exits 0"; }
+# A fake trigger file shows the written value as the selection.
+setled red:indicator '[none] heartbeat pattern'; setled green:indicator '[none] heartbeat pattern'
+crun; [[ $(led red:indicator) == none ]] || fail "no trigger before the fuel gauge offers one"
+setled red:indicator '[none] pattern qcom-battery-charging qcom-battery-full'
+setled green:indicator '[none] pattern qcom-battery-charging qcom-battery-full'
+crun; [[ $(cat "$cl/class/leds/red:indicator/trigger") == qcom-battery-charging ]] || fail "red shows charging"
+[[ $(cat "$cl/class/leds/green:indicator/trigger") == qcom-battery-full ]] || fail "green shows full"
+setled red:indicator 'none [pattern] qcom-battery-charging qcom-battery-full'
+crun; [[ $(led red:indicator) == pattern ]] || fail "a feedbackd blink is never cut off"
+pass "charge LED: red charging, green full, only on LEDs with no trigger"
 grep -qx 'w /sys/devices/system/cpu/cpufreq/schedutil/rate_limit_us - - - - 20000' \
   "$tmp/root/usr/lib/tmpfiles.d/omamobile-schedutil.conf" \
   || fail "schedutil changes the clock at most every 20 ms"

@@ -3,6 +3,25 @@
 
 Findings from real hardware, newest first. Plan: [ENGINEERING-PLAN.md](ENGINEERING-PLAN.md); first-light runbook: [BRINGUP-M1.md](BRINGUP-M1.md).
 
+## 2026-11-07: notification LED and haptics (7.1.3-msm8953-oma6)
+
+- **The LED is an AW2013 (`1-0045`, `leds_aw2013`) with three channels
+  at 5 mA each.** Red and green light (owner, by eye). Blue never lit,
+  not even held on for 15 s, while the chip's registers showed it set
+  exactly as green is (`0x30` channel enable 0x04, `0x36` PWM 0xff,
+  `0x33` 5 mA): the driver drives it, so either this unit's LED has no
+  blue die or 5 mA is too little for it. Not pursued.
+- **Charging LED** (device-markw 0.1.18): red follows the fuel gauge's
+  `qcom-battery-charging` trigger, green `qcom-battery-full`, set by a
+  udev rule on the LEDs' add and the battery's events, and only where
+  the LED has no trigger (feedbackd's `pattern` blink is left alone).
+  Red lit while charging (owner, by eye).
+- **Haptics:** the PMI8950 haptics (`qcom_spmi_haptics`, input
+  `spmi_haptics`) played a 150 ms and two 300 ms FF_RUMBLE effects
+  (`tools/ff-rumble --name spmi_haptics`), felt by the owner.
+  feedbackd 0.8.9's own `72-feedbackd.rules` already tags it `vibra`,
+  so nothing of ours is needed for that.
+
 ## 2026-11-06: Omarchy held at 4.0.6, charging to the top (7.1.3-msm8953-oma6)
 
 - **`omarchy update` would have taken Omarchy to 4.5.0-3, which our
