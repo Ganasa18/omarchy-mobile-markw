@@ -1,0 +1,26 @@
+From: Omarchy Mobile <omamobile@localhost>
+Subject: [PATCH] arm64: dts: qcom: msm8953-xiaomi-markw: float the battery at 4.35 V
+
+Not for upstream as it stands: a bring-up test (BRINGUP-CHARGER.md C4).
+
+With the 4.38 V float, the PMI8950 charger latches a battery
+overvoltage (batt-ov) at the top of each charge, at 4.35-4.37 V by the
+fuel gauge and right after termination, and charging stays stopped
+until the charge path restarts. Float at 4.35 V to see whether batt-ov
+tracks the float or sits at a fixed level.
+
+---
+ arch/arm64/boot/dts/qcom/msm8953-xiaomi-markw.dts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+--- a/arch/arm64/boot/dts/qcom/msm8953-xiaomi-markw.dts
++++ b/arch/arm64/boot/dts/qcom/msm8953-xiaomi-markw.dts
+@@ -140,7 +140,7 @@
+ 	charge-full-design-microamp-hours = <4000000>;
+ 	constant-charge-current-max-microamp = <1000000>;
+ 	voltage-min-design-microvolt = <3400000>;
+-	voltage-max-design-microvolt = <4380000>;
++	voltage-max-design-microvolt = <4350000>;
+ };
+ 
+ &camss {
