@@ -3,6 +3,29 @@
 
 Findings from real hardware, newest first. Plan: [ENGINEERING-PLAN.md](ENGINEERING-PLAN.md); first-light runbook: [BRINGUP-M1.md](BRINGUP-M1.md).
 
+## 2026-11-06: the laptop link died without OTG (7.1.3-msm8953-oma3)
+
+- **"USB device not recognized" again, with no OTG in the boot.** The
+  boot ran 73 h (`probe-m10-modem`). The kernel log shows two separate
+  things:
+  - **A charger error drops the link.** Each `Charger error` (the batt-ov
+    latch, BRINGUP-CHARGER.md) was followed about 0.5 s later by `USB
+    role device -> none` and `usb0: Lost carrier`, while the cable stayed
+    in. The link came back only when the role returned to device: the
+    first time 8.5 h later.
+  - **Then the gadget wedged for good.** On Nov 6 `usb0` lost and gained
+    carrier every 1-2 s for a while (the computer resetting the
+    device, or a loose plug), then lost it with the role still
+    `device`. Every later replug switched `none -> device`, and `usb0`
+    never gained carrier again, until the owner rebooted.
+- **Why a replug can't fix it:** DWC3 runs its gadget at `none` too (its
+  role-switch default mode is peripheral), so `none -> device` asks for
+  the mode it is already in, which `__dwc3_set_mode` skips. Nothing
+  restarts the device side, after host mode (Nov 3) or after this.
+  omamobile-device-markw 0.1.17 rebinds the gadget from udev when a
+  computer's port gives no carrier 15 s after a switch to device; a
+  kernel fix (stopping the gadget at `none`) can follow.
+
 ## 2026-11-03: the modem runs on Linux (probe-m10-modem, 7.1.3-msm8953-oma3)
 
 - **The modem boots** from `qcom_q6v5_mss` with `echo start` to its
