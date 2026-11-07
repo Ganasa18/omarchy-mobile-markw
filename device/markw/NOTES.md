@@ -5,6 +5,15 @@ Findings from real hardware, newest first. Plan: [ENGINEERING-PLAN.md](ENGINEERI
 
 ## 2026-11-07: notification LED and haptics (7.1.3-msm8953-oma6)
 
+- **The USB rescue brought a dead link back (device-markw 0.1.17).** On
+  `probe-m13-oma6-wdt` the laptop lost USB SSH while the phone ran on.
+  The kernel log has `dwc3-qcom: remote wakeup not configured` at 160 s,
+  as when the host suspends the port, and an unexplained role change
+  none to device at 35053 s with no link after it. At the owner's replug
+  (36806 s) the rescue unit found no carrier for 15 s, rebound the
+  gadget, and logged "link back" 6 s later; SSH answered. Whether
+  Windows' selective suspend of the NCM adapter is the first cause is
+  not yet checked.
 - **The LED is an AW2013 (`1-0045`, `leds_aw2013`) with three channels
   at 5 mA each.** Red and green light (owner, by eye). Blue never lit,
   not even held on for 15 s, while the chip's registers showed it set
