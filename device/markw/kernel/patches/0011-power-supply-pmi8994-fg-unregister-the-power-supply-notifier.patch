@@ -1,0 +1,54 @@
+From: Omarchy Mobile <omamobile@localhost>
+Subject: [PATCH] power: supply: pmi8994_fg: unregister the power supply notifier
+
+The probe registers chip->nb with power_supply_reg_notifier() and nothing
+ever unregisters it, so after an unbind (or a probe that fails later)
+the global power supply notifier chain keeps a pointer into the freed
+chip. The next power_supply_changed() of any supply then calls into
+freed memory. On a Redmi 4 Prime (PMI8950, msm8953-xiaomi-markw),
+unbinding the fuel gauge and plugging the charger oopsed the events
+worker:
+
+  Unable to handle kernel paging request at virtual address fffffffffffffffc
+  Workqueue: events power_supply_changed_work
+  pc : notifier_call_chain+0x84/0x1d4
+  lr : blocking_notifier_call_chain+0x58/0x8c
+
+and the dead worker left that CPU's per-CPU work stuck for good
+(khugepaged waited in __lru_add_drain_all() from then on).
+
+Unregister the notifier with a devm action registered right after it,
+so it runs before the cleanup action that disables the works.
+
+---
+ drivers/power/supply/pmi8994_fg.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+--- a/drivers/power/supply/pmi8994_fg.c
++++ b/drivers/power/supply/pmi8994_fg.c
+@@ -906,6 +906,13 @@
+ 	destroy_workqueue(chip->sram_wq);
+ }
+ 
++static void pmi8994_fg_unreg_notifier(void *data)
++{
++	struct pmi8994_fg_chip *chip = data;
++
++	power_supply_unreg_notifier(&chip->nb);
++}
++
+ static int pmi8994_fg_probe(struct platform_device *pdev)
+ {
+ 	struct power_supply_config supply_config = {};
+@@ -1087,6 +1094,11 @@
+ 				"Failed to register notifier: %d\n", ret);
+ 			return ret;
+ 		}
++
++		ret = devm_add_action_or_reset(chip->dev,
++					       pmi8994_fg_unreg_notifier, chip);
++		if (ret)
++			return ret;
+ 	}
+ 
+ 	return 0;

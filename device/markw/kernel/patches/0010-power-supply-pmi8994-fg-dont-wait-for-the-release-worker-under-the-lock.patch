@@ -1,0 +1,59 @@
+From: Omarchy Mobile <omamobile@localhost>
+Subject: [PATCH] power: supply: pmi8994_fg: don't wait for the release worker under the lock
+
+pmi8994_fg_sram_request_access() runs with chip->lock held (from
+pmi8994_fg_get_property()) and calls cancel_delayed_work_sync() on
+sram_release_access_work, whose worker takes chip->lock first. When the
+worker starts while a reader holds the lock, each waits for the other
+forever. On a Redmi 4 Prime (PMI8950, msm8953-xiaomi-markw) this
+happened within minutes of boot: the pmi8994_fg kworker and every task
+reading the battery (upowerd, systemd-logind, a plain cat of capacity)
+sat in D state, and the next s2idle failed to freeze them:
+
+  Freezing user space processes failed after 20.003 seconds
+  (7 tasks refusing to freeze, wq_busy=0)
+  ...
+   cancel_delayed_work_sync+0x24/0x3c
+   pmi8994_fg_sram_request_access+0x3c/0x2a0
+   pmi8994_fg_sram_read+0x50/0x26c
+   pmi8994_fg_get_property+0x244/0x458
+
+Only cancel a pending release. A worker that is already running waits
+for the lock and releases access once the reader is done, which is
+harmless: the next access requests it again.
+
+The release wait also passed MEM_IF_TIMEOUT_MS to secs_to_jiffies(),
+so a release that never sees the interface go idle held the lock for
+5000 seconds instead of 5. Use msecs_to_jiffies().
+
+---
+ drivers/power/supply/pmi8994_fg.c | 11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+--- a/drivers/power/supply/pmi8994_fg.c
++++ b/drivers/power/supply/pmi8994_fg.c
+@@ -196,7 +196,14 @@
+ 	bool sram_accessible;
+ 	int ret;
+ 
+-	cancel_delayed_work_sync(&chip->sram_release_access_work);
++	/*
++	 * Callers hold chip->lock, and the release worker takes it, so
++	 * waiting for a running worker here deadlocks: the worker waits
++	 * for the lock and this waits for the worker. Only drop a pending
++	 * release. A worker already running releases access once we drop
++	 * the lock; the next access requests it again.
++	 */
++	cancel_delayed_work(&chip->sram_release_access_work);
+ 
+ 	sram_accessible = pmi8994_fg_sram_check_access(chip);
+ 
+@@ -243,7 +250,7 @@
+ 
+ 	ret = wait_event_timeout(chip->sram_waitq,
+ 				 !pmi8994_fg_sram_check_access(chip),
+-				 secs_to_jiffies(MEM_IF_TIMEOUT_MS));
++				 msecs_to_jiffies(MEM_IF_TIMEOUT_MS));
+ 	if (ret <= 0)
+ 		dev_err(chip->dev, "SRAM release timeout\n");
+ }
