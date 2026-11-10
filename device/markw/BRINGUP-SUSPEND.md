@@ -451,3 +451,74 @@ gauge's SRAM reader). It isn't the suspend fault (the cable-out run),
 but it wants a recharge threshold that holds; see BRINGUP-CHARGER.
 
 Auto-suspend stays disabled (device-markw 0.1.18 ships it off).
+- **60 s without the memory-mapped timer: reset.** `probe-m17-oma7-notimer`
+  (the oma7 DTB with `/soc@0/timer@b120000` set to `disabled`, the only
+  `dtc` diff; the broadcast clock event became `bc_hrtimer`). So
+  `arch_mem_timer` being suspended and resumed in s2idle isn't it.
+- **60 s on oma8, without the rpmpd suspend hack: reset** (into MIUI;
+  the reboot-mode module was built for oma7). `7.1.3-msm8953-oma8` adds
+  a patch dropping "soc: qcom: rpmpd: add hack to speed up
+  suspend/resume", which msm8953-mainline/linux issue 262 lists among
+  the commits that may be dropped: it moves the RPM power domains'
+  genpd noirq callbacks to the late and early phases. Removing it
+  changed nothing here, so it isn't the cause, and the patch is not
+  kept. Issue 262 also lists "usb: dwc3: qcom: re-configure wrapper
+  registers on resume", "interconnect: qcom: msm8953: enable sync
+  callback" and "psci: Allow forcing PSCI domains", all already in this
+  tree. MIUI booted, so the modem backup is stale again.
+- **The 2026-11-01 soak itself now fails.** `probe-m7-oma2` (the same
+  image), `rtcwake -m freeze -s 20`, no sysctl changed: reset in the first
+  cycle, where it once passed 10 of 10. 60 s on the same image: reset. So
+  the kernel, the DT and the procedure aren't what changed.
+- **Userspace is not needed.** oma7 with `systemd.unit=multi-user.target`:
+  hang. Also without `ltr501`, `iio-sensor-proxy`, zram, rmtfs, usb-rescue
+  and the charge LED rule: reset. Also with every service stopped except
+  dbus, sshd, journald, logind, networkd, nsresourced, oomd, resolved, udevd
+  and wpa_supplicant: reset.
+- **Neither is the root.** `probe-m19-oma7-noroot` (no `--root-uuid`: stays
+  in the initramfs, no systemd, nothing mounted from a disk, no firmware
+  loaded; `rtc-pm8xxx`, a shell script, and the PON debug module, which
+  only sets the reboot mode once and hooks nothing): 20 s, in the first
+  cycle the phone was in fastboot 43 s after the start. Its PON registers
+  were not read and its log was in RAM, so "reset" rests on the reboot mode
+  alone. oma2 without a root is not done.
+- **What this leaves.** The kernel on this phone's firmware and hardware.
+  MIUI is still the 2019 build and lk2nd the 2026-10-26 image. The fault is
+  not constant: a few 20 s sleeps passed today with debug modules loaded.
+- **Open: why the 2026-11-01 soak passed then and not now.** Persistent
+  charger state looks unlikely: `smbchg_init()` rewrites the termination and
+  recharge registers at every boot, and the first long sleep that never woke
+  (2026-11-03, oma3) came before the charger patches of 2026-11-06. Not
+  compared: battery voltage, temperature and the time since power-on on the
+  passing and failing runs.
+- `kernel-modules-hook` (via Omarchy) deletes hand-installed module trees at
+  boot. `linux-modules-cleanup.service` is masked by hand on this phone; the
+  install needs the same.
+
+### The hang without a suspend (2026-11-10, oma7)
+
+- `probe-m16-oma7` (the full system), booted to read the battery history:
+  SSH answered once, and about a minute later the phone was gone (no USB,
+  no Wi-Fi, no fastboot, no adb) with nothing run on it, no debug module
+  loaded and no suspend. The screen was black and the red charge LED lit,
+  the LED rule's last state: a hang, not a reset. Power held about 30 s
+  restarted it into MIUI.
+- So the fault isn't the suspend. It matches the runs that passed a sleep
+  and died a minute later (crumb2; breadcrumb `fe`, every callback
+  returned). Suspend makes it likelier or sooner; the fault is a hang or a
+  reset that can come at any time.
+- **The battery ran from nearly full to 6 % that day with the cable in a
+  laptop port all the time.** Contributing: long waits in fastboot and
+  lk2nd, the charger toggling every ~3 s at full, hangs that stop the
+  charger driver, and about 500 mA from the port. The passing 2026-11-01
+  soak and today's failures may differ in battery voltage; nothing so far
+  measured it during a run. The PON reasons read on earlier resets were
+  PS_HOLD, not undervoltage.
+- Next (with the battery above 80 % from a wall charger in MIUI): oma7, no
+  suspend, cable in the laptop, the reboot mode set to bootloader; every
+  10 s stream voltage, current, capacity, charger status, the USB role and
+  new kmsg lines to the laptop for 10 minutes. Suspend is parked until the
+  hang is understood.
+- Dropped: the rpmpd patch tried as oma8 (no effect) and its config bump;
+  the kernel stays `-oma7`. Kept for the next runs: `probe-m7-oma2` (the
+  control), `probe-m16-oma7`, `probe-m19-oma7-noroot`.
