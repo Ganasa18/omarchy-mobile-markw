@@ -1,0 +1,244 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Desktop mode on the phone's own screen, for the Desktop tile:
+#   omamobile-desktop-mode on|off|toggle|status [--kv]|reapply
+# For a Bluetooth keyboard (and mouse): the panel turns landscape at a
+# smaller scale, the on-screen keyboard stays folded, and new windows float
+# centred at a desktop size instead of filling the screen. Off reloads
+# Hyprland's configuration, which puts back the phone's monitor, touch and
+# window rules, and returns the on-screen keyboard setting to what it was.
+# The shell's own surfaces follow through IPC (setDesktopMode on|off).
+# Design: docs/design/desktop-mode/.
+#
+# Settings: ~/.config/omamobile/desktop-mode.conf, KEY=value lines (read as
+# data, never sourced), or the same names as OMAMOBILE_DESKTOP_* variables:
+#   TRANSFORM  3 (default) or 1: which way the panel turns (90 or 270 degrees)
+#   SCALE      1.5 (default: 1080x1920 becomes 1280x720 logical pixels)
+#   WIDTH, HEIGHT  a new window's size in logical pixels (860x540)
+# The state lives in XDG_RUNTIME_DIR, so a new session starts in phone mode.
+set -euo pipefail
+
+state=${XDG_RUNTIME_DIR:-/tmp}/omamobile-desktop-mode
+conf=${XDG_CONFIG_HOME:-$HOME/.config}/omamobile/desktop-mode.conf
+
+setting() { # NAME DEFAULT PATTERN
+  local name=$1 value
+  value=$(printenv "OMAMOBILE_DESKTOP_$name" 2>/dev/null) ||
+    value=$(sed -n "s/^$name=//p" "$conf" 2>/dev/null | tail -n1)
+  [[ -n $value && $value =~ ^($3)$ ]] || value=$2
+  printf '%s\n' "$value"
+}
+
+is_on() { [[ -e $state/on ]]; }
+
+status() {
+  if [[ ${1:-} == --kv ]]; then
+    if command -v hyprctl >/dev/null 2>&1; then
+      is_on && echo "desktop=on" || echo "desktop=off"
+    else
+      echo "desktop=none"
+    fi
+  else
+    is_on && echo on || echo off
+  fi
+}
+
+# The panel the session runs on: the first monitor Hyprland lists, with its
+# mode's size in pixels (before any turn).
+monitor() {
+  hyprctl -j monitors | python3 -I -c '
+import json, sys
+m = json.load(sys.stdin)
+if m:
+    print(m[0]["name"], m[0].get("width", 0), m[0].get("height", 0))'
+}
+
+scale_now() {
+  hyprctl -j monitors 2>/dev/null | python3 -I -c '
+import json, sys
+try:
+    m = json.load(sys.stdin)
+    print(float(m[0]["scale"]))
+except Exception:
+    print("")' 2>/dev/null
+}
+
+# The room a window has in desktop mode, in logical pixels: the turned
+# panel at the scale, less room for the bar (36) and the dock (76), so a
+# new window opens between them, never under them.
+BAR=36 DOCK=76
+fit() { # PANEL_W PANEL_H SCALE WANT_W WANT_H -> W H
+  python3 -I -c '
+import sys
+pw, ph, scale, ww, wh = int(sys.argv[1]), int(sys.argv[2]), float(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5])
+bar, dock = int(sys.argv[6]), int(sys.argv[7])
+if pw <= 0 or ph <= 0:
+    print(ww, wh); sys.exit()
+lw, lh = max(pw, ph) / scale, min(pw, ph) / scale   # landscape
+# Hyprland centres a new window on the whole panel, not between the bar and
+# the dock, so it must clear the taller of the two on both sides.
+print(max(320, min(ww, int(lw - 64))), max(240, min(wh, int(lh - 2 * max(bar, dock) - 16))))
+' "$@" "$BAR" "$DOCK"
+}
+
+osk_key=(org.gnome.desktop.a11y.applications screen-keyboard-enabled)
+osk_get() { gsettings get "${osk_key[@]}" 2>/dev/null; }
+osk_set() { gsettings set "${osk_key[@]}" "$1" 2>/dev/null; }
+osk_fold() {
+  busctl --user call sm.puri.OSK0 /sm/puri/OSK0 sm.puri.OSK0 SetVisible b false >/dev/null 2>&1 || true
+}
+
+notify() { notify-send -a "Desktop" -u low "$@" 2>/dev/null || true; }
+
+# The shell's surfaces that change with the mode: the bar's desktop layout,
+# the dock and status card (omamobile.desktop), and the phone's home screen
+# and home bar, which step aside. Each also asks once when it loads.
+tell_shell() { # on|off
+  local target
+  command -v omarchy-shell >/dev/null 2>&1 || return 0
+  for target in omamobile.bar omamobile.desktop omamobile.home omamobile.launcher; do
+    OMARCHY_SHELL_IPC_TIMEOUT=3s omarchy-shell "$target" setDesktopMode "$1" >/dev/null 2>&1 || true
+  done
+}
+
+# Windows already open when the mode changes: window rules only reach new
+# ones. Into desktop mode they gather on the current workspace and float,
+# centred and stepped; back to the phone, floating windows tile and fill
+# the screen again, and windows sharing a workspace get one each, as the
+# phone's launcher gives them (omamobile-launch own-screen). The plan is
+# made from hyprctl's client list; each step is best effort.
+arrange_plan() { # desktop WIDTH HEIGHT | phone
+  hyprctl -j clients 2>/dev/null | python3 -I -c '
+import json, sys
+mode = sys.argv[1]
+try:
+    clients = json.load(sys.stdin) or []
+except ValueError:
+    sys.exit(0)
+clients = [c for c in clients if c.get("mapped", True) and not c.get("hidden")
+           and ((c.get("workspace") or {}).get("id") or 0) > 0
+           and c.get("class") != "org.omarchy.screensaver"]
+# Least recently used first, so the one in use ends up on top.
+clients.sort(key=lambda c: c.get("focusHistoryID", 0), reverse=True)
+def win(c):
+    return "address:" + c["address"]
+if mode == "desktop":
+    width, height, active = int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
+    for i, c in enumerate(clients):
+        w = win(c)
+        if (c.get("workspace") or {}).get("id") != active:
+            print("lua hl.dsp.window.move({ window = \"%s\", workspace = \"%d\", follow = false })" % (w, active))
+        if not c.get("floating"):
+            print("lua hl.dsp.focus({ window = \"%s\" })" % w)
+            print("lua hl.dsp.window.fullscreen_state({ internal = 0, client = 0 })")
+            print("lua hl.dsp.window.float({ window = \"%s\", action = \"toggle\" })" % w)
+        print("lua hl.dsp.window.resize({ window = \"%s\", x = %d, y = %d })" % (w, width, height))
+        print("lua hl.dsp.window.center({ window = \"%s\" })" % w)
+        if i:
+            print("lua hl.dsp.window.move({ window = \"%s\", x = %d, y = %d, relative = true })" % (w, 28 * i, 28 * i))
+else:
+    # The window last used keeps its workspace; the others move out.
+    seen = set()
+    for c in reversed(clients):
+        w = win(c)
+        if c.get("floating"):
+            print("lua hl.dsp.window.float({ window = \"%s\", action = \"toggle\" })" % w)
+        print("lua hl.dsp.focus({ window = \"%s\" })" % w)
+        print("lua hl.dsp.window.fullscreen_state({ internal = 1, client = 0 })")
+        ws = (c.get("workspace") or {}).get("id")
+        if ws in seen:
+            print("own " + c["address"])
+        seen.add(ws)
+' "$@"
+}
+
+arrange() { # desktop WIDTH HEIGHT | phone
+  local active focused kind arg
+  active=$(hyprctl -j activeworkspace 2>/dev/null | python3 -I -c 'import json, sys; print(json.load(sys.stdin).get("id", 1))' 2>/dev/null) || active=1
+  focused=$(hyprctl -j activewindow 2>/dev/null | python3 -I -c 'import json, sys; print((json.load(sys.stdin) or {}).get("address", ""))' 2>/dev/null) || focused=""
+  while read -r kind arg; do
+    case $kind in
+      lua) hyprctl dispatch "$arg" >/dev/null 2>&1 || true ;;
+      own) omamobile-launch own-screen "$arg" >/dev/null 2>&1 || true ;;
+    esac
+  done < <(arrange_plan "$@" "$active")
+  [[ -n $focused ]] && hyprctl dispatch "hl.dsp.focus({ window = \"address:$focused\" })" >/dev/null 2>&1 || true
+}
+
+turn_on() {
+  is_on && return 0
+  local transform scale width height mon panel_w panel_h
+  transform=$(setting TRANSFORM 3 '1|3')
+  scale=$(setting SCALE 1.5 '[0-9]+(\.[0-9]+)?')
+  width=$(setting WIDTH 860 '[0-9]+')
+  height=$(setting HEIGHT 540 '[0-9]+')
+  read -r mon panel_w panel_h < <(monitor) || true
+  [[ -n ${mon:-} ]] || { echo "omamobile-desktop-mode: no monitor" >&2; exit 1; }
+  read -r width height < <(fit "${panel_w:-0}" "${panel_h:-0}" "$scale" "$width" "$height")
+
+  mkdir -p "$state"
+  osk_get >"$state/osk" || true
+
+  # phone.lua loads this file last on every (re)load while it exists; a
+  # monitor rule only takes effect on a reload.
+  cat >"$state/desktop.lua.new" <<LUA
+-- Written by omamobile-desktop-mode; removed when desktop mode turns off.
+hl.monitor({ output = "$mon", mode = "preferred", position = "auto", scale = $scale, transform = $transform })
+hl.config({ input = { touchdevice = { transform = $transform, output = "$mon" } }, cursor = { invisible = false } })
+hl.window_rule({ match = { class = ".*" }, maximize = false, float = true, center = true, size = { $width, $height } })
+LUA
+  mv "$state/desktop.lua.new" "$state/desktop.lua"
+  : >"$state/on"
+  # Before the reload: right after it the shell is busy laying out the new
+  # screen size and its IPC calls time out.
+  tell_shell on
+  hyprctl reload >/dev/null
+  # On markw the first reload sometimes turned the panel but kept the old
+  # scale (2, from monitors.lua); a second one applied it. Once, if needed.
+  if [[ $(scale_now) != "$(python3 -I -c 'import sys; print(float(sys.argv[1]))' "$scale")" ]]; then
+    sleep 0.3
+    hyprctl reload >/dev/null
+  fi
+  arrange desktop "$width" "$height"
+
+  osk_set false || true
+  osk_fold
+  notify "Desktop mode on" "Super + Space: apps · Super + Enter: terminal · Super + W: close. Turn it off in quick settings."
+}
+
+# The panel lost desktop mode's scale: on markw it went back to 2 (the
+# phone's) a second after waking from idle, keeping the turn, with no
+# Hyprland event and no rule asking for it. The shell (omamobile.desktop) runs
+# this when the screen's size changes; a reload puts the scale back, and does
+# nothing when it is right.
+reapply() {
+  is_on || return 0
+  local want
+  # The scale desktop.lua asks for (its first monitor rule).
+  want=$(sed -n 's/^hl\.monitor(.* scale = \([0-9][0-9.]*\),.*/\1/p' "$state/desktop.lua" 2>/dev/null | head -n1)
+  [[ $want =~ ^[0-9]+(\.[0-9]+)?$ ]] || return 0
+  want=$(python3 -I -c 'import sys; print(float(sys.argv[1]))' "$want")
+  [[ $(scale_now) == "$want" ]] && return 0
+  hyprctl reload >/dev/null
+}
+
+turn_off() {
+  is_on || return 0
+  local osk
+  osk=$(cat "$state/osk" 2>/dev/null || true)
+  rm -f "$state/on" "$state/desktop.lua"
+  tell_shell off
+  hyprctl reload >/dev/null
+  arrange phone
+  case $osk in true | false) osk_set "$osk" || true ;; esac
+  rm -f "$state/osk"
+}
+
+case ${1:-} in
+  on) turn_on ;;
+  off) turn_off ;;
+  toggle) if is_on; then turn_off; else turn_on; fi ;;
+  status) status "${2:-}" ;;
+  reapply) reapply ;;
+  *) echo "usage: omamobile-desktop-mode on|off|toggle|status [--kv]|reapply" >&2; exit 2 ;;
+esac

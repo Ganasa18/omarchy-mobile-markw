@@ -1,0 +1,27 @@
+From: Omarchy Mobile <omamobile@localhost>
+Subject: [PATCH] arm64: dts: qcom: msm8953-xiaomi-markw: terminate charging at 150 mA
+
+The battery node has no charge-term-current-microamp, so smbchg leaves
+the PMI8950's termination current at its reset value, 300 mA. From a
+500 mA USB port (SDP) the charge current is already below that in the
+taper phase: on a Redmi 4 Prime the charger reported Full at 94 % after
+a few minutes at 170-200 mA, recharged 100 mV lower and stopped again,
+creeping up a percent at a time.
+
+Set 150 mA, about C/27 for the 4000 mAh cell, so taper runs on to a
+full battery from a USB port as well as from a wall charger.
+
+---
+ arch/arm64/boot/dts/qcom/msm8953-xiaomi-markw.dts | 1 +
+ 1 file changed, 1 insertion(+)
+
+--- a/arch/arm64/boot/dts/qcom/msm8953-xiaomi-markw.dts
++++ b/arch/arm64/boot/dts/qcom/msm8953-xiaomi-markw.dts
+@@ -139,6 +139,7 @@
+ &battery {
+ 	charge-full-design-microamp-hours = <4000000>;
++	charge-term-current-microamp = <150000>;
+ 	constant-charge-current-max-microamp = <1000000>;
+ 	voltage-min-design-microvolt = <3400000>;
+ 	voltage-max-design-microvolt = <4380000>;
+ };

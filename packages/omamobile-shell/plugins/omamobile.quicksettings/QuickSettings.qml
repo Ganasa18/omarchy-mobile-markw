@@ -181,7 +181,7 @@ Item {
     "location": location, "nfc": nfc, "battery-saver": batterySaver, "dark-theme": darkTheme,
     "night-light": nightLight, "stay-awake": stayAwake, "mic": mic, "screenshot": screenshot,
     "screen-record": screenRecord, "fingerprint": fingerprint, "keyboard": keyboard,
-    "ssh-wifi": sshWifi
+    "ssh-wifi": sshWifi, "desktop": desktopMode
   })
 
   // ---------------------------------------------------------------- layout
@@ -416,6 +416,126 @@ Item {
     readonly property string icon: "󰅶"
     readonly property string status: enabled ? "Screen stays on" : "Off"
     function toggle() { if (available) root.runTileAction("stay-awake", !enabled) }
+  }
+
+  // Desktop mode through omamobile-desktop-mode: landscape at a smaller
+  // scale for a Bluetooth keyboard and mouse, floating windows, the
+  // on-screen keyboard off. The sheet closes, since the screen turns.
+  QtObject {
+    id: desktopMode
+    readonly property bool available: root.probedHas("desktop")
+    readonly property bool enabled: available && root.probedOn("desktop", "desktop")
+    readonly property string icon: "󰍹"
+    readonly property string status: !available ? "Not available" : enabled ? "Landscape · keyboard" : "Off"
+    function toggle() {
+      if (!available || modeSwitch.busy) return
+      root.dismiss()
+      modeSwitch.start(!enabled)
+    }
+  }
+
+  // The switch between phone and desktop mode, behind a cover: it fades in
+  // over the screen with the mode's name, the screen turns behind it (a
+  // Hyprland reload, which would otherwise show a jump), and it fades out
+  // once the new layout has drawn. Opacity only, so it suits low motion.
+  QtObject {
+    id: modeSwitch
+
+    property bool busy: false
+    property bool shown: false
+    property bool toDesktop: false
+
+    function start(on) {
+      toDesktop = on
+      busy = true
+      shown = true
+      root.setOptimistic("desktop", on)
+      modeSwitchRun.restart()
+    }
+
+    function finish() {
+      modeSwitchSettle.stop()
+      modeSwitchGuard.stop()
+      shown = false
+      busy = false
+      root.refreshProbe()
+    }
+  }
+
+  // Let the cover reach full opacity before the screen turns.
+  Timer {
+    id: modeSwitchRun
+    interval: 220
+    onTriggered: {
+      modeSwitchProc.command = ["omamobile-desktop-mode", modeSwitch.toDesktop ? "on" : "off"]
+      modeSwitchProc.running = true
+      modeSwitchGuard.restart()
+    }
+  }
+
+  Process {
+    id: modeSwitchProc
+    onExited: modeSwitchSettle.restart()
+  }
+
+  // The reload returns before the windows have redrawn at the new size.
+  Timer {
+    id: modeSwitchSettle
+    interval: 450
+    onTriggered: modeSwitch.finish()
+  }
+
+  // Never leave the screen covered if the switch hangs.
+  Timer {
+    id: modeSwitchGuard
+    interval: 8000
+    onTriggered: modeSwitch.finish()
+  }
+
+  property real modeCover: modeSwitch.shown ? 1 : 0
+  Behavior on modeCover { NumberAnimation { duration: 200; easing.type: Easing.InOutQuad } }
+
+  PanelWindow {
+    id: modeCoverWindow
+
+    visible: root.modeCover > 0 || modeSwitch.busy
+    anchors { top: true; bottom: true; left: true; right: true }
+    color: "transparent"
+    exclusionMode: ExclusionMode.Ignore
+    WlrLayershell.namespace: "omamobile-mode-switch"
+    WlrLayershell.layer: WlrLayer.Overlay
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+
+    Rectangle {
+      anchors.fill: parent
+      color: Commons.Color.popups.background
+      opacity: root.modeCover
+
+      // Swallow touches while the screen turns.
+      MouseArea { anchors.fill: parent }
+
+      Column {
+        anchors.centerIn: parent
+        spacing: Style.spacing.md
+
+        Text {
+          anchors.horizontalCenter: parent.horizontalCenter
+          text: modeSwitch.toDesktop ? "󰍹" : "󰄜"
+          color: Commons.Color.popups.text
+          font.family: Style.font.family
+          font.pixelSize: Style.font.display * 2
+        }
+
+        Text {
+          anchors.horizontalCenter: parent.horizontalCenter
+          text: modeSwitch.toDesktop ? "Desktop mode" : "Phone mode"
+          color: Commons.Color.popups.text
+          font.family: Style.font.family
+          font.pixelSize: Style.font.title
+          font.bold: true
+        }
+      }
+    }
   }
 
   // SSH over Wi-Fi through omamobile-ssh-wifi: a tap opens it for 30

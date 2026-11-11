@@ -173,3 +173,29 @@ separate step.
   - No `/dev/watchdog*`, as expected with the node disabled; no new errors
     against oma2 (the ASoC "widget overwritten" and maxtouch.cfg lines are
     old).
+
+**2026-11-07, on the phone, `7.1.3-msm8953-oma6`:**
+
+- **Step 3: pass** (`probe-m13-oma6-wdt`: oma6's kernel and modules, the
+  DTB with patch 0009's 150 mA and the watchdog node's `status` set to
+  `okay` by `fdtput`; the `dtc` diff against the running DTB is that one
+  line). `qcom_wdt` bound `b017000.watchdog` by itself (module alias from
+  the DT) and `/dev/watchdog` and `/dev/watchdog0` appeared within about
+  50 s of boot. The `watchdog0` sysfs attributes (`identity`, `timeout`,
+  `state`) are missing: `CONFIG_WATCHDOG_SYSFS` is off. systemd's
+  `RuntimeWatchdogUSec` is 0, so nothing opens it. The touch controller
+  is the Atmel maXTouch; the `edt_ft5x06` probe failure in the log is
+  the other candidate driver and happened on the boot before too.
+- Up 10.2 h on that boot with the driver bound and nothing opening the
+  device: no reset, no new errors (the venus firmware and OPP lines are
+  old). Step 3 holds well past its 10 min.
+- **Step 4: fail, stop condition** (owner's go). A detached unit opened
+  `/dev/watchdog0`, set 30 s (`WDIOC_SETTIMEOUT`, read back 30) and never
+  petted it: the phone was still up 2.5 min later, SSH answering, with no
+  watchdog message in the kernel log. The unit was stopped and the device
+  disarmed with a magic close (`V`). So writes from Linux don't arm a
+  bite on this phone: the likeliest reason is that the secure world owns
+  the APSS watchdog on MSM8953, as downstream's `msm_watchdog` runs it
+  through TrustZone; not checked further. The node stays `disabled`
+  (patch 0004 unchanged) and step 5 (systemd petting it) is moot; the
+  soft and hard lockup detectors with `panic=10` remain the hang net.

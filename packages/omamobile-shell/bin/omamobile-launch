@@ -10,6 +10,9 @@
   omamobile-launch own-screen ADDR          window ADDR gets a screen again
   omamobile-launch match DESKTOP_ID         print the window `app` would focus
 
+In desktop mode (omamobile-desktop-mode) a launch stays on the current
+workspace, where windows float side by side.
+
 A launch runs through Hyprland's exec with a per-launch rule, so only the
 windows of the process it starts land on a new empty workspace; the app's
 own dialogs follow it there, and nothing else is moved. Hyprland 0.56 tracks
@@ -101,7 +104,16 @@ def lua_string(text):
     return "[" + "=" * level + "[" + lead + text + "]" + "=" * level + "]"
 
 
+def desktop_mode():
+    """Desktop mode (omamobile-desktop-mode) is on: windows share the screen
+    and float, as on a computer, so launches stay where the user is."""
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+    return os.path.exists(os.path.join(runtime, "omamobile-desktop-mode", "on"))
+
+
 def exec_lua(command):
+    if desktop_mode():
+        return "hl.exec_cmd(%s)" % lua_string(command)
     return "hl.exec_cmd(%s, %s)" % (lua_string(command), RULES)
 
 
@@ -153,6 +165,8 @@ def spawn(argv):
 def ensure_empty_screen():
     """Switch to an empty workspace when the current one holds windows, so a
     window that escapes the launch rule still gets a screen of its own."""
+    if desktop_mode():
+        return
     active = query("activeworkspace")
     if isinstance(active, dict) and int(active.get("windows") or 0) > 0:
         focus_empty()

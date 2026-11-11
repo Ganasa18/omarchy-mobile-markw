@@ -1,0 +1,28 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+#
+# omamobile-markw-charge-led: hand the Redmi 4 Prime's notification LED
+# to the kernel's battery triggers, red while charging and green when
+# full, as MIUI does. The PMI8950 fuel gauge registers the triggers;
+# the AW2013 does the rest, so nothing polls.
+#
+# Run from udev (81-omamobile-markw-charge-led.rules) on the LEDs' add
+# and on the battery's events. It sets a trigger only where the LED has
+# none: a "pattern" means feedbackd is blinking it for a notification,
+# and a trigger already set needs nothing. The blue channel is left
+# alone (it doesn't light on the tested unit, device/markw/NOTES.md).
+set -u
+sysfs=${OMAMOBILE_SYSFS:-/sys}
+
+claim() {  # claim LED TRIGGER
+  local f=$sysfs/class/leds/$1/trigger current
+  [[ -w $f ]] || return 0
+  current=$(sed -E 's/.*\[([^]]*)\].*/\1/' "$f") || return 0
+  [[ $current == none ]] || return 0
+  grep -qw -- "$2" "$f" || return 0   # the fuel gauge isn't there yet
+  echo "$2" >"$f" 2>/dev/null || true
+}
+
+claim red:indicator qcom-battery-charging
+claim green:indicator qcom-battery-full
+exit 0

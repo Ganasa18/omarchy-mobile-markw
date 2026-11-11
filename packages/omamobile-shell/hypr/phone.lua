@@ -91,3 +91,17 @@ hl.layer_rule({ match = { namespace = "^omamobile-call(-top)?$" }, above_lock = 
 -- default 0.985/0.96, which lets the home screen show through. This file
 -- loads after Omarchy's rules, so its opacity wins.
 o.window({ class = "^org\\.quickshell$", title = "^Flash$" }, { tag = "-default-opacity", opacity = "1 1" })
+
+-- Desktop mode (omamobile-desktop-mode, the Desktop tile): while it is on,
+-- its settings for this session (landscape, a smaller scale, the pointer,
+-- floating windows) live in the runtime directory. Loaded last, so they win
+-- over the phone's rules above; off removes the file and reloads.
+do
+  local runtime = os.getenv("XDG_RUNTIME_DIR")
+  local desktop = runtime and (runtime .. "/omamobile-desktop-mode/desktop.lua")
+  local file = desktop and io.open(desktop, "r")
+  if file then
+    file:close()
+    dofile(desktop)
+  end
+end

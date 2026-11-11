@@ -21,6 +21,8 @@
 #   sshwifi       on while omamobile-ssh-wifi has SSH open on Wi-Fi; none
 #                 without the package or a Wi-Fi interface (with
 #                 sshwifi_addr, sshwifi_left minutes, sshwifi_sessions)
+#   desktop       on while omamobile-desktop-mode is on; none without it or
+#                 Hyprland
 
 t() { timeout 3 "$@" 2>/dev/null; }
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -103,4 +105,11 @@ if have omamobile-ssh-wifi; then
   t omamobile-ssh-wifi status --kv || echo "sshwifi=none"
 else
   echo "sshwifi=none"
+fi
+
+# desktop
+if have omamobile-desktop-mode; then
+  t omamobile-desktop-mode status --kv || echo "desktop=none"
+else
+  echo "desktop=none"
 fi

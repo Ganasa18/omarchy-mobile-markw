@@ -159,3 +159,19 @@ has dropped, with a patch in `device/markw/kernel/patches`.
   charging, waits 200 ms and enables it again. Here `CHGR_CFG2` reads
   0x51: the bit is set, and the mainline driver never touches it. Kernel
   patch 0008 (`-oma6`) clears it and restarts charging the same way.
+- **oma6 result** (`7.1.3-msm8953-oma6`, 2026-11-06, from a laptop port:
+  SDP, 500 mA input): `CHGR_CFG2` reads 0x41 (bit 4 clear), `BAT_IF
+  RT_STS` 0x00, and no chg-error in a 20 min log. Charging went past
+  the old stop at about 90 %: 89 % at 4.36 V in taper, then `Full` (tcc)
+  at 94 % after 9 min, a recharge, and up a percent per cycle to 97 %
+  at 18 min. batt-ov never latched. So patch 0008 is the fix for the
+  stop at 90 %.
+- **Early termination from a USB port.** The battery node has no
+  `charge-term-current-microamp`, so `TCC_CFG` keeps its reset value 5,
+  300 mA, and from a 500 mA port the taper current (170-200 mA) is below
+  it at once: `Full` at 94 %, recharge at 4.28 V, and so on. Kernel
+  patch 0009 sets 150 mA (C/27 for 4000 mAh). It changes only the DTB:
+  `probe-m12-oma6-iterm` is oma6's kernel and modules with that one
+  property added (`fdtput`; `dtc` diff of the two DTBs shows only that
+  line). Next, owner's go: boot it, expect `TCC_CFG` & 7 = 2 and one
+  taper to 100 % without the cycling.

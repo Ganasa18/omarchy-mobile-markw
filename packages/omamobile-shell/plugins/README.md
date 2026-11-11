@@ -21,6 +21,7 @@ logical at scale 3).
 | `omamobile.keyboard` | `panel` (keepLoaded) | A hide button right above the on-screen keyboard while it is up (also over the lock) |
 | `omamobile.update` | `panel` (keepLoaded) | The update sheet: Omarchy's update for a phone, in place of its terminal update |
 | `omamobile.access` | `panel` (keepLoaded) | The permission sheet: xdg-desktop-portal's "Allow Camera to use the camera?", in place of GTK's desktop dialog |
+| `omamobile.desktop` | `panel` (keepLoaded) | Desktop mode's desktop: backdrop, dock and the status card behind the bar |
 | lockpad | none | Not built; see [Lock screen](#lock-screen-pin-pad) for why and what upstream needs |
 
 ## Enabling
@@ -42,6 +43,46 @@ It also lists `omarchy.idle` under `disabledPlugins`. An idle timeout of `0`
 means "act immediately" to that service, not "never", so the old profile ran
 the screensaver and `omarchy-system-lock` the moment the session went idle.
 The phone has no touch lock yet (below), so idle stays off for now.
+
+## omamobile.desktop
+
+The desktop for desktop mode (`omamobile-desktop-mode`, the Desktop tile;
+design in `docs/design/desktop-mode/`). Nothing shows while the mode is off.
+While it is on:
+
+- a plain backdrop over the wallpaper; the home screen (`omamobile.home`) and
+  the home bar (`omamobile.launcher`) hide themselves;
+- a dock: the app launcher (opened through `omarchy-shell shell toggle`,
+  since the host lets a plugin summon only its own panels), then the seven
+  apps last opened (`omamobile-launch`'s `recent-apps`, the launcher's Recent
+  row), a dot under those with a window. While the focused window is
+  maximized or fullscreen the dock slides away and reserves nothing; the
+  pointer at the bottom edge (or a tap there) brings it back over the window
+  until the pointer leaves its strip (a tap: four seconds). A click runs `omamobile-launch
+  app`, which focuses an open window or starts the app on the current
+  workspace (desktop mode keeps launches on screen);
+- the focused window's name, maximize and close in the middle of the bar,
+  since windows have no title bar (Super + W closes too). Maximize goes
+  through `hyprctl dispatch` (fullscreen_state 1): Omarchy suppresses the
+  windows' own maximize requests, so the toplevel's `maximized` can't be set;
+- the scale kept: on markw the panel fell back to the phone's scale a second
+  after waking from idle, with no Hyprland event, so a change in the
+  screen's size runs `omamobile-desktop-mode reapply`, which reloads only
+  when the scale is off;
+- a status card, opened by a tap on the bar's status icons and date (only
+  there: a maximized window's top edge sits under the bar): the screen, the
+  connected Bluetooth devices by name, the Wi-Fi network, the battery and
+  whether it charges, Settings (quick settings) and Phone mode,
+  which switches back through the Desktop tile and its cover.
+
+`omamobile-desktop-mode` tells `omamobile.bar`, `omamobile.desktop`,
+`omamobile.home` and `omamobile.launcher` about each change
+(`omarchy-shell <plugin> setDesktopMode on|off`); each asks once at load.
+The script sends this before Hyprland reloads: right after a reload the
+shell is busy with the new screen size and the calls time out. It also
+arranges the windows already open (rules reach only new ones): into desktop
+mode they gather on the current workspace and float; back to the phone they
+tile, fill the screen and get a workspace each again.
 
 ## omamobile.bar
 
@@ -99,7 +140,8 @@ to the file by hand show on the next refresh.
 Default order: Wi-Fi, Bluetooth, Do not disturb, Torch (the collapsed row),
 Mobile data, Rotation lock, Airplane mode, Location, Battery saver, Dark
 theme, Night light, NFC, Fingerprint, Keyboard. Hotspot, Stay awake,
-Microphone, Screenshot and Screen record start under "Add tiles".
+Microphone, Screenshot, Screen record, SSH Wi-Fi and Desktop start under
+"Add tiles".
 
 | Tile | Backend |
 | --- | --- |
@@ -120,6 +162,7 @@ Microphone, Screenshot and Screen record start under "Add tiles".
 | Rotation lock | `omamobile-autorotate` (omamobile-sensors): locked by `~/.local/state/omamobile/rotation-lock`; unlocking also enables the service. "No sensor" while the sensor proxy has no accelerometer |
 | Torch | The rear flash LED in torch mode (`brightnessctl --device=white:torch`); "No flash LED" without it |
 | Do not disturb | The notification service's `notifications` IPC target on this shell instance |
+| Desktop | `omamobile-desktop-mode on/off`: for a Bluetooth keyboard and mouse, the panel turns landscape at scale 1.5 with the pointer shown, new windows float centred at 860x540 (smaller when that would reach under the bar or the dock) instead of filling the screen, and the on-screen keyboard is turned off. It writes `$XDG_RUNTIME_DIR/omamobile-desktop-mode/desktop.lua`, which `hypr/phone.lua` loads last, and reloads Hyprland; off removes it and reloads. Settings in `~/.config/omamobile/desktop-mode.conf` (`TRANSFORM` 3 or 1, `SCALE`, `WIDTH`, `HEIGHT`). Design: `docs/design/desktop-mode/` |
 | Keyboard | Shows or folds the on-screen keyboard (squeekboard's `sm.puri.OSK0` `SetVisible`); "No keyboard" without it on the session bus |
 | Fingerprint | Opens fingerprint setup (`omamobile.fingerprint`); the status counts this user's fingerprints through fprintd (`omamobile-fp-enroll list`); "No sensor" without fprintd or its device |
 | Brightness slider | `brightnessctl --class=backlight` (the panel backlight; dimmed when there is none) |
@@ -224,7 +267,7 @@ IPC:
 | `omarchy-shell shell summon omamobile.quicksettings '{"page":"bluetooth"}'` | Open the Bluetooth panel |
 | `omarchy-shell shell call omamobile.quicksettings openBluetooth ''` | The same; returns the panel's state, or `unavailable` |
 | `omarchy-shell shell call omamobile.quicksettings bluetoothPanel ''` | JSON: panel open, adapter name, power, discovering, visible, helper, paired, available (with RSSI and type), unnamed count, action, failure, sheet, pairing phase |
-| `omarchy-shell shell call omamobile.quicksettings toggleTile <name>` | Same as tapping a tile, shown or not. Names are the ids in `TilesModel.js`: `wifi`, `bluetooth`, `mobile-data`, `airplane`, `hotspot`, `dnd`, `torch`, `rotation-lock`, `location`, `nfc`, `battery-saver`, `dark-theme`, `night-light`, `stay-awake`, `mic`, `screenshot`, `screen-record`, `fingerprint`, `keyboard`. Returns the new state, `unavailable` or `unknown` |
+| `omarchy-shell shell call omamobile.quicksettings toggleTile <name>` | Same as tapping a tile, shown or not. Names are the ids in `TilesModel.js`: `wifi`, `bluetooth`, `mobile-data`, `airplane`, `hotspot`, `dnd`, `torch`, `rotation-lock`, `location`, `nfc`, `battery-saver`, `dark-theme`, `night-light`, `stay-awake`, `mic`, `screenshot`, `screen-record`, `fingerprint`, `keyboard`, `ssh-wifi`, `desktop`. Returns the new state, `unavailable` or `unknown` |
 | `omarchy-shell shell summon omamobile.quicksettings '{"expanded":true}'` / `'{"page":"edit"}'` | Open expanded / in edit mode |
 | `omarchy-shell shell call omamobile.quicksettings showPage <n>` | Expand and show page n (from 0) |
 | `omarchy-shell shell call omamobile.quicksettings tiles ''` | JSON: every tile with shown, available, enabled and status |
@@ -249,6 +292,12 @@ The home surface, after Omalauncher: one bar along the bottom of the screen.
   turns into the agent, and Enter asks the agent instead of launching the top
   app. Asking runs `terminalCommand + agentCommand + [prompt]`, with the prompt
   as a single argv element (no shell parsing), then closes the drawer.
+* **Desktop mode.** The drawer becomes a menu over the desktop's dock
+  (`docs/design/desktop-mode/launcher.png`): the search field, focused with
+  exclusive keyboard focus, then every app in a six-column grid, A–Z until
+  something is typed. The arrow keys and the pointer pick an app, Enter opens
+  it (or asks the agent), Esc clears the text and then closes, and a click
+  beside the menu closes it. The home bar hides while the mode is on.
 
 Apps come from Omarchy's application library (`services/AppLibrary.qml`): the
 same entries, hidden-entry filters and icon index as the Omarchy menu. They

@@ -48,6 +48,11 @@ install -Dm644 vendor/systemd/system/omamobile-markw-rmtfs.service \
 install -Dm755 vendor/omamobile-markw-usb-rescue "$destination/usr/lib/omamobile/omamobile-markw-usb-rescue"
 install -Dm644 vendor/systemd/system/omamobile-markw-usb-rescue.service   "$destination/usr/lib/systemd/system/omamobile-markw-usb-rescue.service"
 install -Dm644 vendor/udev/rules.d/80-omamobile-markw-usb-role.rules   "$destination/usr/lib/udev/rules.d/80-omamobile-markw-usb-role.rules"
+# The notification LED shows charging (red) and full (green) through the
+# battery's LED triggers. (feedbackd's own rules already know the PMI8950
+# haptics, spmi_haptics.)
+install -Dm755 vendor/omamobile-markw-charge-led "$destination/usr/lib/omamobile/omamobile-markw-charge-led"
+install -Dm644 vendor/udev/rules.d/81-omamobile-markw-charge-led.rules   "$destination/usr/lib/udev/rules.d/81-omamobile-markw-charge-led.rules"
 # Suspend when the screen has been off a while: installed, not enabled.
 install -Dm755 vendor/omamobile-autosuspend "$destination/usr/lib/omamobile/omamobile-autosuspend"
 install -Dm644 vendor/systemd/system/omamobile-autosuspend.service \

@@ -48,6 +48,9 @@ PY
 if omarchy-done ensure omamobile-fingerprint-plugin; then
   add_plugin omamobile.fingerprint
 fi
+if omarchy-done ensure omamobile-desktop-plugin; then
+  add_plugin omamobile.desktop
+fi
 if omarchy-done ensure omamobile-keyboard-plugin; then
   add_plugin omamobile.keyboard
 fi

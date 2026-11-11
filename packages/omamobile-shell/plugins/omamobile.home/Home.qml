@@ -40,6 +40,28 @@ import "owl" as Owl
 Item {
   id: root
 
+  // Desktop mode (omamobile-desktop-mode): the home screen steps aside for the
+  // desktop's backdrop and dock (omamobile.desktop). The mode script says
+  // when it changes; this asks once at load.
+  property bool desktopMode: false
+
+  Process {
+    command: ["omamobile-desktop-mode", "status"]
+    running: true
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.desktopMode = String(text || "").trim() === "on"
+    }
+  }
+
+  IpcHandler {
+    target: "omamobile.home"
+    function setDesktopMode(state: string): string {
+      root.desktopMode = state === "on"
+      return "ok"
+    }
+  }
+
   // Injected by the host.
   property var shell: null
   property var manifest: null
@@ -1020,6 +1042,7 @@ Item {
   PanelWindow {
     id: surface
 
+    visible: !root.desktopMode
     screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
     anchors { top: true; bottom: true; left: true; right: true }
     // Normal: between the bar and the dock, which reserve their space.

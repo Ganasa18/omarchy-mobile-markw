@@ -49,7 +49,7 @@ echo '{"enabled":false,"temperature":6500}' >"$tmp/state/night"
 
 out=$(run "$dir/tile-state.sh")
 for line in airplane=off hotspot=off powerprofile=balanced theme_mode=dark theme_name=tokyo-night \
-            nightlight=off stayawake=off record=none data=none sshwifi=none; do
+            nightlight=off stayawake=off record=none data=none sshwifi=none desktop=none; do
   grep -cx "$line" <<<"$out" >/dev/null || fail "tile-state.sh prints $line (got: $(tr '\n' ' ' <<<"$out"))"
 done
 pass "tile-state.sh reads every probed tile"
@@ -91,6 +91,13 @@ for line in "powerprofiles autodetect power-saver" "idle allow-idle" "sit data o
   grep -cxF "$line" "$log" >/dev/null || fail "tile-action.sh runs: $line"
 done
 pass "tile-action.sh drives battery saver, stay awake, mobile data and hotspot"
+
+# Desktop: the probe asks omamobile-desktop-mode, the action hands over to it.
+stub omamobile-desktop-mode '[ "$1" = status ] && { echo desktop=off; exit 0; }; echo "desktop $*" >>'"$log"
+grep -cx "desktop=off" <<<"$(run "$dir/tile-state.sh")" >/dev/null || fail "tile-state.sh asks omamobile-desktop-mode"
+run "$dir/tile-action.sh" desktop on
+grep -cx "desktop on" "$log" >/dev/null || fail "tile-action.sh desktop on runs omamobile-desktop-mode on"
+pass "the desktop tile goes through omamobile-desktop-mode"
 
 if run "$dir/tile-action.sh" wifi on 2>/dev/null; then fail "unknown tiles are refused"; fi
 if run "$dir/tile-action.sh" airplane maybe 2>/dev/null; then fail "only on and off are accepted"; fi
