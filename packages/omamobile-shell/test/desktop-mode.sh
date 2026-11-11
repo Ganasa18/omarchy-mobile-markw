@@ -13,7 +13,7 @@ fake=$tmp/bin; log=$tmp/log; mkdir -p "$fake" "$tmp/run" "$tmp/home"
 : >"$log"; echo true >"$tmp/osk"
 stub() { printf '#!/bin/sh\n%s\n' "$2" >"$fake/$1"; chmod +x "$fake/$1"; }
 stub hyprctl 'case "$1 $2" in
-  "-j monitors") echo "[{\"name\": \"DSI-1\"}]" ;;
+  "-j monitors") cat '"$tmp"'/monitors ;;
   "-j clients") cat '"$tmp"'/clients ;;
   "-j activeworkspace") echo "{\"id\": 1}" ;;
   "-j activewindow") echo "{}" ;;
@@ -21,6 +21,7 @@ stub hyprctl 'case "$1 $2" in
 esac'
 stub gsettings '[ "$1" = get ] && cat '"$tmp"'/osk; [ "$1" = set ] && echo "$4" >'"$tmp"'/osk; exit 0'
 stub busctl 'echo "busctl $*" >>'"$log"
+echo '[{"name": "DSI-1"}]' >"$tmp/monitors"
 stub notify-send 'exit 0'
 stub omamobile-launch 'echo "launch $*" >>'"$log"
 # One app filling its own screen, as the phone leaves it.
@@ -71,6 +72,31 @@ grep -cF 'scale = 1.5, transform = 1 })' "$lua" >/dev/null || fail "TRANSFORM is
 grep -cF 'size = { 1000, 540 }' "$lua" >/dev/null || fail "WIDTH is read"
 mode off
 pass "settings are read as data and checked"
+
+# The panel as markw reports it, at scale 2: 960x540 logical, so a window
+# shrinks to fit between the bar (36) and the dock (76).
+echo '[{"name": "DSI-1", "width": 1080, "height": 1920}]' >"$tmp/monitors"
+rm -f "$tmp/home/.config/omamobile/desktop-mode.conf"
+env -i HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/run" PATH="$fake:/usr/bin:/bin"   OMAMOBILE_DESKTOP_SCALE=2 bash bin/omamobile-desktop-mode on
+grep -cF 'size = { 860, 372 }' "$lua" >/dev/null || fail "a new window fits between the bar and the dock"
+mode off
+pass "a new window fits between the bar and the dock"
+
+# reapply: nothing while off; on, a reload only when the scale drifted.
+: >"$log"
+mode reapply
+[[ $(grep -c "hyprctl reload" "$log") == 0 ]] || fail "reapply does nothing while off"
+echo '[]' >"$tmp/clients"
+mode on
+: >"$log"
+echo '[{"name": "DSI-1", "width": 1080, "height": 1920, "scale": 1.5}]' >"$tmp/monitors"
+mode reapply
+[[ $(grep -c "hyprctl reload" "$log") == 0 ]] || fail "reapply leaves a right scale alone"
+echo '[{"name": "DSI-1", "width": 1080, "height": 1920, "scale": 2.0}]' >"$tmp/monitors"
+mode reapply
+[[ $(grep -c "hyprctl reload" "$log") == 1 ]] || fail "reapply reloads when the scale drifted"
+mode off
+pass "reapply puts a drifted scale back, and only then"
 
 if mode sideways 2>/dev/null; then fail "unknown commands are refused"; fi
 pass "unknown commands are refused"

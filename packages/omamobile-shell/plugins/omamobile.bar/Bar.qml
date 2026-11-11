@@ -396,7 +396,16 @@ Item {
 
           WindowButton {
             glyph: windowControls.toplevel && windowControls.toplevel.maximized ? "󰘕" : "󰊓"
-            onActivated: if (windowControls.toplevel) windowControls.toplevel.maximized = !windowControls.toplevel.maximized
+            // Through Hyprland, not the toplevel's own request: Omarchy
+            // suppresses every window's maximize event (windows.lua), so
+            // setting `maximized` did nothing. fullscreen_state 1 is
+            // Hyprland's maximize: the bar stays, the desktop's dock steps aside.
+            onActivated: {
+              if (!windowControls.toplevel) return
+              var state = windowControls.toplevel.maximized ? 0 : 1
+              Quickshell.execDetached(["hyprctl", "dispatch",
+                "hl.dsp.window.fullscreen_state({ internal = " + state + ", client = 0 })"])
+            }
           }
 
           WindowButton {
@@ -406,58 +415,88 @@ Item {
           }
         }
 
-        Row {
+        // The status icons and the date: the only part of the bar that opens
+        // the status card in desktop mode. A maximized window's top edge sits
+        // right under the bar, and a tap anywhere on it opened the card.
+        Item {
+          id: statusCluster
           anchors.right: parent.right
+          anchors.rightMargin: -Style.spacing.md
           anchors.verticalCenter: parent.verticalCenter
-          spacing: Style.spacing.lg
+          width: statusRow.implicitWidth + Style.spacing.md * 2
+          height: 28
 
-          DesktopGlyph { visible: root.doNotDisturb; text: "󰂛" }
-          DesktopGlyph {
-            visible: !!root.btAdapter && root.btAdapter.enabled
-            text: root.bluetoothConnected ? "󰂱" : "󰂯"
+          Rectangle {
+            anchors.fill: parent
+            radius: 8
+            color: root.foreground
+            opacity: statusTouch.pressed ? 0.16 : statusTouch.containsMouse ? 0.08 : 0
           }
-          DesktopGlyph {
-            visible: root.networkIcon !== ""
-            text: root.networkIcon
-            opacity: root.networkKind === "off" || root.networkKind === "disconnected" ? 0.55 : 1
+
+          MouseArea {
+            id: statusTouch
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.toggleDesktopCard()
           }
+
           Row {
-            visible: root.hasBattery
-            spacing: Style.spacing.xs
-            anchors.verticalCenter: parent.verticalCenter
+            id: statusRow
+            anchors.centerIn: parent
+            spacing: Style.spacing.lg
+
+            DesktopGlyph { visible: root.doNotDisturb; text: "󰂛" }
             DesktopGlyph {
-              text: root.batteryIcon
-              color: root.batteryPercent >= 0 && root.batteryPercent <= 10 && !root.charging ? root.urgent : root.foreground
+              visible: !!root.btAdapter && root.btAdapter.enabled
+              text: root.bluetoothConnected ? "󰂱" : "󰂯"
             }
+            DesktopGlyph {
+              visible: root.networkIcon !== ""
+              text: root.networkIcon
+              opacity: root.networkKind === "off" || root.networkKind === "disconnected" ? 0.55 : 1
+            }
+            Row {
+              visible: root.hasBattery
+              spacing: Style.spacing.xs
+              anchors.verticalCenter: parent.verticalCenter
+              DesktopGlyph {
+                text: root.batteryIcon
+                color: root.batteryPercent >= 0 && root.batteryPercent <= 10 && !root.charging ? root.urgent : root.foreground
+              }
+              Text {
+                anchors.verticalCenter: parent.verticalCenter
+                textFormat: Text.PlainText
+                text: root.batteryPercent + "%"
+                color: root.foreground
+                opacity: 0.8
+                font.family: "Adwaita Sans"
+                font.pixelSize: 12
+              }
+            }
+            Rectangle { width: 1; height: 16; color: root.foreground; opacity: 0.15; anchors.verticalCenter: parent.verticalCenter }
             Text {
               anchors.verticalCenter: parent.verticalCenter
               textFormat: Text.PlainText
-              text: root.batteryPercent + "%"
+              text: clock.date.toLocaleString(Qt.locale("id_ID"), "ddd d MMM · HH.mm")
               color: root.foreground
-              opacity: 0.8
               font.family: "Adwaita Sans"
               font.pixelSize: 12
+              font.bold: true
             }
-          }
-          Rectangle { width: 1; height: 16; color: root.foreground; opacity: 0.15; anchors.verticalCenter: parent.verticalCenter }
-          Text {
-            anchors.verticalCenter: parent.verticalCenter
-            textFormat: Text.PlainText
-            text: clock.date.toLocaleString(Qt.locale("id_ID"), "ddd d MMM · HH.mm")
-            color: root.foreground
-            font.family: "Adwaita Sans"
-            font.pixelSize: 12
-            font.bold: true
           }
         }
       }
 
       // The whole strip is the touch target. A downward pull past a small
       // threshold opens the sheet; a tap toggles it (in desktop mode, the
-      // status card, which leads to the sheet).
+      // status card, which leads to the sheet). Not in desktop mode: there
+      // only the status icons open the card (statusCluster), so a click or a
+      // drag at a window's top edge doesn't.
       MouseArea {
         id: touch
         anchors.fill: parent
+        enabled: !root.desktopMode
         property real pressY: 0
         property bool pulled: false
         readonly property real pullThreshold: Style.space(14)
@@ -469,11 +508,7 @@ Item {
             root.openQuickSettings()
           }
         }
-        onClicked: {
-          if (pulled) return
-          if (root.desktopMode) root.toggleDesktopCard()
-          else root.toggleQuickSettings()
-        }
+        onClicked: if (!pulled) root.toggleQuickSettings()
       }
     }
   }

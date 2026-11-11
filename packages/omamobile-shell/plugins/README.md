@@ -55,14 +55,24 @@ While it is on:
 - a dock: the app launcher (opened through `omarchy-shell shell toggle`,
   since the host lets a plugin summon only its own panels), then the seven
   apps last opened (`omamobile-launch`'s `recent-apps`, the launcher's Recent
-  row), a dot under those with a window. A click runs `omamobile-launch
+  row), a dot under those with a window. While the focused window is
+  maximized or fullscreen the dock slides away and reserves nothing; the
+  pointer at the bottom edge (or a tap there) brings it back over the window
+  until the pointer leaves its strip (a tap: four seconds). A click runs `omamobile-launch
   app`, which focuses an open window or starts the app on the current
   workspace (desktop mode keeps launches on screen);
 - the focused window's name, maximize and close in the middle of the bar,
-  since windows have no title bar (Super + W closes too);
-- a status card, opened by a tap on the bar (whose desktop layout shows the
-  mode's name, status and the date): the screen, a connected Bluetooth
-  keyboard and mouse, the battery, Settings (quick settings) and Mode ponsel,
+  since windows have no title bar (Super + W closes too). Maximize goes
+  through `hyprctl dispatch` (fullscreen_state 1): Omarchy suppresses the
+  windows' own maximize requests, so the toplevel's `maximized` can't be set;
+- the scale kept: on markw the panel fell back to the phone's scale a second
+  after waking from idle, with no Hyprland event, so a change in the
+  screen's size runs `omamobile-desktop-mode reapply`, which reloads only
+  when the scale is off;
+- a status card, opened by a tap on the bar's status icons and date (only
+  there: a maximized window's top edge sits under the bar): the screen, the
+  connected Bluetooth devices by name, the Wi-Fi network, the battery and
+  whether it charges, Settings (quick settings) and Mode ponsel,
   which switches back through the Desktop tile and its cover.
 
 `omamobile-desktop-mode` tells `omamobile.bar`, `omamobile.desktop`,
@@ -152,7 +162,7 @@ Microphone, Screenshot, Screen record, SSH Wi-Fi and Desktop start under
 | Rotation lock | `omamobile-autorotate` (omamobile-sensors): locked by `~/.local/state/omamobile/rotation-lock`; unlocking also enables the service. "No sensor" while the sensor proxy has no accelerometer |
 | Torch | The rear flash LED in torch mode (`brightnessctl --device=white:torch`); "No flash LED" without it |
 | Do not disturb | The notification service's `notifications` IPC target on this shell instance |
-| Desktop | `omamobile-desktop-mode on/off`: for a Bluetooth keyboard and mouse, the panel turns landscape at scale 1.5 with the pointer shown, new windows float centred at 860x540 instead of filling the screen, and the on-screen keyboard is turned off. It writes `$XDG_RUNTIME_DIR/omamobile-desktop-mode/desktop.lua`, which `hypr/phone.lua` loads last, and reloads Hyprland; off removes it and reloads. Settings in `~/.config/omamobile/desktop-mode.conf` (`TRANSFORM` 3 or 1, `SCALE`, `WIDTH`, `HEIGHT`). Design: `docs/design/desktop-mode/` |
+| Desktop | `omamobile-desktop-mode on/off`: for a Bluetooth keyboard and mouse, the panel turns landscape at scale 1.5 with the pointer shown, new windows float centred at 860x540 (smaller when that would reach under the bar or the dock) instead of filling the screen, and the on-screen keyboard is turned off. It writes `$XDG_RUNTIME_DIR/omamobile-desktop-mode/desktop.lua`, which `hypr/phone.lua` loads last, and reloads Hyprland; off removes it and reloads. Settings in `~/.config/omamobile/desktop-mode.conf` (`TRANSFORM` 3 or 1, `SCALE`, `WIDTH`, `HEIGHT`). Design: `docs/design/desktop-mode/` |
 | Keyboard | Shows or folds the on-screen keyboard (squeekboard's `sm.puri.OSK0` `SetVisible`); "No keyboard" without it on the session bus |
 | Fingerprint | Opens fingerprint setup (`omamobile.fingerprint`); the status counts this user's fingerprints through fprintd (`omamobile-fp-enroll list`); "No sensor" without fprintd or its device |
 | Brightness slider | `brightnessctl --class=backlight` (the panel backlight; dimmed when there is none) |

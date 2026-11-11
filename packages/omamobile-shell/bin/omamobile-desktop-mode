@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: MIT
 # Desktop mode on the phone's own screen, for the Desktop tile:
-#   omamobile-desktop-mode on|off|toggle|status [--kv]
+#   omamobile-desktop-mode on|off|toggle|status [--kv]|reapply
 # For a Bluetooth keyboard (and mouse): the panel turns landscape at a
 # smaller scale, the on-screen keyboard stays folded, and new windows float
 # centred at a desktop size instead of filling the screen. Off reloads
@@ -43,9 +43,42 @@ status() {
   fi
 }
 
-# The panel the session runs on: the first monitor Hyprland lists.
+# The panel the session runs on: the first monitor Hyprland lists, with its
+# mode's size in pixels (before any turn).
 monitor() {
-  hyprctl -j monitors | python3 -I -c 'import json, sys; m = json.load(sys.stdin); print(m[0]["name"] if m else "")'
+  hyprctl -j monitors | python3 -I -c '
+import json, sys
+m = json.load(sys.stdin)
+if m:
+    print(m[0]["name"], m[0].get("width", 0), m[0].get("height", 0))'
+}
+
+scale_now() {
+  hyprctl -j monitors 2>/dev/null | python3 -I -c '
+import json, sys
+try:
+    m = json.load(sys.stdin)
+    print(float(m[0]["scale"]))
+except Exception:
+    print("")' 2>/dev/null
+}
+
+# The room a window has in desktop mode, in logical pixels: the turned
+# panel at the scale, less room for the bar (36) and the dock (76), so a
+# new window opens between them, never under them.
+BAR=36 DOCK=76
+fit() { # PANEL_W PANEL_H SCALE WANT_W WANT_H -> W H
+  python3 -I -c '
+import sys
+pw, ph, scale, ww, wh = int(sys.argv[1]), int(sys.argv[2]), float(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5])
+bar, dock = int(sys.argv[6]), int(sys.argv[7])
+if pw <= 0 or ph <= 0:
+    print(ww, wh); sys.exit()
+lw, lh = max(pw, ph) / scale, min(pw, ph) / scale   # landscape
+# Hyprland centres a new window on the whole panel, not between the bar and
+# the dock, so it must clear the taller of the two on both sides.
+print(max(320, min(ww, int(lw - 64))), max(240, min(wh, int(lh - 2 * max(bar, dock) - 16))))
+' "$@" "$BAR" "$DOCK"
 }
 
 osk_key=(org.gnome.desktop.a11y.applications screen-keyboard-enabled)
@@ -134,13 +167,14 @@ arrange() { # desktop WIDTH HEIGHT | phone
 
 turn_on() {
   is_on && return 0
-  local transform scale width height mon
+  local transform scale width height mon panel_w panel_h
   transform=$(setting TRANSFORM 3 '1|3')
   scale=$(setting SCALE 1.5 '[0-9]+(\.[0-9]+)?')
   width=$(setting WIDTH 860 '[0-9]+')
   height=$(setting HEIGHT 540 '[0-9]+')
-  mon=$(monitor)
-  [[ -n $mon ]] || { echo "omamobile-desktop-mode: no monitor" >&2; exit 1; }
+  read -r mon panel_w panel_h < <(monitor) || true
+  [[ -n ${mon:-} ]] || { echo "omamobile-desktop-mode: no monitor" >&2; exit 1; }
+  read -r width height < <(fit "${panel_w:-0}" "${panel_h:-0}" "$scale" "$width" "$height")
 
   mkdir -p "$state"
   osk_get >"$state/osk" || true
@@ -159,11 +193,33 @@ LUA
   # screen size and its IPC calls time out.
   tell_shell on
   hyprctl reload >/dev/null
+  # On markw the first reload sometimes turned the panel but kept the old
+  # scale (2, from monitors.lua); a second one applied it. Once, if needed.
+  if [[ $(scale_now) != "$(python3 -I -c 'import sys; print(float(sys.argv[1]))' "$scale")" ]]; then
+    sleep 0.3
+    hyprctl reload >/dev/null
+  fi
   arrange desktop "$width" "$height"
 
   osk_set false || true
   osk_fold
   notify "Mode desktop menyala" "Super + Space: aplikasi · Super + Enter: terminal · Super + W: tutup. Matikan dari quick settings."
+}
+
+# The panel lost desktop mode's scale: on markw it went back to 2 (the
+# phone's) a second after waking from idle, keeping the turn, with no
+# Hyprland event and no rule asking for it. The shell (omamobile.desktop) runs
+# this when the screen's size changes; a reload puts the scale back, and does
+# nothing when it is right.
+reapply() {
+  is_on || return 0
+  local want
+  # The scale desktop.lua asks for (its first monitor rule).
+  want=$(sed -n 's/^hl\.monitor(.* scale = \([0-9][0-9.]*\),.*/\1/p' "$state/desktop.lua" 2>/dev/null | head -n1)
+  [[ $want =~ ^[0-9]+(\.[0-9]+)?$ ]] || return 0
+  want=$(python3 -I -c 'import sys; print(float(sys.argv[1]))' "$want")
+  [[ $(scale_now) == "$want" ]] && return 0
+  hyprctl reload >/dev/null
 }
 
 turn_off() {
@@ -183,5 +239,6 @@ case ${1:-} in
   off) turn_off ;;
   toggle) if is_on; then turn_off; else turn_on; fi ;;
   status) status "${2:-}" ;;
-  *) echo "usage: omamobile-desktop-mode on|off|toggle|status [--kv]" >&2; exit 2 ;;
+  reapply) reapply ;;
+  *) echo "usage: omamobile-desktop-mode on|off|toggle|status [--kv]|reapply" >&2; exit 2 ;;
 esac

@@ -3,6 +3,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Bluetooth
 import Quickshell.Io
+import Quickshell.Networking
 import Quickshell.Services.UPower
 import Quickshell.Wayland
 import qs.Commons
@@ -16,9 +17,11 @@ import qs.Commons as Commons
 //   - a dock at the bottom: the app launcher, then the apps last opened
 //     (omamobile-launch's recent-apps list), with a dot under the ones
 //     that have a window; a click focuses the window or starts the app
-//     through omamobile-launch, which keeps it on this screen in desktop mode;
+//     through omamobile-launch, which keeps it on this screen in desktop mode.
+//     It hides while the focused window fills the screen, and the bottom
+//     edge brings it back;
 //   - a status card under the bar's right end (the bar opens it through the
-//     host): the screen, the keyboard and mouse, the battery, quick
+//     host): the screen, Bluetooth, Wi-Fi and the battery, quick
 //     settings, and the way back to phone mode.
 //
 // The mode script says when the mode changes (IPC setDesktopMode); this asks
@@ -50,7 +53,12 @@ Item {
     else close()
   }
 
-  onDesktopModeChanged: if (!desktopMode) close()
+  // Also checks the scale when the mode comes on or the shell loads into it:
+  // it may have drifted while nothing here was listening.
+  onDesktopModeChanged: {
+    if (!desktopMode) close()
+    else reapplyTimer.restart()
+  }
 
   Process {
     command: ["omamobile-desktop-mode", "status"]
@@ -163,14 +171,30 @@ Item {
     return out
   }
 
-  function deviceOf(kind) {
+  readonly property bool bluetoothOn: !!Bluetooth.defaultAdapter && Bluetooth.defaultAdapter.enabled
+  readonly property string bluetoothText: {
+    if (!bluetoothOn) return "Mati"
+    if (connectedDevices.length === 0) return "Tidak ada yang tersambung"
+    var names = []
     for (var i = 0; i < connectedDevices.length; i++)
-      if (String(connectedDevices[i].icon || "").indexOf(kind) >= 0) return connectedDevices[i]
-    return null
+      names.push(connectedDevices[i].name || connectedDevices[i].deviceName || "Perangkat")
+    return names.join(", ")
   }
 
-  readonly property var keyboardDevice: deviceOf("keyboard")
-  readonly property var mouseDevice: deviceOf("mouse")
+  // The Wi-Fi network in use, found as the bar finds it.
+  readonly property var wifiNetwork: {
+    var devices = Networking.devices ? Networking.devices.values : []
+    for (var i = 0; i < devices.length; i++) {
+      var device = devices[i]
+      if (!device || device.type !== DeviceType.Wifi || !device.networks) continue
+      var networks = device.networks.values
+      for (var j = 0; j < networks.length; j++)
+        if (networks[j] && networks[j].connected) return networks[j]
+    }
+    return null
+  }
+  readonly property string wifiText: wifiNetwork ? (wifiNetwork.name || "Tersambung")
+    : Networking.wifiEnabled ? "Tidak tersambung" : "Mati"
 
   readonly property var battery: UPower.displayDevice
   readonly property bool hasBattery: !!battery && battery.isPresent === true
@@ -178,6 +202,22 @@ Item {
   readonly property bool charging: hasBattery && !UPower.onBattery
 
   readonly property var panel: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
+
+  // On markw the panel went back to the phone's scale a second after waking
+  // from idle, with no Hyprland event to say so; its size changing is the
+  // sign. The mode script reloads only if the scale is really off.
+  Connections {
+    target: root.panel
+    ignoreUnknownSignals: true
+    function onWidthChanged() { if (root.desktopMode) reapplyTimer.restart() }
+    function onHeightChanged() { if (root.desktopMode) reapplyTimer.restart() }
+  }
+
+  Timer {
+    id: reapplyTimer
+    interval: 600
+    onTriggered: Quickshell.execDetached(["omamobile-desktop-mode", "reapply"])
+  }
 
   // ---------------------------------------------------------------- backdrop
 
@@ -207,6 +247,28 @@ Item {
 
   // ---------------------------------------------------------------- dock
 
+  // The dock hides while the focused window fills the screen (maximized or
+  // fullscreen) and gives it the dock's room; the pointer at the bottom edge,
+  // or a tap there, brings it back over the window until the pointer leaves.
+  readonly property var activeWindow: ToplevelManager.activeToplevel
+  readonly property bool windowFills: !!activeWindow && (activeWindow.maximized || activeWindow.fullscreen)
+  property bool dockPeek: false
+  readonly property bool dockHidden: windowFills && !dockPeek
+
+  onWindowFillsChanged: if (windowFills) dockPeek = false
+
+  Timer {
+    id: dockHideTimer
+    interval: 700
+    onTriggered: root.dockPeek = false
+  }
+
+  Timer {
+    id: dockTouchTimer
+    interval: 4000
+    onTriggered: root.dockPeek = false
+  }
+
   PanelWindow {
     id: dockWindow
 
@@ -214,54 +276,89 @@ Item {
     screen: root.panel
     anchors { bottom: true; left: true; right: true }
     implicitHeight: 76
-    exclusionMode: ExclusionMode.Auto
+    // Hidden, it reserves nothing, so a maximized window reaches the bottom.
+    exclusionMode: root.windowFills ? ExclusionMode.Ignore : ExclusionMode.Auto
     color: "transparent"
     WlrLayershell.namespace: "omamobile-desktop-dock"
     WlrLayershell.layer: WlrLayer.Top
-    // Only the dock itself takes the pointer; the strip beside it is the
-    // windows'.
-    mask: Region { item: dock }
+    // Only the dock itself takes the pointer, or while it hides, a strip
+    // along the bottom edge; the rest is the windows'.
+    // While it peeks over a window, the whole strip it stands in, so it
+    // stays until the pointer leaves that strip.
+    mask: Region { item: root.dockHidden ? dockEdge : root.windowFills ? dockZone : dock }
 
-    Rectangle {
-      id: dock
-      anchors.horizontalCenter: parent.horizontalCenter
-      anchors.bottom: parent.bottom
-      anchors.bottomMargin: 12
-      height: 56
-      width: dockRow.implicitWidth + 12
-      radius: 18
-      color: Qt.rgba(root.background.r, root.background.g, root.background.b, 0.92)
-      border.width: 1
-      border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
+    // The strip the dock stands in: leaving it hides a peeking dock. A touch
+    // has no pointer to leave, so a dock raised by a tap hides after a while.
+    Item {
+      id: dockZone
+      anchors.fill: parent
 
-      Row {
-        id: dockRow
-        anchors.centerIn: parent
-        spacing: 4
-
-        DockButton {
-          highlighted: true
-          glyph: "󰀻"
-          onActivated: root.openLauncher()
+      HoverHandler {
+        onHoveredChanged: {
+          if (hovered) dockHideTimer.stop()
+          else if (root.dockPeek) dockHideTimer.restart()
         }
+      }
 
-        Rectangle {
-          visible: root.dockApps.length > 0
-          width: 1; height: 26
-          anchors.verticalCenter: parent.verticalCenter
-          color: root.foreground
-          opacity: 0.12
+      Item {
+        id: dockEdge
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: 4
+
+        MouseArea {
+          anchors.fill: parent
+          hoverEnabled: true
+          onEntered: { dockHideTimer.stop(); root.dockPeek = true }
+          onPressed: { root.dockPeek = true; dockTouchTimer.restart() }
         }
+      }
 
-        Repeater {
-          model: root.dockApps
-          delegate: DockButton {
-            required property string modelData
-            readonly property var entry: root.entryFor(modelData)
-            icon: root.iconFor(entry)
-            glyph: icon === "" ? "󰀻" : ""
-            showDot: root.running(modelData, entry)
-            onActivated: root.launch(modelData)
+      Rectangle {
+        id: dock
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: root.dockHidden ? -height - 4 : 12
+        Behavior on anchors.bottomMargin { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+        opacity: root.dockHidden ? 0 : 1
+        Behavior on opacity { NumberAnimation { duration: 180 } }
+        height: 56
+        width: dockRow.implicitWidth + 12
+        radius: 18
+        color: Qt.rgba(root.background.r, root.background.g, root.background.b, 0.92)
+        border.width: 1
+        border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
+
+        Row {
+          id: dockRow
+          anchors.centerIn: parent
+          spacing: 4
+
+          DockButton {
+            highlighted: true
+            glyph: "󰀻"
+            onActivated: root.openLauncher()
+          }
+
+          Rectangle {
+            visible: root.dockApps.length > 0
+            width: 1; height: 26
+            anchors.verticalCenter: parent.verticalCenter
+            color: root.foreground
+            opacity: 0.12
+          }
+
+          Repeater {
+            model: root.dockApps
+            delegate: DockButton {
+              required property string modelData
+              readonly property var entry: root.entryFor(modelData)
+              icon: root.iconFor(entry)
+              glyph: icon === "" ? "󰀻" : ""
+              showDot: root.running(modelData, entry)
+              onActivated: root.launch(modelData)
+            }
           }
         }
       }
@@ -409,23 +506,23 @@ Item {
         }
 
         StatusRow {
-          glyph: "󰌌"
-          label: root.keyboardDevice ? root.keyboardDevice.name : "Keyboard"
-          value: root.keyboardDevice ? "Tersambung" : "Tidak ada"
-          good: !!root.keyboardDevice
+          glyph: root.connectedDevices.length > 0 ? "󰂱" : "󰂯"
+          label: "Bluetooth"
+          value: root.bluetoothText
+          good: root.connectedDevices.length > 0
         }
         StatusRow {
-          glyph: "󰍽"
-          label: root.mouseDevice ? root.mouseDevice.name : "Mouse"
-          value: root.mouseDevice ? "Tersambung" : "Tidak ada"
-          good: !!root.mouseDevice
+          glyph: root.wifiNetwork ? "󰤨" : "󰤭"
+          label: "Wi-Fi"
+          value: root.wifiText
+          good: !!root.wifiNetwork
         }
-        StatusRow { glyph: "󰆽"; label: "Layar sentuh"; value: "Aktif" }
         StatusRow {
           visible: root.hasBattery
-          glyph: "󰁹"
-          label: "Baterai HP"
-          value: root.batteryPercent + "%" + (root.charging ? " · mengisi" : "")
+          glyph: root.charging ? "󰂄" : "󰁹"
+          label: "Baterai"
+          value: root.batteryPercent + "%" + (root.charging ? " · mengisi" : " · tidak mengisi")
+          good: root.charging
         }
 
         Item { width: 1; height: 6 }
@@ -494,6 +591,10 @@ Item {
       id: rowValue
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
+      // Device and network names can be long: a share of the row, elided.
+      width: Math.min(implicitWidth, parent.width * 0.62)
+      elide: Text.ElideRight
+      horizontalAlignment: Text.AlignRight
       text: parent.value
       muted: !parent.good
       color: parent.good ? root.accent : root.foreground
