@@ -905,7 +905,7 @@ Item {
                   text: modelData[0]
                   color: Qt.darker(root.foreground, 1.2)
                   font.family: root.textFont
-                  font.pixelSize: 10.5
+                  font.pixelSize: 11
                 }
               }
               Text {
