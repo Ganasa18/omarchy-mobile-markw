@@ -40,6 +40,9 @@
     },
     {
       "id": "omamobile.call"
+    },
+    {
+      "id": "omamobile.desktop"
     }
   ]
 }

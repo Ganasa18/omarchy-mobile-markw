@@ -29,6 +29,28 @@ import "LauncherModel.js" as LauncherModel
 Item {
   id: root
 
+  // Desktop mode (omamobile-desktop-mode): the home bar steps aside for the
+  // desktop's backdrop and dock (omamobile.desktop). The mode script says
+  // when it changes; this asks once at load.
+  property bool desktopMode: false
+
+  Process {
+    command: ["omamobile-desktop-mode", "status"]
+    running: true
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.desktopMode = String(text || "").trim() === "on"
+    }
+  }
+
+  IpcHandler {
+    target: "omamobile.launcher"
+    function setDesktopMode(state: string): string {
+      root.desktopMode = state === "on"
+      return "ok"
+    }
+  }
+
   // Injected by the host.
   property string omarchyPath: Quickshell.env("OMARCHY_PATH")
   property var shell: null
@@ -188,6 +210,34 @@ Item {
     else launchApp(apps[0])
   }
 
+  // ---------------------------------------------------------------- desktop menu
+
+  // Desktop mode's menu: a grid, A–Z until something is typed (then ranked
+  // as on the phone), walked with the arrow keys.
+  readonly property int desktopColumns: 6
+  property int desktopIndex: 0
+  readonly property color menuBackground: Commons.Color.menu.background
+  readonly property var desktopApps: {
+    if (hasQuery || !appLibrary) return apps
+    var lib = appLibrary
+    return apps.slice().sort(function(a, b) {
+      return String(lib.entryName(a)).localeCompare(String(lib.entryName(b)), undefined, { sensitivity: "base" })
+    })
+  }
+  onDesktopAppsChanged: desktopIndex = 0
+
+  function moveDesktop(step) {
+    var count = desktopApps.length
+    if (count === 0) return
+    desktopIndex = Math.max(0, Math.min(count - 1, desktopIndex + step))
+    desktopGrid.positionViewAtIndex(desktopIndex, GridView.Contain)
+  }
+
+  function activateDesktop() {
+    if (hasQuery && (promptMode || desktopApps.length === 0)) askAgent(query)
+    else if (desktopApps.length > 0) launchApp(desktopApps[Math.min(desktopIndex, desktopApps.length - 1)])
+  }
+
   // ---------------------------------------------------------------- lifecycle
 
   // `shell summon omamobile.launcher '{"query":"..."}'` opens the
@@ -286,7 +336,7 @@ Item {
 
       // Hidden while the drawer is open, so the on-screen keyboard takes the
       // bottom edge and the drawer's input sits right above it.
-      visible: !root.opened
+      visible: !root.opened && !root.desktopMode
       anchors { bottom: true; left: true; right: true }
       implicitHeight: root.dockHeight
       exclusionMode: ExclusionMode.Auto
@@ -361,15 +411,24 @@ Item {
     WlrLayershell.layer: WlrLayer.Top
     // OnDemand, not Exclusive: Hyprland sends no touch to other layers while
     // one holds exclusive focus, and that includes the on-screen keyboard.
-    WlrLayershell.keyboardFocus: root.opened ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
+    // In desktop mode there is no on-screen keyboard, and the menu should
+    // take typing at once without a click first: Exclusive.
+    WlrLayershell.keyboardFocus: !root.opened ? WlrKeyboardFocus.None
+      : root.desktopMode ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.OnDemand
 
     // The keyboard comes up only to type: on a tap in the input, or when the
     // drawer opens with text already in it. Opened by a swipe, the list shows
     // whole, as in the design.
-    onVisibleChanged: if (visible && root.hasQuery) Qt.callLater(function() { input.forceActiveFocus() })
+    // In desktop mode the search takes the keyboard at once: there is no
+    // on-screen keyboard to raise, and typing is how a desktop launcher works.
+    onVisibleChanged: {
+      if (visible && root.desktopMode) Qt.callLater(function() { desktopInput.forceActiveFocus() })
+      else if (visible && root.hasQuery) Qt.callLater(function() { input.forceActiveFocus() })
+    }
 
     Rectangle {
       id: sheet
+      visible: !root.desktopMode
       width: parent.width
       height: parent.height
       y: Math.round((1 - root.reveal) * Style.space(80))
@@ -621,6 +680,258 @@ Item {
         font.pixelSize: Style.font.body
       }
     }
+
+    // ---------- Desktop mode: a menu over the dock instead of the sheet
+    // (docs/design/desktop-mode/launcher.png). The window already sits
+    // between the bar and the desktop's dock; a click beside the menu closes it.
+    Rectangle {
+      anchors.fill: parent
+      visible: root.desktopMode
+      color: Qt.rgba(0, 0, 0, 0.4 * root.reveal)
+
+      MouseArea {
+        anchors.fill: parent
+        onClicked: root.dismiss()
+      }
+    }
+
+    Rectangle {
+      id: menu
+      visible: root.desktopMode
+      width: Math.min(660, parent.width - 32)
+      height: Math.min(500, parent.height - 24)
+      anchors.horizontalCenter: parent.horizontalCenter
+      y: parent.height - height - 8 + Math.round((1 - root.reveal) * 24)
+      opacity: root.reveal
+      radius: 22
+      color: Qt.rgba(root.menuBackground.r, root.menuBackground.g, root.menuBackground.b, 0.97)
+      border.width: 1
+      border.color: Util.alpha(root.foreground, 0.08)
+
+      // Swallows clicks between the cells, so they don't reach the dim layer.
+      MouseArea { anchors.fill: parent }
+
+      TextField {
+        id: desktopInput
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.topMargin: 18
+        anchors.leftMargin: 20
+        anchors.rightMargin: 20
+        height: 42
+        verticalAlignment: TextInput.AlignVCenter
+        font.family: root.textFont
+        font.pixelSize: 14
+        background: Rectangle {
+          radius: 13
+          color: Util.alpha(root.foreground, 0.07)
+          border.width: 1
+          border.color: desktopInput.activeFocus ? Util.alpha(Commons.Color.accent, 0.5) : "transparent"
+        }
+        leftPadding: 42
+        placeholderText: root.hasAgent ? "Cari aplikasi atau tanya " + root.agentName + "…" : "Cari aplikasi…"
+        foreground: root.foreground
+        text: root.query
+        onTextEdited: root.query = text
+        Keys.onReturnPressed: root.activateDesktop()
+        Keys.onEnterPressed: root.activateDesktop()
+        Keys.onEscapePressed: {
+          if (root.query) root.query = ""
+          else root.dismiss()
+        }
+        Keys.onUpPressed: root.moveDesktop(-root.desktopColumns)
+        Keys.onDownPressed: root.moveDesktop(root.desktopColumns)
+        Keys.onLeftPressed: root.moveDesktop(-1)
+        Keys.onRightPressed: root.moveDesktop(1)
+        Keys.onTabPressed: root.moveDesktop(1)
+
+        Text {
+          anchors.left: parent.left
+          anchors.leftMargin: 14
+          anchors.verticalCenter: parent.verticalCenter
+          textFormat: Text.PlainText
+          text: root.promptMode ? "󰚩" : "󰍉"
+          color: Commons.Color.accent
+          font.family: Style.font.family
+          font.pixelSize: 17
+        }
+      }
+
+      // Text that reads as a prompt: Enter asks the agent.
+      Rectangle {
+        id: desktopAsk
+        visible: root.hasQuery && (root.promptMode || root.desktopApps.length === 0)
+        anchors.top: desktopInput.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.topMargin: 10
+        anchors.leftMargin: 20
+        anchors.rightMargin: 20
+        height: visible ? 44 : 0
+        radius: 12
+        color: root.promptMode ? Commons.Color.menu.selectedBackground : Util.alpha(root.foreground, 0.05)
+
+        Text {
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.leftMargin: 14
+          anchors.rightMargin: 14
+          anchors.verticalCenter: parent.verticalCenter
+          textFormat: Text.PlainText
+          text: (root.hasAgent ? "Tanya " + root.agentName : "Pilih agent") + "  ·  " + root.query.trim()
+          color: root.promptMode ? Commons.Color.menu.selectedText : root.foreground
+          font.family: root.textFont
+          font.pixelSize: 13
+          elide: Text.ElideRight
+        }
+
+        MouseArea {
+          anchors.fill: parent
+          cursorShape: Qt.PointingHandCursor
+          onClicked: root.askAgent(root.query)
+        }
+      }
+
+      Item {
+        id: desktopLabel
+        anchors.top: desktopAsk.visible ? desktopAsk.bottom : desktopInput.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.topMargin: 16
+        anchors.leftMargin: 24
+        anchors.rightMargin: 24
+        height: 22
+
+        Text {
+          anchors.left: parent.left
+          anchors.verticalCenter: parent.verticalCenter
+          textFormat: Text.PlainText
+          text: root.hasQuery ? "HASIL" : "SEMUA APLIKASI"
+          color: Qt.darker(root.foreground, 1.6)
+          font.family: root.textFont
+          font.pixelSize: 11
+          font.weight: Font.Bold
+          font.letterSpacing: 1.6
+        }
+
+        Text {
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          textFormat: Text.PlainText
+          text: root.desktopApps.length + " aplikasi" + (root.hasQuery ? "" : " · A–Z")
+          color: Qt.darker(root.foreground, 1.6)
+          font.family: root.textFont
+          font.pixelSize: 11
+        }
+      }
+
+      GridView {
+        id: desktopGrid
+        anchors.top: desktopLabel.bottom
+        anchors.bottom: desktopFoot.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.topMargin: 8
+        anchors.leftMargin: 20
+        anchors.rightMargin: 20
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        cellWidth: Math.floor(width / root.desktopColumns)
+        cellHeight: 92
+        model: root.desktopApps
+        currentIndex: root.desktopIndex
+        highlightFollowsCurrentItem: false
+        opacity: root.promptMode ? 0.5 : 1
+
+        delegate: DesktopCell {
+          required property var modelData
+          required property int index
+          width: desktopGrid.cellWidth
+          height: desktopGrid.cellHeight
+          entry: modelData
+          highlighted: index === root.desktopIndex && !root.promptMode
+          onHovered: root.desktopIndex = index
+          onTapped: root.launchApp(modelData)
+        }
+
+        Text {
+          anchors.centerIn: parent
+          visible: root.hasQuery && root.desktopApps.length === 0 && !desktopAsk.visible
+          textFormat: Text.PlainText
+          text: "Tidak ada aplikasi yang cocok"
+          color: Qt.darker(root.foreground, 1.6)
+          font.family: root.textFont
+          font.pixelSize: 13
+        }
+      }
+
+      Rectangle {
+        id: desktopFoot
+        anchors.bottom: parent.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.margins: 1
+        height: 44
+        color: "transparent"
+
+        Rectangle {
+          anchors.top: parent.top
+          width: parent.width
+          height: 1
+          color: Util.alpha(root.foreground, 0.08)
+        }
+
+        Row {
+          anchors.left: parent.left
+          anchors.leftMargin: 20
+          anchors.verticalCenter: parent.verticalCenter
+          spacing: 14
+          Repeater {
+            model: [["↑ ↓ ← →", "pilih"], ["Enter", root.promptMode ? "tanya" : "buka"], ["Esc", "tutup"]]
+            delegate: Row {
+              required property var modelData
+              spacing: 6
+              Rectangle {
+                width: keyText.implicitWidth + 12
+                height: 20
+                radius: 5
+                anchors.verticalCenter: parent.verticalCenter
+                color: Util.alpha(root.foreground, 0.07)
+                Text {
+                  id: keyText
+                  anchors.centerIn: parent
+                  textFormat: Text.PlainText
+                  text: modelData[0]
+                  color: Qt.darker(root.foreground, 1.2)
+                  font.family: root.textFont
+                  font.pixelSize: 10.5
+                }
+              }
+              Text {
+                anchors.verticalCenter: parent.verticalCenter
+                textFormat: Text.PlainText
+                text: modelData[1]
+                color: Qt.darker(root.foreground, 1.6)
+                font.family: root.textFont
+                font.pixelSize: 11
+              }
+            }
+          }
+        }
+
+        Text {
+          anchors.right: parent.right
+          anchors.rightMargin: 20
+          anchors.verticalCenter: parent.verticalCenter
+          textFormat: Text.PlainText
+          text: "Ketik untuk mencari"
+          color: Qt.darker(root.foreground, 1.6)
+          font.family: root.textFont
+          font.pixelSize: 11
+        }
+      }
+    }
   }
 
   // ---------------------------------------------------------------- parts
@@ -756,6 +1067,65 @@ Item {
       anchors.fill: parent
       onClicked: row.tapped()
       onPressAndHold: row.held()
+    }
+  }
+
+  // One app in desktop mode's menu: icon over a one-line name; the pointer
+  // selects it, as the arrow keys do.
+  component DesktopCell: Item {
+    id: dcell
+
+    property var entry: null
+    property bool highlighted: false
+    signal tapped()
+    signal hovered()
+
+    Rectangle {
+      anchors.fill: parent
+      anchors.margins: 3
+      radius: 14
+      color: dcellMouse.pressed ? Util.alpha(root.foreground, 0.14)
+        : dcell.highlighted ? Util.alpha(root.foreground, 0.08) : "transparent"
+    }
+
+    Image {
+      id: dcellIcon
+      anchors.horizontalCenter: parent.horizontalCenter
+      anchors.top: parent.top
+      anchors.topMargin: 14
+      width: 42
+      height: 42
+      fillMode: Image.PreserveAspectFit
+      asynchronous: true
+      sourceSize.width: width * Screen.devicePixelRatio
+      sourceSize.height: height * Screen.devicePixelRatio
+      source: root.appLibrary && dcell.entry ? root.appLibrary.iconSource(dcell.entry.icon) : ""
+    }
+
+    Text {
+      anchors.top: dcellIcon.bottom
+      anchors.topMargin: 8
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.leftMargin: 6
+      anchors.rightMargin: 6
+      horizontalAlignment: Text.AlignHCenter
+      textFormat: Text.PlainText
+      text: root.appLibrary && dcell.entry ? root.appLibrary.entryName(dcell.entry) : ""
+      color: root.foreground
+      opacity: dcell.highlighted ? 1 : 0.8
+      font.family: root.textFont
+      font.pixelSize: 12
+      elide: Text.ElideRight
+    }
+
+    MouseArea {
+      id: dcellMouse
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onEntered: dcell.hovered()
+      onClicked: dcell.tapped()
     }
   }
 

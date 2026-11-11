@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "omamobile.desktop",
+  "name": "Desktop mode",
+  "version": "0.1.0",
+  "author": "Omarchy Mobile",
+  "license": "MIT",
+  "description": "The desktop for desktop mode (omamobile-desktop-mode, the Desktop tile): a plain backdrop, a dock with the launcher and the apps last opened, and a status card from the bar with the screen, keyboard, mouse and battery, quick settings and the way back to phone mode.",
+  "kinds": [
+    "panel"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "panel": "Desktop.qml"
+  }
+}

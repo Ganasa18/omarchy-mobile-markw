@@ -93,6 +93,11 @@ case $tile in
     # behind the tile picks other times); polkit lets the user start it.
     if [ "$want" = on ]; then exec omamobile-ssh-wifi on; else exec omamobile-ssh-wifi off; fi
     ;;
+  desktop)
+    # omamobile-desktop-mode turns the screen landscape for a keyboard and
+    # mouse; off reloads Hyprland's configuration (the phone's rules).
+    exec omamobile-desktop-mode "$want"
+    ;;
   *)
     echo "tile-action.sh: unknown tile $tile" >&2
     exit 2
