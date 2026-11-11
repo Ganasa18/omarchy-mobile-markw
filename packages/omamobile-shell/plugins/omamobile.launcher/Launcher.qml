@@ -730,7 +730,7 @@ Item {
           border.color: desktopInput.activeFocus ? Util.alpha(Commons.Color.accent, 0.5) : "transparent"
         }
         leftPadding: 42
-        placeholderText: root.hasAgent ? "Cari aplikasi atau tanya " + root.agentName + "…" : "Cari aplikasi…"
+        placeholderText: root.hasAgent ? "Search apps or ask " + root.agentName + "…" : "Search apps…"
         foreground: root.foreground
         text: root.query
         onTextEdited: root.query = text
@@ -779,7 +779,7 @@ Item {
           anchors.rightMargin: 14
           anchors.verticalCenter: parent.verticalCenter
           textFormat: Text.PlainText
-          text: (root.hasAgent ? "Tanya " + root.agentName : "Pilih agent") + "  ·  " + root.query.trim()
+          text: (root.hasAgent ? "Ask " + root.agentName : "Choose your agent") + "  ·  " + root.query.trim()
           color: root.promptMode ? Commons.Color.menu.selectedText : root.foreground
           font.family: root.textFont
           font.pixelSize: 13
@@ -807,7 +807,7 @@ Item {
           anchors.left: parent.left
           anchors.verticalCenter: parent.verticalCenter
           textFormat: Text.PlainText
-          text: root.hasQuery ? "HASIL" : "SEMUA APLIKASI"
+          text: root.hasQuery ? "RESULTS" : "ALL APPS"
           color: Qt.darker(root.foreground, 1.6)
           font.family: root.textFont
           font.pixelSize: 11
@@ -819,7 +819,7 @@ Item {
           anchors.right: parent.right
           anchors.verticalCenter: parent.verticalCenter
           textFormat: Text.PlainText
-          text: root.desktopApps.length + " aplikasi" + (root.hasQuery ? "" : " · A–Z")
+          text: root.desktopApps.length + (root.desktopApps.length === 1 ? " app" : " apps") + (root.hasQuery ? "" : " · A–Z")
           color: Qt.darker(root.foreground, 1.6)
           font.family: root.textFont
           font.pixelSize: 11
@@ -859,7 +859,7 @@ Item {
           anchors.centerIn: parent
           visible: root.hasQuery && root.desktopApps.length === 0 && !desktopAsk.visible
           textFormat: Text.PlainText
-          text: "Tidak ada aplikasi yang cocok"
+          text: "No apps match"
           color: Qt.darker(root.foreground, 1.6)
           font.family: root.textFont
           font.pixelSize: 13
@@ -888,7 +888,7 @@ Item {
           anchors.verticalCenter: parent.verticalCenter
           spacing: 14
           Repeater {
-            model: [["↑ ↓ ← →", "pilih"], ["Enter", root.promptMode ? "tanya" : "buka"], ["Esc", "tutup"]]
+            model: [["↑ ↓ ← →", "select"], ["Enter", root.promptMode ? "ask" : "open"], ["Esc", "close"]]
             delegate: Row {
               required property var modelData
               spacing: 6
@@ -925,7 +925,7 @@ Item {
           anchors.rightMargin: 20
           anchors.verticalCenter: parent.verticalCenter
           textFormat: Text.PlainText
-          text: "Ketik untuk mencari"
+          text: "Type to search"
           color: Qt.darker(root.foreground, 1.6)
           font.family: root.textFont
           font.pixelSize: 11

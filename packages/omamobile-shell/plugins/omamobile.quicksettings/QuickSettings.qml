@@ -528,7 +528,7 @@ Item {
 
         Text {
           anchors.horizontalCenter: parent.horizontalCenter
-          text: modeSwitch.toDesktop ? "Mode desktop" : "Mode ponsel"
+          text: modeSwitch.toDesktop ? "Desktop mode" : "Phone mode"
           color: Commons.Color.popups.text
           font.family: Style.font.family
           font.pixelSize: Style.font.title

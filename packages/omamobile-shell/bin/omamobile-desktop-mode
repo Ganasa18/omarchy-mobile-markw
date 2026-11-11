@@ -203,7 +203,7 @@ LUA
 
   osk_set false || true
   osk_fold
-  notify "Mode desktop menyala" "Super + Space: aplikasi · Super + Enter: terminal · Super + W: tutup. Matikan dari quick settings."
+  notify "Desktop mode on" "Super + Space: apps · Super + Enter: terminal · Super + W: close. Turn it off in quick settings."
 }
 
 # The panel lost desktop mode's scale: on markw it went back to 2 (the

@@ -50,7 +50,7 @@ laci di ponsel. Daftarnya jadi menu mengambang di atas dock, sekitar 660 × 500:
 Tidak ada baris "Terakhir dibuka": dock sudah berisi aplikasi yang terakhir
 dibuka.
 
-## Screenshot asli (markw, 2026-11-11, omamobile-shell 0.2.35)
+## Screenshot asli (markw, 2026-11-11, omamobile-shell 0.2.36, English)
 
 Diambil dengan `grim` di HP, pada skala 1,5 (1280 × 720):
 

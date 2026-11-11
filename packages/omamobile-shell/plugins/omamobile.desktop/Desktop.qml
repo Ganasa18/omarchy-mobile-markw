@@ -173,11 +173,11 @@ Item {
 
   readonly property bool bluetoothOn: !!Bluetooth.defaultAdapter && Bluetooth.defaultAdapter.enabled
   readonly property string bluetoothText: {
-    if (!bluetoothOn) return "Mati"
-    if (connectedDevices.length === 0) return "Tidak ada yang tersambung"
+    if (!bluetoothOn) return "Off"
+    if (connectedDevices.length === 0) return "Nothing connected"
     var names = []
     for (var i = 0; i < connectedDevices.length; i++)
-      names.push(connectedDevices[i].name || connectedDevices[i].deviceName || "Perangkat")
+      names.push(connectedDevices[i].name || connectedDevices[i].deviceName || "Device")
     return names.join(", ")
   }
 
@@ -193,8 +193,8 @@ Item {
     }
     return null
   }
-  readonly property string wifiText: wifiNetwork ? (wifiNetwork.name || "Tersambung")
-    : Networking.wifiEnabled ? "Tidak tersambung" : "Mati"
+  readonly property string wifiText: wifiNetwork ? (wifiNetwork.name || "Connected")
+    : Networking.wifiEnabled ? "Not connected" : "Off"
 
   readonly property var battery: UPower.displayDevice
   readonly property bool hasBattery: !!battery && battery.isPresent === true
@@ -490,7 +490,7 @@ Item {
           Column {
             anchors.verticalCenter: parent.verticalCenter
             spacing: 1
-            CardText { text: "Layar HP"; font.bold: true; font.pixelSize: 14 }
+            CardText { text: "Phone screen"; font.bold: true; font.pixelSize: 14 }
             CardText {
               text: root.panel ? "Landscape · " + root.panel.width + " × " + root.panel.height : "Landscape"
               muted: true
@@ -520,8 +520,8 @@ Item {
         StatusRow {
           visible: root.hasBattery
           glyph: root.charging ? "󰂄" : "󰁹"
-          label: "Baterai"
-          value: root.batteryPercent + "%" + (root.charging ? " · mengisi" : " · tidak mengisi")
+          label: "Battery"
+          value: root.batteryPercent + "%" + (root.charging ? " · charging" : " · not charging")
           good: root.charging
         }
 
@@ -534,13 +534,13 @@ Item {
           CardButton {
             width: (parent.width - parent.spacing) / 2
             glyph: "󰒓"
-            label: "Pengaturan"
+            label: "Settings"
             onActivated: root.openQuickSettings()
           }
           CardButton {
             width: (parent.width - parent.spacing) / 2
             glyph: "󰄜"
-            label: "Mode ponsel"
+            label: "Phone mode"
             onActivated: root.phoneMode()
           }
         }

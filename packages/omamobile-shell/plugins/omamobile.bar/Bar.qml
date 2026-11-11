@@ -363,7 +363,7 @@ Item {
           Text {
             anchors.verticalCenter: parent.verticalCenter
             textFormat: Text.PlainText
-            text: "MODE DESKTOP"
+            text: "DESKTOP MODE"
             color: Commons.Color.bar.text
             opacity: 0.7
             font.family: "Adwaita Sans"
@@ -478,7 +478,7 @@ Item {
             Text {
               anchors.verticalCenter: parent.verticalCenter
               textFormat: Text.PlainText
-              text: clock.date.toLocaleString(Qt.locale("id_ID"), "ddd d MMM · HH.mm")
+              text: clock.date.toLocaleString(Qt.locale("en_US"), "ddd d MMM · HH:mm")
               color: root.foreground
               font.family: "Adwaita Sans"
               font.pixelSize: 12

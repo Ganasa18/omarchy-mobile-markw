@@ -72,7 +72,7 @@ While it is on:
 - a status card, opened by a tap on the bar's status icons and date (only
   there: a maximized window's top edge sits under the bar): the screen, the
   connected Bluetooth devices by name, the Wi-Fi network, the battery and
-  whether it charges, Settings (quick settings) and Mode ponsel,
+  whether it charges, Settings (quick settings) and Phone mode,
   which switches back through the Desktop tile and its cover.
 
 `omamobile-desktop-mode` tells `omamobile.bar`, `omamobile.desktop`,
