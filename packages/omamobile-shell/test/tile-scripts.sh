@@ -12,7 +12,7 @@ pass() { printf 'ok - %s\n' "$1"; }
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 fake=$tmp/bin; basic=$tmp/basic; log=$tmp/log
 mkdir -p "$fake" "$basic" "$tmp/home/.local/state/omarchy/current" "$tmp/state"
-for tool in sh awk sort cat head grep mkdir rm timeout printf; do
+for tool in sh awk sort cat head grep mkdir rm timeout printf date; do
   ln -s "$(command -v "$tool")" "$basic/$tool"
 done
 : >"$log"
@@ -102,3 +102,49 @@ pass "the desktop tile goes through omamobile-desktop-mode"
 if run "$dir/tile-action.sh" wifi on 2>/dev/null; then fail "unknown tiles are refused"; fi
 if run "$dir/tile-action.sh" airplane maybe 2>/dev/null; then fail "only on and off are accepted"; fi
 pass "tile-action.sh refuses unknown tiles and states"
+
+# Mobile data without omamobile-sit: NetworkManager's gsm device and profile
+# (ModemManager's modem, as on markw).
+rm -f "$fake/omamobile-sit"
+stub nmcli '
+echo "nmcli $*" >>'"$log"'
+case "$*" in
+  "-t -f TYPE,STATE device") cat '"$tmp"'/state/gsmdev 2>/dev/null ;;
+  "-t -f NAME,TYPE connection show") cat '"$tmp"'/state/profiles 2>/dev/null ;;
+esac
+exit 0'
+: >"$tmp/state/gsmdev"
+grep -cx "data=none" <<<"$(run "$dir/tile-state.sh")" >/dev/null || fail "no modem device: data=none"
+printf 'wifi:unavailable\ngsm:disconnected\n' >"$tmp/state/gsmdev"
+grep -cx "data=off" <<<"$(run "$dir/tile-state.sh")" >/dev/null || fail "a modem device, not connected: data=off"
+printf 'gsm:connected\n' >"$tmp/state/gsmdev"
+grep -cx "data=on" <<<"$(run "$dir/tile-state.sh")" >/dev/null || fail "a connected modem device: data=on"
+pass "tile-state.sh reads mobile data from NetworkManager without omamobile-sit"
+
+stub sleep 'echo "sleep $*" >>'"$log"
+: >"$log"; printf 'Home:802-11-wireless\nmy-mobile:gsm\n' >"$tmp/state/profiles"
+run "$dir/tile-action.sh" mobile-data on
+run "$dir/tile-action.sh" mobile-data off
+for line in "nmcli connection modify my-mobile connection.autoconnect yes" "nmcli connection up my-mobile" \
+            "nmcli connection modify my-mobile connection.autoconnect no" "nmcli connection down my-mobile"; do
+  grep -cxF "$line" "$log" >/dev/null || fail "tile-action.sh runs: $line"
+done
+: >"$log"; : >"$tmp/state/profiles"
+run "$dir/tile-action.sh" mobile-data off
+grep -c "connection down" "$log" >/dev/null && fail "data off without a profile does nothing"
+run "$dir/tile-action.sh" mobile-data on
+grep -cxF "nmcli connection add type gsm ifname * con-name Mobile data connection.autoconnect yes" "$log" >/dev/null \
+  || fail "data on without a profile makes one (got: $(cat "$log"))"
+pass "tile-action.sh switches NetworkManager's mobile broadband profile"
+
+# ModemManager crashed on a reconnect within about 10 s of a disconnect:
+# "on" waits out 15 s after "off", and only then.
+: >"$log"; printf 'my-mobile:gsm\n' >"$tmp/state/profiles"
+run "$dir/tile-action.sh" mobile-data off
+[[ -s "$tmp/home/.local/state/omamobile/mobile-data-off" ]] || fail "data off records when"
+run "$dir/tile-action.sh" mobile-data on
+grep -cE "^sleep 1[45]$" "$log" >/dev/null || fail "data on right after off waits out 15 s (got: $(cat "$log"))"
+echo 1 >"$tmp/home/.local/state/omamobile/mobile-data-off"; : >"$log"
+run "$dir/tile-action.sh" mobile-data on
+grep -c "^sleep" "$log" >/dev/null && fail "data on long after off does not wait"
+pass "mobile data on waits out 15 s after off"

@@ -86,7 +86,40 @@ case $tile in
     fi
     ;;
   mobile-data)
-    exec omamobile-sit data "$want"
+    command -v omamobile-sit >/dev/null 2>&1 && exec omamobile-sit data "$want"
+    # NetworkManager's mobile broadband profile (ModemManager's modem). Its
+    # autoconnect follows the tile, so data stays as the user left it after
+    # a reboot, as on Android. Without a profile, "on" makes one with no
+    # APN: ModemManager takes the network's own (the initial bearer's).
+    #
+    # ModemManager 1.24.2 on markw (qcom-soc, a multiplexed bearer) crashed
+    # when a bearer was connected again within about 10 s of its disconnect
+    # (5 s: crashed, 10 s: fine; device/markw/BRINGUP-MODEM.md), so "on"
+    # waits until 15 s have passed since "off".
+    name=$(nmcli -t -f NAME,TYPE connection show | awk -F: '$2 == "gsm" { print $1; exit }')
+    off_stamp="$state_dir/mobile-data-off"
+    if [ "$want" = on ]; then
+      off_at=$(cat "$off_stamp" 2>/dev/null)
+      now=$(date +%s)
+      case $off_at in
+        '' | *[!0-9]*) ;;
+        *) wait=$((off_at + ${OMAMOBILE_DATA_RECONNECT_DELAY:-15} - now))
+           [ "$wait" -gt 0 ] && [ "$wait" -le 15 ] && sleep "$wait" ;;
+      esac
+      if [ -z "$name" ]; then
+        name="Mobile data"
+        nmcli connection add type gsm ifname '*' con-name "$name" connection.autoconnect yes >/dev/null || exit 1
+      else
+        nmcli connection modify "$name" connection.autoconnect yes
+      fi
+      exec nmcli connection up "$name"
+    fi
+    [ -n "$name" ] || exit 0
+    nmcli connection modify "$name" connection.autoconnect no
+    nmcli connection down "$name"
+    rc=$?
+    mkdir -p "$state_dir" && date +%s >"$off_stamp"
+    exit "$rc"
     ;;
   ssh-wifi)
     # omamobile-ssh-wifi opens port 22 on Wi-Fi for 30 minutes (the page

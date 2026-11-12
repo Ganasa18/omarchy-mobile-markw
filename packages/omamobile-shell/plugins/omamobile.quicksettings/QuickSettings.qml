@@ -851,7 +851,9 @@ Item {
   // Mobile data over omamobile-modem-sit: the tile is the cellular bearer
   // (omamobile-sit data on|off, which starts or stops
   // omamobile-sit-data.service through polkit). "No modem" until
-  // omamobile-sitd publishes its state.
+  // omamobile-sitd publishes its state. Without it, the tile is
+  // NetworkManager's mobile broadband connection on ModemManager's modem
+  // (tile-state.sh, tile-action.sh).
   QtObject {
     id: mobileData
     readonly property bool available: root.probedHas("data")

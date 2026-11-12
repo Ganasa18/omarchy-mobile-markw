@@ -15,8 +15,10 @@
 #   nightlight    on while hyprsunset runs warmer than identity
 #   stayawake     on while Omarchy's stay-awake indicator exists
 #   record        on while omamobile-screenrecord (wf-recorder) records
-#   data          on while omamobile-sit-data.service is active; none
-#                 without omamobile-sitd running
+#   data          on while omamobile-sit-data.service is active; without
+#                 omamobile-sitd, on while NetworkManager's mobile broadband
+#                 device (ModemManager's modem) is connected, off while it
+#                 is there but not; none without either
 #   data_status   the operator and technology, when registered
 #   sshwifi       on while omamobile-ssh-wifi has SSH open on Wi-Fi; none
 #                 without the package or a Wi-Fi interface (with
@@ -96,6 +98,13 @@ except (OSError, ValueError):
 words = [str(m.get(k)) for k in ("operator", "tech") if m.get(k)]
 print("data_status=" + " ".join(words))
 ' "$state"
+elif have nmcli && gsm=$(t nmcli -t -f TYPE,STATE device | grep '^gsm:' | head -n1) && [ -n "$gsm" ]; then
+  # ModemManager's modem through NetworkManager (markw): the tile is the
+  # gsm device's connection.
+  case ${gsm#gsm:} in
+    connected) echo "data=on" ;;
+    *) echo "data=off" ;;
+  esac
 else
   echo "data=none"
 fi

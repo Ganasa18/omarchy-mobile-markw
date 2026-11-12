@@ -61,8 +61,11 @@ function cellText(cell) {
   if (!cell || !cell.modem) return ""
   if (cell.state === "no-sim") return "No SIM"
   if (cell.state === "locked") return "SIM locked"
+  // The network type only while mobile data is up ("connected"), as on
+  // Android: with data off the bars stay, the "LTE" goes.
+  var tech = cell.state === "connected" ? (cell.tech || "") : ""
   if (cell.state === "registered" || cell.state === "connected")
-    return (cell.tech || "") + (cell.roaming ? (cell.tech ? " R" : "R") : "")
+    return tech + (cell.roaming ? (tech ? " R" : "R") : "")
   return ""
 }
 
