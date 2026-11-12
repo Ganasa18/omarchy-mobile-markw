@@ -3,6 +3,34 @@
 
 Findings from real hardware, newest first. Plan: [ENGINEERING-PLAN.md](ENGINEERING-PLAN.md); first-light runbook: [BRINGUP-M1.md](BRINGUP-M1.md).
 
+## 2026-11-12: the interconnects stayed at their boot maximum (7.1.3-msm8953-oma10)
+
+- **Every interconnect vote was INT_MAX for the whole boot**
+  (`/sys/kernel/debug/interconnect/interconnect_summary`: `slv_ebi`,
+  `mas_apps_proc`, `mas_oxili` ... 2147483647), so the buses and the DDR
+  ran at their top rate with the screen off. The icc providers keep that
+  boot maximum until their `sync_state`, which waited on a consumer that
+  never probes: Venus (`1d00000.venus`, no `venus.mdt`). The phone's own
+  Venus firmware (modem partition, `image/venus.*`) loads but the driver
+  rejects it ("Unsupported property: 0", probe -5), so that is no way out.
+- **Fix: `fw_devlink.sync_state=timeout`** on the probe's command line
+  (`initramfs/build`): "Timed out. Forcing sync_state()" for gcc and the
+  three qnoc providers at 11.5 s, after which the votes are the real ones
+  (`slv_ebi` about 1-1.6 GB/s idle, peaks on demand). Display, SD card
+  (89 MB/s read), USB, Wi-Fi and every unit as before.
+- **Measured** (`probe-m23-oma10-syncstate` = m22 with only that argument
+  added; unplugged, screen off, Wi-Fi and modem off, `power-log.py` every
+  20 s): m22 60 mA median (61.7 mean, 50 samples), m23 50 mA median (53.3
+  mean, 62 samples). About 16 % less; most of the rest is a phone that
+  never suspends.
+- **The battery percentage misleads after an unplug:** it fell 7 points in
+  22 minutes at 50 mA (about 1.2 %/h by the current), following the
+  voltage settling from 4.32 to 4.15 V. Judge drain by `current_now`, not
+  by `capacity`; the "70 % overnight" came from the same gauge.
+- Still open: `clk_ignore_unused pd_ignore_unused` keep unused clocks and
+  power domains on; quickshell uses about 450 ms of CPU every 20 s with the
+  screen off.
+
 ## 2026-11-12: desktop mode flicker, app launch delay, storage speed (7.1.3-msm8953-oma10)
 
 - **Desktop mode flickered on the lock screen after a wake: Omarchy's
