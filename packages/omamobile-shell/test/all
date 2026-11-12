@@ -272,7 +272,11 @@ if command -v node >/dev/null; then
   node test/call-model.js >/dev/null || { node test/call-model.js; fail "call card model"; }
 fi
 python3 -B -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' bin/omamobile-call-watch || fail "omamobile-call-watch parses"
-if command -v dbus-run-session >/dev/null; then
+# The watcher reads omatel's settings with tomllib (Python 3.11+, as on the
+# phone); an older host Python can't run that part, so it skips.
+if ! python3 -c 'import tomllib' 2>/dev/null; then
+  echo "ok - omamobile-call-watch # SKIP no tomllib (Python $(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])'))"
+elif command -v dbus-run-session >/dev/null; then
   if ! out=$(dbus-run-session -- python3 -B test/call-watch.py 2>&1); then
     grep -v '^ok' <<<"$out" || true
     fail "omamobile-call-watch"

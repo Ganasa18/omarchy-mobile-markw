@@ -68,6 +68,20 @@ grep -q '^omarchy-system-lock' "$log" || fail "a tap locks"
 ! grep -q 'omarchy-menu' "$log" || fail "a tap doesn't open the menu"
 echo "ok - power key: a bounce is the same press"
 
+# Locking can take longer than a long press (it waits for the lock to be
+# secure). The released press must not turn into a long press meanwhile:
+# that opened the menu, or woke the screen the tap had just turned off.
+cat >"$t/bin/omarchy-system-lock" <<STUB
+#!/bin/bash
+echo "omarchy-system-lock \$*" >>"$log"
+sleep 1
+STUB
+reset; keys power-down; sleep 0.05; keys power-up; sleep 0.3
+grep -q '^omarchy-system-lock' "$log" || fail "a slow lock still locks"
+grep -qx 'omarchy-brightness-display off' "$log" || fail "a slow lock still turns the screen off"
+! grep -q -E 'omarchy-menu|omarchy-brightness-display on' "$log" || fail "a slow lock is not also a long press"
+echo "ok - power key: a slow lock is one short press"
+
 # The touch keys (markw): home closes the panels and shows the home screen,
 # menu toggles recent apps, back only closes the panels (the app gets the key
 # from Hyprland itself).

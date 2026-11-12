@@ -204,8 +204,10 @@ Item {
   readonly property var panel: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
 
   // On markw the panel went back to the phone's scale a second after waking
-  // from idle, with no Hyprland event to say so; its size changing is the
-  // sign. The mode script reloads only if the scale is really off.
+  // (Omarchy's clamshell sync, kept to laptops by omamobile-omarchy's patch
+  // 0018), with no Hyprland event to say so; its size changing is the sign.
+  // The mode script puts the scale back only if it is really off, and at
+  // most once every 5 s.
   Connections {
     target: root.panel
     ignoreUnknownSignals: true

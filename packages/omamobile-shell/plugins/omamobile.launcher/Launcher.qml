@@ -172,12 +172,20 @@ Item {
   // Not AppLibrary.launch: omamobile-launch starts the app the same way
   // (uwsm-app -- gtk-launch) on a new empty workspace, or focuses it on its
   // own if it is already open. Omarchy's "Launching…" feedback stays.
+  // On the phone the drawer stays up as the app's splash (LaunchSplash) until
+  // its window opens: closing it at once showed the home screen for about a
+  // second, as if the tap had done nothing.
   function launchApp(entry) {
     if (!entry || !entry.id) return
     if (appLibrary && typeof appLibrary.beginLaunchFeedback === "function")
       appLibrary.beginLaunchFeedback(appLibrary.entryName(entry))
     Quickshell.execDetached(LauncherModel.appArgv(entry.id))
-    dismiss()
+    if (!desktopMode && appLibrary) {
+      if (input) input.focus = false
+      launchSplash.show(appLibrary.iconSource(entry.icon || ""), appLibrary.entryName(entry))
+    } else {
+      dismiss()
+    }
   }
 
   // Long-press in the drawer: put the app on the home screen
@@ -255,6 +263,7 @@ Item {
   function close() {
     opened = false
     query = ""
+    launchSplash.reset()
   }
 
   function dismiss() {
@@ -424,6 +433,16 @@ Item {
     onVisibleChanged: {
       if (visible && root.desktopMode) Qt.callLater(function() { desktopInput.forceActiveFocus() })
       else if (visible && root.hasQuery) Qt.callLater(function() { input.forceActiveFocus() })
+    }
+
+    // The tapped app's splash over the drawer (launchApp). A new window
+    // closes the drawer anyway (onRawEvent above); a focused one, a tap or
+    // the timeout closes it here.
+    LaunchSplash {
+      id: launchSplash
+      anchors.fill: parent
+      z: 1000
+      onFinished: root.dismiss()
     }
 
     Rectangle {

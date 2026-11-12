@@ -194,10 +194,11 @@ LUA
   tell_shell on
   hyprctl reload >/dev/null
   # On markw the first reload sometimes turned the panel but kept the old
-  # scale (2, from monitors.lua); a second one applied it. Once, if needed.
+  # scale (2, from monitors.lua); applying the rule again fixed it. Once, if
+  # needed.
   if [[ $(scale_now) != "$(python3 -I -c 'import sys; print(float(sys.argv[1]))' "$scale")" ]]; then
     sleep 0.3
-    hyprctl reload >/dev/null
+    apply_monitor || hyprctl reload >/dev/null
   fi
   arrange desktop "$width" "$height"
 
@@ -206,20 +207,38 @@ LUA
   notify "Desktop mode on" "Super + Space: apps · Super + Enter: terminal · Super + W: close. Turn it off in quick settings."
 }
 
+# Desktop mode's monitor rule (desktop.lua's first hl.monitor line), applied
+# on its own with hyprctl eval: one modeset straight to the desktop's scale
+# and turn. A reload would run monitors.lua's phone rule first and pass
+# through the phone's scale on the way, a visible flash.
+apply_monitor() {
+  local rule
+  rule=$(grep -m1 '^hl\.monitor({ output = "[A-Za-z0-9._-]*", ' "$state/desktop.lua" 2>/dev/null) || return 1
+  hyprctl eval "$rule" >/dev/null 2>&1
+}
+
 # The panel lost desktop mode's scale: on markw it went back to 2 (the
-# phone's) a second after waking from idle, keeping the turn, with no
-# Hyprland event and no rule asking for it. The shell (omamobile.desktop) runs
-# this when the screen's size changes; a reload puts the scale back, and does
-# nothing when it is right.
+# phone's) when the panel woke, keeping the turn. Omarchy's clamshell sync
+# did it (patch 0018 of omamobile-omarchy keeps it to laptops); this stays as
+# a guard. The shell (omamobile.desktop) runs this when the screen's size
+# changes; it puts the scale back, and does nothing when it is right. At
+# most once every 5 s, so it can never chase another writer of the scale
+# in a loop, which made the screen flicker between the two.
 reapply() {
   is_on || return 0
-  local want
+  local want stamp=$state/reapplied now
   # The scale desktop.lua asks for (its first monitor rule).
   want=$(sed -n 's/^hl\.monitor(.* scale = \([0-9][0-9.]*\),.*/\1/p' "$state/desktop.lua" 2>/dev/null | head -n1)
   [[ $want =~ ^[0-9]+(\.[0-9]+)?$ ]] || return 0
   want=$(python3 -I -c 'import sys; print(float(sys.argv[1]))' "$want")
   [[ $(scale_now) == "$want" ]] && return 0
-  hyprctl reload >/dev/null
+  now=$(date +%s)
+  if [[ -f $stamp ]] && ((now - $(stat -c %Y "$stamp") < 5)); then
+    echo "omamobile-desktop-mode: scale is off again within 5 s; not chasing it" >&2
+    return 0
+  fi
+  touch "$stamp"
+  apply_monitor || hyprctl reload >/dev/null
 }
 
 turn_off() {
