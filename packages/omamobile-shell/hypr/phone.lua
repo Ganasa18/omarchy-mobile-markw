@@ -62,6 +62,11 @@ o.launch_on_start("omamobile-onboarding --nudge")
 -- screensaver runs at login, so turn it on here.
 o.launch_on_start("gsettings set org.gnome.desktop.a11y.applications screen-keyboard-enabled true")
 
+-- The first launch of an app after boot read it all from storage (2-4 s on
+-- markw, about 1 s cached): read the Recent row's apps ahead, once, after
+-- the session has settled, at the idle I/O class and the lowest priority.
+o.launch_on_start("ionice -c 3 nice -n 19 omamobile-prefetch --delay 45")
+
 -- Hardware keys don't wake the screen, as on Android: power wakes it through
 -- omamobile-keys, which decides from the screen's state when it is released.
 -- With Omarchy's key_press_enables_dpms, the press itself lit the screen and

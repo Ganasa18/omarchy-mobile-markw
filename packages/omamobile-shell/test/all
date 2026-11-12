@@ -56,6 +56,9 @@ sh -n plugins/omamobile.quicksettings/tile-state.sh || fail "tile-state.sh parse
 sh -n plugins/omamobile.quicksettings/tile-action.sh || fail "tile-action.sh parses"
 bash test/tile-scripts.sh || fail "quick-settings tile scripts"
 bash test/desktop-mode.sh || fail "omamobile-desktop-mode"
+bash test/prefetch.sh || fail "omamobile-prefetch"
+grep -c '^o.launch_on_start("ionice -c 3 nice -n 19 omamobile-prefetch --delay 45")$' hypr/phone.lua >/dev/null \
+  || fail "the session reads recent apps ahead, at idle priority"
 
 # The Bluetooth pairing helper parses, and its pure parts work without D-Bus.
 python3 -B -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' bin/omamobile-bt-agent || fail "omamobile-bt-agent parses"
