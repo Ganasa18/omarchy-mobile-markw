@@ -1,10 +1,10 @@
 <!-- SPDX-License-Identifier: MIT -->
 # markw: mobile data over the modem (runbook)
 
-Status: step 0 (backup) passed (2026-11-03). The phone runs
-`7.1.3-msm8953-oma3`, which already has the modem and IPA drivers; the
-probe's DTB keeps the modem's node disabled. Steps 0-3 passed; next:
-step 4, a boot of `probe-m10-modem` (owner's go).
+Status: steps 0-7 passed (2026-11-12, `oma10`): SIM registered on LTE,
+data over `qmapmux0.0` works but slowly (radio suspected). Next: a
+speed comparison with MIUI at the same spot, data with Wi-Fi off, then
+step 8 (packaging).
 
 ## Scope (owner's decision, 2026-11-03)
 
@@ -147,3 +147,46 @@ Results go here and in NOTES.md, with the date and `uname -r`.
   the `qcom-soc` plugin (`qrtr0` control, `rmnet_ipa0` data) and stopped
   at `failed` / `sim-missing` ("GW primary session index unknown"), as
   expected with no SIM; with one in the tray, step 6 again.
+
+**2026-11-12, `7.1.3-msm8953-oma10`, SIM inserted:**
+
+- **Step 0 again** (MIUI ran this morning, with the SIM): a fresh
+  read-only backup (`…-after-miui`), all six sums match on both sides;
+  `modemst1`, `modemst2` and `persist` differ from 2026-11-06's, `fsg`
+  doesn't.
+- **Step 5 again: pass.** rmtfs (RAM copies) and tqftpserv, `modprobe
+  qcom_q6v5_mss`, `echo start`: the modem up 1.1 s later; partitions still
+  `ro=1`; `rmnet_ipa0` and `ipa_lan0` back.
+- **Step 6: pass.** ModemManager: `registered` (home), LTE, signal 71-75 %
+  (RSRP -104 dBm, RSRQ -17 dB indoors), packet service `attached`; the
+  network handed the initial bearer its APN. Lock `sim-pin2` only (the
+  SIM has no PIN1 set).
+- **Step 7: pass, slow.** `nmcli connection add type gsm ifname '*'
+  con-name omamobile-mobile apn <APN> connection.autoconnect no`, then
+  `up`: ModemManager made a multiplexed bearer, so the address is on
+  `qmapmux0.0` (on `rmnet_ipa0`), not on `rmnet_ipa0` itself; a ping or
+  curl bound to `rmnet_ipa0` gets nothing. Over `qmapmux0.0`: ping
+  answers (RTT 43-590 ms, about 10 % lost, jitter with no batching), HTTP
+  and HTTPS work, 1 MiB in 23 s (about 45 KB/s), a second try 2.6 KB/s.
+  The phone was idle meanwhile (CPU, no drops or errors on the
+  interface, no kernel error), so the radio link is the first suspect;
+  compare with a speed test in MIUI at the same spot before blaming
+  ipa2-lite. Wi-Fi stayed on (its route wins); traffic was bound to the
+  interface.
+- Next: the MIUI comparison, a test with Wi-Fi off (the default route on
+  mobile data), then step 8.
+- **ModemManager crashes on a quick reconnect.** The quick settings tile
+  (omamobile-shell: NetworkManager's gsm profile when there is no
+  omamobile-sit) turned data off and on 3 s apart, and ModemManager
+  1.24.2 (libqmi 1.38.0, glib2 2.90.1) died with SIGSEGV right after "net
+  link qmapmux0.0 created (mux id 1)"; systemd restarted it. Reproduced:
+  a reconnect 1 s and 5 s after the disconnect crashed, 10 s and minutes
+  after worked. The old mux link is gone 190 ms after the disconnect, so
+  it isn't that. The stack is unreadable without symbols (a frame in
+  ModemManager's static code next to `mm_port_mbim_new`). The tile waits
+  out 15 s after "off" before "on", and keeps the profile's autoconnect
+  with the tile, so NetworkManager reconnects by itself if it crashes
+  anyway. Later the same afternoon, with a better signal: ping 30 ms.
+- The USB link dropped once, 50 s after the first crash (usb0 "Lost
+  carrier", no role change, no kernel error) and came back on a replug;
+  not shown to be related.
