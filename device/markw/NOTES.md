@@ -3,6 +3,41 @@
 
 Findings from real hardware, newest first. Plan: [ENGINEERING-PLAN.md](ENGINEERING-PLAN.md); first-light runbook: [BRINGUP-M1.md](BRINGUP-M1.md).
 
+## 2026-11-12: desktop mode flicker, app launch delay, storage speed (7.1.3-msm8953-oma10)
+
+- **Desktop mode flickered on the lock screen after a wake: Omarchy's
+  clamshell sync put the panel's scale back.** `omarchy-hyprland-monitor-clamshell`
+  (run by `omarchy-hyprland-monitor-watch` on every monitor event, again
+  1, 3 and 7 s later, and by `omarchy-system-wake`) treats `DSI-1` as a
+  laptop's internal panel and applies `hl.monitor({ output = "DSI-1",
+  scale = 2 })` from `monitors.lua`, without a transform. In landscape
+  desktop mode (1.5, transform 3) the scale jumped to 2 about 1.4 s after
+  the power key, the shell's `reapply` reloaded Hyprland, and every
+  reload ran `monitors.lua`'s phone rule before `desktop.lua`'s, a modeset
+  through the phone's scale on the way: the lock screen showed both
+  sizes at once. Fixed by omamobile-omarchy patch 0018 (clamshell only
+  where `omarchy-hw-laptop`) and by `reapply` applying `desktop.lua`'s
+  monitor rule alone with `hyprctl eval`, at most once per 5 s
+  (omamobile-shell 0.2.37). Checked: three power-key sleep/wake cycles
+  stayed at 1.5/3 with no reload, and the owner's own lock/wake too.
+- **A tap took about a second to show anything; the microSD is not the
+  cause.** Read-only O_DIRECT on the root card (Lexar 633x 32 GB, U1 A1,
+  running UHS SDR104 at 200 MHz): 78 MB/s sequential, ~2650 random 4K
+  reads/s (median 0.36 ms); the eMMC (HS400) 258 MB/s and ~3790/s.
+  Files (Nautilus) mapped its window ~1.0 s after a launch warm and
+  2.2-3.7 s cold: ~0.6 s is the app itself, the rest the launch chain
+  (`omamobile-launch` ~0.2 s, `uwsm-app` and `gtk-launch` ~0.2 s).
+  Dropping `gtk-launch` (`uwsm-app -- ID.desktop`) gained nothing
+  measurable. The fix is feedback instead: a launch splash (icon and
+  name) the moment a tile or drawer entry is tapped (omamobile-shell
+  0.2.37). zram (1.4 GB zstd) is in use; nothing swaps to the card.
+- **The power key's long-press timer fired after a slow lock.**
+  `omamobile-keys` dropped the press marker only after the short press
+  had run, and locking waits up to 3 s for the lock to be secure (the
+  long press is 0.6 s), so the long press ran too: the system menu, or
+  a wake of the screen it had just turned off. The marker now goes on
+  release (omamobile-shell 0.2.37, `test/keys.sh`).
+
 ## 2026-11-07: notification LED and haptics (7.1.3-msm8953-oma6)
 
 - **The USB rescue brought a dead link back (device-markw 0.1.17).** On
