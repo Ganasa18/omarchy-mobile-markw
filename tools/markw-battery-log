@@ -4,10 +4,13 @@
 
 Records raw current without assuming its sign. Samples while awake cannot
 measure mean current across suspend. Output stays private on the phone.
+
+  markw-battery-log [SECONDS]   stop SECONDS after the unplug (default 3600)
 """
 import csv
 import json
 from pathlib import Path
+import sys
 import time
 
 base = Path('/sys/class/power_supply/qcom-battery')
@@ -15,6 +18,7 @@ out = Path('/var/lib/omamobile/power')
 out.mkdir(parents=True, exist_ok=True)
 start = time.strftime('%Y%m%d-%H%M%S')
 path = out / (start + '-markw-baseline.csv')
+limit = int(sys.argv[1]) if len(sys.argv) > 1 else 3600
 
 def read(path):
     try:
@@ -47,17 +51,17 @@ with path.open('x', newline='') as stream:
         stream.flush()
         if status == 'Discharging' and unplugged_at is None:
             unplugged_at = boot
-            print('UNPLUGGED: collecting up to one hour; replug ends run', flush=True)
+            print(f'UNPLUGGED: collecting up to {limit} s; replug ends run', flush=True)
         if unplugged_at is not None:
             if status in ('Charging', 'Full'):
                 reason = 'replugged'
                 break
-            if boot - unplugged_at >= 3600:
-                reason = 'one-hour-complete'
+            if boot - unplugged_at >= limit:
+                reason = 'limit-complete'
                 break
         time.sleep(10 if unplugged_at is None else 60)
     path.with_suffix('.json').write_text(json.dumps({
-        'mode': 'screen-off-awake-baseline', 'reason': reason,
+        'mode': 'screen-off-awake-baseline', 'reason': reason, 'limit_seconds': limit,
         'unplug_detected': unplugged_at is not None,
         'note': 'raw telemetry only; no inferred suspend current or battery lifetime'
     }, indent=2) + '\n')
