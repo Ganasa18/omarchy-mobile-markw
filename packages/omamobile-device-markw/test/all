@@ -187,6 +187,8 @@ grep -q '^AUTO_SUSPEND_DELAY=10$' "$tmp/root/usr/share/omamobile/device.conf" \
 ! find "$tmp/root" -lname '*omamobile-autosuspend.service' | grep -c . >/dev/null \
   || fail "auto-suspend ships disabled until it is proven"
 bash test/autosuspend.sh || fail "auto-suspend decisions"
+[[ ! -e $tmp/root/usr/bin/omamobile-display-touch ]] || fail "global touch disable hook must stay absent"
+grep -qx 'POWER_KEY_WAKE_ONLY=1' "$tmp/root/usr/share/omamobile/device.conf" || fail "Power-only wake policy staged"
 ucm=$tmp/root/usr/share/alsa/ucm2
 hifi=$ucm/Xiaomi/markw/HiFi.conf
 [[ -f $ucm/conf.d/xiaomi-markw/xiaomi-markw.conf && -f $hifi ]] || fail "install stages the UCM profile"
