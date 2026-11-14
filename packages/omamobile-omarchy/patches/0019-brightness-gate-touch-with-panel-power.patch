@@ -1,0 +1,177 @@
+# Power-only phones: input/idle activity may refresh a lit lock but cannot
+# light a dark panel. Power uses a distinct trusted IPC path. Never disable
+# the compositor touchscreen device. Serialize blank/wake and its state check.
+# Against Omarchy 4.0.6, after patches 0008, 0009 and 0013.
+diff --git i/bin/omarchy-brightness-display w/bin/omarchy-brightness-display
+--- i/bin/omarchy-brightness-display
++++ w/bin/omarchy-brightness-display
+@@ -70,11 +70,31 @@
+ 
+ step="$1"
+ 
++# Keep the input-wake check and the panel transition atomic against blanking.
++exec {lock_fd}>"${XDG_RUNTIME_DIR:-/tmp}/omarchy-brightness-display.lock"
++if [[ $step == off || $step == on ]]; then
++  flock "$lock_fd" || exit 1
++else
++  flock -n "$lock_fd" || exit 0
++fi
++
+ if [[ $step == "off" ]]; then
+   hyprctl dispatch 'hl.dsp.dpms({ action = "disable" })' >/dev/null 2>&1
+   panel_power 4
+   exit 0
+ elif [[ $step == "on" ]]; then
++  # Activity cannot light a Power-only phone. Explicit Power wake does not
++  # carry this flag. Never disable the touchscreen device to enforce it.
++  if [[ ${OMAMOBILE_WAKE_FROM_INPUT:-0} == 1 ]] &&
++     grep -qx 'POWER_KEY_WAKE_ONLY=1' "${OMAMOBILE_DEVICE_CONF:-/usr/share/omamobile/device.conf}" 2>/dev/null; then
++    device="$(omarchy-hw-display 2>/dev/null)" || exit 0
++    bl="${OMARCHY_BACKLIGHT_PATH:-/sys/class/backlight}/$device/bl_power"
++    read -r power <"$bl" 2>/dev/null || exit 0
++    [[ $power == 0 ]] || exit 0
++    # bl_power can be restored independently on resume. DPMS must also be
++    # lit: neither indicator alone authorizes activity to light the display.
++    hyprctl monitors -j 2>/dev/null | jq -e '[.[] | select(.disabled == false)] | length > 0 and all(.dpmsStatus)' >/dev/null 2>&1 || exit 0
++  fi
+   # Before the check below: Hyprland can show a lit display whose panel is off.
+   panel_power 0
+   # Skip the dispatch when every active display is already lit: a redundant
+@@ -84,11 +104,6 @@
+   hyprctl dispatch 'hl.dsp.dpms({ action = "enable" })' >/dev/null 2>&1
+   exit 0
+ fi
+-
+-# Drop overlapping brightness key events so concurrent invocations do not race.
+-# Hardware key repeat present on some devices can otherwise glitch OSD rendering.
+-exec {lock_fd}>"${XDG_RUNTIME_DIR:-/tmp}/omarchy-brightness-display.lock"
+-flock -n "$lock_fd" || exit 0
+ 
+ if use_apple_display; then
+   if (( no_osd )); then
+diff --git i/shell/plugins/lock/Service.qml w/shell/plugins/lock/Service.qml
+--- i/shell/plugins/lock/Service.qml
++++ w/shell/plugins/lock/Service.qml
+@@ -179,9 +179,48 @@
+     idleBlankTimer.restart()
+   }
+ 
+-  function runWake() {
+-    if (!wakeProcess.running) wakeProcess.running = true
++  property bool powerWakePending: false
++  function runWake(fromInput) {
++    if (wakeProcess.running) {
++      if (fromInput === false) powerWakePending = true
++    } else {
++      wakeProcess.command = ["bash", "-c", fromInput === false
++        ? "omarchy-system-wake" : "OMAMOBILE_WAKE_FROM_INPUT=1 omarchy-system-wake"]
++      wakeProcess.running = true
++    }
+     if (lockRequested) armBlankTimer()
++  }
++
++  // Only the lock's controls follow panel state; the input device remains
++  // enabled. Sysfs has no change notification, so refresh while locked.
++  property bool powerKeyWakeOnly: false
++  property bool panelOff: false
++  property string panelBacklight: ""
++  FileView {
++    path: "/usr/share/omamobile/device.conf"
++    printErrors: false
++    onLoaded: root.powerKeyWakeOnly = /^POWER_KEY_WAKE_ONLY=1$/m.test(String(text()))
++  }
++  Process {
++    command: ["omarchy-hw-display"]
++    running: root.powerKeyWakeOnly
++    stdout: StdioCollector {
++      waitForEnd: true
++      onStreamFinished: root.panelBacklight = String(text || "").trim().split("\n")[0]
++    }
++  }
++  FileView {
++    id: lockPanelPower
++    path: root.panelBacklight ? "/sys/class/backlight/" + root.panelBacklight + "/bl_power" : ""
++    printErrors: false
++    onLoaded: { var p = String(text()).trim(); root.panelOff = p !== "" && p !== "0" }
++    onLoadFailed: root.panelOff = false
++  }
++  Timer {
++    interval: 250
++    repeat: true
++    running: root.powerKeyWakeOnly && root.locked && root.panelBacklight !== ""
++    onTriggered: lockPanelPower.reload()
+   }
+ 
+   function runBlank() {
+@@ -290,13 +329,15 @@
+         authenticatingPassword: root.authenticatingPassword
+         failureMessage: root.failureMessage
+         failedAttempts: root.failedAttempts
++        enabled: !root.powerKeyWakeOnly || !root.panelOff
++        onEnabledChanged: if (enabled && root.lockRequested) Qt.callLater(forcePasswordFocus)
+         inputEnabled: root.lockRequested
+         loadBackground: root.locked
+         passwordText: root.enteredPassword
+         onPasswordTextEdited: function(password) { root.enteredPassword = password }
+         onSubmitPassword: function(password) { root.submitPassword(password) }
+         onClearFailureRequested: root.failureMessage = ""
+-        onWakeRequested: root.runWake()
++        onWakeRequested: root.runWake(true)
+         // A display woken by a hardware key gets no new focus-in, so the
+         // on-screen keyboard isn't asked back: move the focus off and back.
+         Connections {
+@@ -427,7 +468,12 @@
+ 
+   Process {
+     id: wakeProcess
+-    command: ["bash", "-c", "omarchy-system-wake"]
++    onExited: {
++      if (root.powerWakePending) {
++        root.powerWakePending = false
++        root.runWake(false)
++      }
++    }
+   }
+ 
+   Process {
+@@ -556,17 +602,27 @@
+     // it, re-arm the blank timer and focus the field (a phone's power button).
+     function wake(): string {
+       if (!root.currentlyLocked()) return "unlocked"
+-      root.runWake()
++      root.runWake(false)
+       root.wakeFocusRequested()
+       return "ok"
+     }
+ 
++    // Generic idle activity has no authority to light a Power-only phone.
++    function wakeInput(): string {
++      if (!root.currentlyLocked()) return "unlocked"
++      root.runWake(true)
++      return "ok"
++    }
++
+     function isLocked(): string {
+       return root.currentlyLocked() ? "true" : "false"
+     }
+ 
+     function status(): string {
+       return JSON.stringify({
++        powerKeyWakeOnly: root.powerKeyWakeOnly,
++        panelOff: root.panelOff,
++        lockInputEnabled: !root.powerKeyWakeOnly || !root.panelOff,
+         locked: root.currentlyLocked(),
+         requested: root.lockRequested,
+         pending: root.pendingSessionLock,
+diff --git i/shell/plugins/services/idle/Service.qml w/shell/plugins/services/idle/Service.qml
+--- i/shell/plugins/services/idle/Service.qml
++++ w/shell/plugins/services/idle/Service.qml
+@@ -121,7 +121,7 @@
+ 
+     // A locked display is lit through the lock, which re-arms its blank timer;
+     // lit here alone, it stayed on behind the lock until the next unlock.
+-    if (root.idledThisCycle) runProcess(wakeProcess, "wake", "[[ $(omarchy-shell lock wake 2>/dev/null) == ok ]] || omarchy-system-wake")
++    if (root.idledThisCycle) runProcess(wakeProcess, "wake", "[[ $(omarchy-shell lock wakeInput 2>/dev/null) == ok ]] || OMAMOBILE_WAKE_FROM_INPUT=1 omarchy-system-wake")
+ 
+     root.idledThisCycle = false
+     root.screensaverStartedThisCycle = false
