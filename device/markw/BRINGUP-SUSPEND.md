@@ -110,8 +110,21 @@ watchdog feeder and a 90 s USB dead-man; stop at the first failure.
   resumed since oma3. The battery log is not a comparison: the gauge went
   from Full 94 % to 90 % across the unplug and the sleep, which is unplug
   settling plus one short sleep; no saving is claimed.
-- Still before enabling it at boot: sleeps of an hour or more, more
-  boots, and a day's use (the 2026-11-03 hang came after hours).
+- **One-hour sleep: pass** (same boot, battery logger alongside). Cable
+  out, Power to blank: asleep 18:29:26-19:32:11 (about 62 min 45 s),
+  woken by Power (pm_wakeup_irq 68), success 3 -> 4, fail 0, taint 0, no
+  Oops/WARNING; owner heard both beep pairs and unlocked with the PIN.
+  Post-resume watchdog ARMED 19:32:12, DISARMED 19:34:13; with the cable
+  back the script said "staying awake: USB cable in a computer", then the
+  test unit was stopped. Longest resumed sleep on markw so far, past the
+  length of the 2026-11-03 non-wake. The gauge read 93 % (just Full,
+  then Discharging) before and 85 % after replug: about 8 points in an
+  hour, but it started at the top of a fresh charge, where this gauge
+  drops fast, and the logger takes no samples while the phone sleeps.
+  No saving is claimed; that needs a run started well below Full against
+  an awake screen-off run of the same length.
+- Still before enabling it at boot: more boots, a sleep of several hours
+  and a day's use (the 2026-11-03 hang came after hours of use).
 
 ## 2026-11-14: replacement Power-only display wake policy
 
