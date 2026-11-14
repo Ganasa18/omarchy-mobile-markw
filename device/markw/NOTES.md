@@ -3,6 +3,129 @@
 
 Findings from real hardware, newest first. Plan: [ENGINEERING-PLAN.md](ENGINEERING-PLAN.md); first-light runbook: [BRINGUP-M1.md](BRINGUP-M1.md).
 
+## 2026-11-14: Power-only display wake works on the phone (7.1.3-msm8953-oma11)
+
+- First live attempt (phone locked) stopped: the shell restart reported the
+  lock not re-secured, and both rollbacks restored the files. Retried with
+  the phone unlocked and lit: all automatic gates passed (input wake keeps a
+  dark panel dark, locked and unlocked; Power path lights it; lock secure).
+- Owner check passed: double tap on a dark screen stays dark; Power + PIN
+  work. The touchscreen device stays enabled. Hand-copied live files, not yet
+  packaged; auto-suspend still off. Details: [BRINGUP-SUSPEND.md](BRINGUP-SUSPEND.md).
+
+## 2026-11-14: unplugged battery control retrieved (7.1.3-msm8953-oma11)
+
+- Capture ended normally on replug. Unplugged duration 46.884 min, reported
+  capacity 99 -> 92%. Excluding the first 10 min, 36 screen-off samples averaged
+  -49.183 mA (discharging); capacity 96 -> 92% over 36.513 min. Do not extrapolate
+  lifetime from this settling/quantized percentage reading.
+- Actual suspended-time delta 0, suspend success/fail unchanged at 2/0;
+  autosuspend was inactive. This is the awake screen-off control, not a
+  suspend saving. Uptime continued to 1 h 40 min without restart.
+- Touchscreen edt_ft5x06 has no wakeup attribute on its input/controller
+  ancestry and no kernel wake-source entry. Tap-to-PIN while awake therefore
+  needs lock/display policy, not disabling the global touchscreen device.
+  Replacement policy prepared and syntax checked; live gates pending.
+  Details: [BRINGUP-SUSPEND.md](BRINGUP-SUSPEND.md).
+
+## 2026-11-14: touch policy rolled back; battery baseline started (7.1.3-msm8953-oma11)
+
+- After the owner asked whether the phone was stuck, fresh SSH still worked
+  at 48 minutes uptime. Panel bl_power was 0 but Hyprland touchdevice.enabled
+  was false. Restored the original brightness script, removed the live hook,
+  and verified touchdevice.enabled=true through a fresh connection. No reboot.
+  Owner's earlier physical Power/PIN check passed, but this later mismatch
+  means the policy is not ready. Candidate helper stays unstaged in packages.
+- Started read-only markw-battery-baseline.service. READY was verified before
+  telling the owner to unplug. tools/markw-battery-log waits for Discharging,
+  records raw telemetry for up to one hour, and ends on replug. Autosuspend
+  remains inactive: this is the screen-off awake control, not a suspend result.
+  No saving or average suspend current has been measured.
+
+## 2026-11-14: gate touch input with display power (7.1.3-msm8953-oma11)
+
+- Owner requests Power-only wake: double tap on a dark screen showed PIN.
+  markw's optional display-touch hook now disables compositor touch input on
+  display off, restores it before display on; Power remains a keyboard bind.
+  Complete transitions are serialized to prevent a lit panel with touch off.
+- Actual phone off/on gate passed: bl_power 4 / touch=false, then 0 / true;
+  fresh SSH remained available. Original script backed up; rollback timer
+  stopped after verification. No restart or automatic suspend enabled.
+- Physical Power/double-tap/PIN check is pending owner feedback. A compositor
+  reload can reset runtime input settings until the next on/off transition.
+  Battery benefit remains unmeasured. See [BRINGUP-SUSPEND.md](BRINGUP-SUSPEND.md)
+  for tests, live rollback and package-update handling.
+
+## 2026-11-14: second oma11 boot passed 20 s and 120 s suspend (7.1.3-msm8953-oma11)
+
+- Owner-approved fresh RAM boot; measured sleep 20.522 s and 121.428 s.
+  Same new boot throughout, success 0 -> 2, fail 0, RTC IRQ 71 wakes,
+  fresh SSH returned and watchdog disarms verified. Total candidate evidence:
+  eight passing cycles across two boots, including one two-minute sleep.
+- Preflight taint 512 came from two initial DSI pclk0 clock warnings already
+  documented on oma1/postmarketOS in BRINGUP-KERNEL.md. Tests accepted only
+  this sealed baseline; no additional warning or taint bit appeared.
+- Auto-suspend stays disabled; longer sleeps and more boots remain. Battery
+  saving is unmeasured: this board has no exported charge/energy counter.
+  Details: [BRINGUP-SUSPEND.md](BRINGUP-SUSPEND.md).
+
+## 2026-11-14: six short sleeps passed on one oma11 boot (7.1.3-msm8953-oma11)
+
+- Five owner-approved repetitions after the first trial all passed:
+  approximately 20.967, 20.437, 21.307, 19.932 and 19.841 s suspended.
+  Same original boot ID throughout; success 1 -> 6, fail 0, taint 0,
+  RTC IRQ 74 on each wake. Fresh SSH worked after 35 s each time.
+- Each trial had a fresh laptop capture, watchdog feeder and USB recovery
+  timer. Every disarm was verified; final PID absent and all batch guards
+  inactive. No manual cable replug or reboot during the batch.
+- Auto-suspend remains disabled. Earlier kernels also had passing boots,
+  so 6/6 on this boot does not prove the root cause fixed. Next proposed
+  owner-approved gate: fresh oma11 boot, then 20 s and 120 s tests.
+  Details: [BRINGUP-SUSPEND.md](BRINGUP-SUSPEND.md).
+
+## 2026-11-14: first oma11 20 s suspend passed (7.1.3-msm8953-oma11)
+
+- One owner-approved `rtcwake -m freeze -s 20`, under laptop capture,
+  watchdog feeder and USB recovery timer: same boot ID, success 0 -> 1,
+  fail 0 -> 0, taint 0. No restart in this trial.
+- Realtime minus monotonic unit duration gives about 20.183 s asleep;
+  wake IRQ 74 maps to pm8xxx_rtc_alarm. Original SSH stream reset, but a
+  fresh login after the recovery window succeeded without cable replug.
+- Feeder deadline completed with successful disable ioctl/magic close;
+  transient guards were already gone at cleanup. Treat absent timer
+  units as expected and disarm watchdog independently.
+- This is only one successful boot/cycle; older kernels had passing boots
+  too. Auto-suspend stays disabled pending repetitions, fresh boots and
+  long sleeps. Details/evidence: [BRINGUP-SUSPEND.md](BRINGUP-SUSPEND.md).
+
+## 2026-11-14: oma11 candidate boots; suspend not yet tested (7.1.3-msm8953-oma11)
+
+- DWC3 role-deferral candidate booted through lk2nd in RAM with its own
+  matching modules. oma10 modules retained for rollback; nothing flashed.
+- Fresh SSH: taint 0, no failed system units, no captured Oops/panic.
+  Watchdog autoload stayed blocked; explicit load under laptop capture
+  and read-only binding/NOWAYOUT preflight succeeded without arming it.
+- Only s2idle offered, pm_test none, suspend success/fail both 0.
+  Auto-suspend remains disabled. Await separate approval for one 20 s
+  attended test; this boot does not establish that suspend is fixed.
+
+## 2026-11-14: watchdog safety gate passed (7.1.3-msm8953-oma10)
+
+- RAM-only safety probe enables the existing watchdog node with a
+  separate overlay and blocks qcom_wdt autoload. Explicit module load
+  under laptop kmsg capture succeeded; kernel taint remained 0.
+- CONFIG_WATCHDOG_SYSFS is off: absent identity/timeout/state attributes
+  do not mean the driver failed. The guarded `tools/markw-watchdog-feed`
+  checks binding/NOWAYOUT before opening, then uses standard ioctls.
+- Fresh SSH confirmed `ARMED: qcom_wdt, timeout=30s`; stopping the unit
+  confirmed successful disable ioctl and magic close. Same boot ID,
+  PID removed, service inactive, no new captured Oops/panic. No deliberate
+  watchdog bite or suspend was tested.
+- qcom_wdt stops in suspend_late and restarts in resume_early. This
+  safety net cannot recover a hang while it is stopped for sleep.
+  Auto-suspend remains disabled; oma11's DWC3 candidate is still unbooted.
+  Commands/results: [BRINGUP-SUSPEND.md](BRINGUP-SUSPEND.md).
+
 ## 2026-11-12: the interconnects stayed at their boot maximum (7.1.3-msm8953-oma10)
 
 - **Every interconnect vote was INT_MAX for the whole boot**

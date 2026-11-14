@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""Read-only unplugged battery baseline; never suspends or changes settings.
+
+Records raw current without assuming its sign. Samples while awake cannot
+measure mean current across suspend. Output stays private on the phone.
+"""
+import csv
+import json
+from pathlib import Path
+import time
+
+base = Path('/sys/class/power_supply/qcom-battery')
+out = Path('/var/lib/omamobile/power')
+out.mkdir(parents=True, exist_ok=True)
+start = time.strftime('%Y%m%d-%H%M%S')
+path = out / (start + '-markw-baseline.csv')
+
+def read(path):
+    try:
+        return Path(path).read_text().strip()
+    except OSError:
+        return ''
+
+def value(name):
+    return read(base / name)
+
+with path.open('x', newline='') as stream:
+    writer = csv.writer(stream)
+    writer.writerow(['unix_seconds', 'boottime_seconds', 'monotonic_seconds',
+                     'status', 'capacity_percent', 'current_now_uA',
+                     'voltage_now_uV', 'temp_deciC', 'panel_bl_power',
+                     'suspend_success', 'suspend_fail'])
+    unplugged_at = None
+    waiting_since = time.monotonic()
+    reason = 'waiting-timeout'
+    print('READY: waiting for Discharging; baseline only, no suspend', flush=True)
+    while time.monotonic() - waiting_since < 3 * 3600:
+        status = value('status')
+        boot = time.clock_gettime(time.CLOCK_BOOTTIME)
+        mono = time.monotonic()
+        panels = ';'.join(read(p) for p in sorted(Path('/sys/class/backlight').glob('*/bl_power')))
+        writer.writerow([int(time.time()), round(boot, 3), round(mono, 3), status,
+                         value('capacity'), value('current_now'), value('voltage_now'),
+                         value('temp'), panels, read('/sys/power/suspend_stats/success'),
+                         read('/sys/power/suspend_stats/fail')])
+        stream.flush()
+        if status == 'Discharging' and unplugged_at is None:
+            unplugged_at = boot
+            print('UNPLUGGED: collecting up to one hour; replug ends run', flush=True)
+        if unplugged_at is not None:
+            if status in ('Charging', 'Full'):
+                reason = 'replugged'
+                break
+            if boot - unplugged_at >= 3600:
+                reason = 'one-hour-complete'
+                break
+        time.sleep(10 if unplugged_at is None else 60)
+    path.with_suffix('.json').write_text(json.dumps({
+        'mode': 'screen-off-awake-baseline', 'reason': reason,
+        'unplug_detected': unplugged_at is not None,
+        'note': 'raw telemetry only; no inferred suspend current or battery lifetime'
+    }, indent=2) + '\n')
+    print('STOPPED: ' + reason, flush=True)
