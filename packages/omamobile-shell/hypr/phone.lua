@@ -70,8 +70,21 @@ o.launch_on_start("ionice -c 3 nice -n 19 omamobile-prefetch --delay 45")
 -- Hardware keys don't wake the screen, as on Android: power wakes it through
 -- omamobile-keys, which decides from the screen's state when it is released.
 -- With Omarchy's key_press_enables_dpms, the press itself lit the screen and
--- the release then turned it off again. Touch still wakes it.
+-- the release then turned it off again. Touch wake follows the policy below.
 hl.config({ misc = { key_press_enables_dpms = false } })
+
+-- Power-only phones gate lock/idle wake in Omarchy too. Keep generic pointer
+-- movement from bypassing that policy; the touchscreen device stays enabled.
+do
+  local f = io.open("/usr/share/omamobile/device.conf", "r")
+  if f then
+    local conf = f:read("*a")
+    f:close()
+    if ("\n" .. conf):match("\nPOWER_KEY_WAKE_ONLY=1[\r\n]") then
+      hl.config({ misc = { mouse_move_enables_dpms = false } })
+    end
+  end
+end
 
 -- The fingerprint target (omamobile.fingerprint) is drawn above the lock
 -- screen too, where the lock runs its fingerprint conversation. 1, not 2: on
