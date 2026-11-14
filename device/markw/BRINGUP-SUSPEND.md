@@ -123,8 +123,24 @@ watchdog feeder and a 90 s USB dead-man; stop at the first failure.
   drops fast, and the logger takes no samples while the phone sleeps.
   No saving is claimed; that needs a run started well below Full against
   an awake screen-off run of the same length.
-- Still before enabling it at boot: more boots, a sleep of several hours
-  and a day's use (the 2026-11-03 hang came after hours of use).
+- **Overnight sleep: pass** (same boot, after the Power-only wake policy
+  was installed from packages: device-markw 0.1.20, shell 0.2.40,
+  omarchy 0.1.12, all 18 Omarchy patches applied). Cable out, Power to
+  blank: asleep 2026-11-14 20:25:51 to 2026-11-15 06:56:18 (about 10 h
+  30 min) in one suspend, no wake in between, woken by Power
+  (pm_wakeup_irq 68, RTC alarm count 0), success 4 -> 5, fail 0, taint 0,
+  no Oops/WARNING; post-resume watchdog ARMED then DISARMED.
+- **Battery across that sleep** (`tools/markw-battery-log 50400`): 99 %
+  at the unplug, 69 % at the replug, 37 886 s of BOOTTIME apart: about
+  2.9 points an hour. With the nominal 4100 mAh that is roughly 115 mA on
+  average, far above what a phone in a real low-power state draws, so
+  s2idle here keeps the phone suspended but does not yet reach a deep
+  power state (the start at a fresh charge inflates it a little; it can't
+  explain most of it). The awake screen-off control of the same length
+  is still to run, and where the current goes (CPU idle states, RPM
+  sleep, clocks or regulators left on) is the next question.
+- Still before enabling it at boot: more boots and a day's use (the
+  2026-11-03 hang came after hours of use).
 
 ## 2026-11-14: replacement Power-only display wake policy
 
