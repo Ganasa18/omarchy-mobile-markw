@@ -48,15 +48,20 @@ install -Dm644 vendor/systemd/system/omamobile-markw-rmtfs.service \
 install -Dm755 vendor/omamobile-markw-usb-rescue "$destination/usr/lib/omamobile/omamobile-markw-usb-rescue"
 install -Dm644 vendor/systemd/system/omamobile-markw-usb-rescue.service   "$destination/usr/lib/systemd/system/omamobile-markw-usb-rescue.service"
 install -Dm644 vendor/udev/rules.d/80-omamobile-markw-usb-role.rules   "$destination/usr/lib/udev/rules.d/80-omamobile-markw-usb-role.rules"
-# The notification LED shows charging (red) and full (green) through the
-# battery's LED triggers. (feedbackd's own rules already know the PMI8950
-# haptics, spmi_haptics.)
+# The notification LED shows charging (red) and full (green), set from
+# udev rather than the kernel's battery triggers.
+# (feedbackd's own rules already know the PMI8950 haptics, spmi_haptics.)
 install -Dm755 vendor/omamobile-markw-charge-led "$destination/usr/lib/omamobile/omamobile-markw-charge-led"
 install -Dm644 vendor/udev/rules.d/81-omamobile-markw-charge-led.rules   "$destination/usr/lib/udev/rules.d/81-omamobile-markw-charge-led.rules"
 # Suspend when the screen has been off a while: installed, not enabled.
 install -Dm755 vendor/omamobile-autosuspend "$destination/usr/lib/omamobile/omamobile-autosuspend"
 install -Dm644 vendor/systemd/system/omamobile-autosuspend.service \
   "$destination/usr/lib/systemd/system/omamobile-autosuspend.service"
+# Fewer CPUs and a lower clock while the screen is off: installed, not
+# enabled (CPU hotplug is unproven on markw).
+install -Dm755 vendor/omamobile-markw-screen-power "$destination/usr/lib/omamobile/omamobile-markw-screen-power"
+install -Dm644 vendor/systemd/system/omamobile-markw-screen-power.service \
+  "$destination/usr/lib/systemd/system/omamobile-markw-screen-power.service"
 # The sound card's UCM profile (device/markw/BRINGUP-AUDIO.md); the card
 # itself needs the ADSP, so without it this does nothing.
 install -Dm644 vendor/ucm2/conf.d/xiaomi-markw/xiaomi-markw.conf \

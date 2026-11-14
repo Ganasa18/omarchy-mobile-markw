@@ -1,0 +1,134 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Spend less while the screen is off, for a phone that can't suspend yet
+# (device/markw/BRINGUP-SUSPEND.md): once the panel has been off for
+# SCREEN_OFF_DELAY seconds, take SCREEN_OFF_CPUS offline and cap the clock
+# at SCREEN_OFF_MAX_KHZ (device.conf); the moment it lights again, bring
+# every CPU back and put the cap back as it was. Overnight on markw the
+# battery fell about 70 % with the screen off and nothing suspending.
+#
+# The screen's state is its backlight's bl_power (4 off, 0 on), which
+# Omarchy's brightness script sets for this panel (omamobile-omarchy patch
+# 0008) on every path: the power key, the idle lock, a wake. It is read
+# every second with shell builtins only, no process started, so the watch
+# itself costs next to nothing.
+#
+#   omamobile-markw-screen-power          run (the service)
+#   omamobile-markw-screen-power --check  print the state and the plan, and exit
+#
+# Shipped disabled: CPU hotplug is unproven on this port. To try it:
+#   systemctl start omamobile-markw-screen-power
+# and to keep it: systemctl enable omamobile-markw-screen-power
+set -u
+
+sysfs=${OMAMOBILE_SYSFS:-/sys}
+conf=${OMAMOBILE_DEVICE_CONF:-/usr/share/omamobile/device.conf}
+# Every second: a wake must get every CPU back before the lock screen
+# draws, and one read of a sysfs file a second is nothing next to the rest.
+poll=${OMAMOBILE_SCREEN_POWER_POLL:-1}
+cpu=$sysfs/devices/system/cpu
+
+setting() { # NAME DEFAULT PATTERN
+  local value
+  value=$(sed -n "s/^$1=//p" "$conf" 2>/dev/null | tail -n1)
+  [[ $value =~ ^($3)$ ]] || value=$2
+  printf '%s\n' "$value"
+}
+delay=$(setting SCREEN_OFF_DELAY 10 '[0-9]+')
+max_khz=$(setting SCREEN_OFF_MAX_KHZ 0 '[0-9]+')
+cpus_spec=$(setting SCREEN_OFF_CPUS "" '[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*')
+
+# The CPUs to take offline, never cpu0 (the boot CPU can't go).
+offline_cpus=()
+IFS=, read -r -a ranges <<<"$cpus_spec"
+for range in "${ranges[@]}"; do
+  [[ -n $range ]] || continue
+  first=${range%-*} last=${range#*-}
+  for ((n = first; n <= last; n++)); do
+    ((n > 0)) && [[ -w $cpu/cpu$n/online ]] && offline_cpus+=("$n")
+  done
+done
+
+panel=""
+for f in "$sysfs"/class/backlight/*/bl_power; do
+  [[ -r $f ]] && { panel=$f; break; }
+done
+
+# 0: the panel is off; 1: it is on, or there is no panel to ask.
+panel_off() {
+  local value=0
+  [[ -n $panel ]] || return 1
+  read -r value <"$panel" 2>/dev/null || return 1
+  [[ $value != 0 ]]
+}
+
+policies() {
+  local p
+  for p in "$cpu"/cpufreq/policy*; do
+    [[ -w $p/scaling_max_freq ]] && printf '%s\n' "$p"
+  done
+}
+
+saved=()   # policy=khz, as they were before the cap
+limited=0
+
+limit() {
+  local p khz n
+  saved=()
+  if ((max_khz > 0)); then
+    while read -r p; do
+      read -r khz <"$p/scaling_max_freq" || continue
+      saved+=("$p=$khz")
+      ((khz > max_khz)) && echo "$max_khz" >"$p/scaling_max_freq"
+    done < <(policies)
+  fi
+  for n in "${offline_cpus[@]}"; do
+    echo 0 >"$cpu/cpu$n/online" 2>/dev/null || echo "cpu$n stayed online" >&2
+  done
+  limited=1
+  echo "screen off: ${#offline_cpus[@]} CPUs offline, clock capped at ${max_khz} kHz"
+}
+
+restore() {
+  local n entry
+  ((limited)) || return 0
+  for n in "${offline_cpus[@]}"; do
+    echo 1 >"$cpu/cpu$n/online" 2>/dev/null || echo "cpu$n did not come back" >&2
+  done
+  for entry in "${saved[@]}"; do
+    echo "${entry#*=}" >"${entry%%=*}/scaling_max_freq" 2>/dev/null
+  done
+  saved=()
+  limited=0
+  echo "screen on: every CPU back, clock as before"
+}
+
+if [[ ${1:-} == --check ]]; then
+  echo "panel: ${panel:-none}"
+  if panel_off; then echo "screen: off"; else echo "screen: on"; fi
+  echo "after ${delay}s off: offline cpu ${offline_cpus[*]:-none}, cap ${max_khz} kHz (0: none)"
+  exit 0
+fi
+
+[[ -n $panel ]] || { echo "no backlight with bl_power: nothing to follow"; exit 0; }
+((${#offline_cpus[@]} > 0 || max_khz > 0)) || { echo "SCREEN_OFF_CPUS and SCREEN_OFF_MAX_KHZ unset: nothing to do"; exit 0; }
+
+# Stopping the service, or a crash of the loop, never leaves CPUs offline.
+trap 'restore; exit 0' TERM INT HUP
+trap restore EXIT
+
+# A pipe nobody writes: read -t on it sleeps without starting a process.
+exec {sleeper}<> <(:)
+off_since=-1
+elapsed=0
+while :; do
+  if panel_off; then
+    ((off_since < 0)) && off_since=$elapsed
+    ((!limited && elapsed - off_since >= delay)) && limit
+  else
+    off_since=-1
+    restore
+  fi
+  read -r -t "$poll" -u "$sleeper" _
+  elapsed=$((elapsed + poll))
+done

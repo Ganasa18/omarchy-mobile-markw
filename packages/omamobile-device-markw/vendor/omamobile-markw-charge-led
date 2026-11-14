@@ -1,28 +1,47 @@
 #!/bin/bash
 # SPDX-License-Identifier: MIT
 #
-# omamobile-markw-charge-led: hand the Redmi 4 Prime's notification LED
-# to the kernel's battery triggers, red while charging and green when
-# full, as MIUI does. The PMI8950 fuel gauge registers the triggers;
-# the AW2013 does the rest, so nothing polls.
+# omamobile-markw-charge-led: the Redmi 4 Prime's notification LED shows
+# charging, red while charging and green when full, as MIUI does.
 #
 # Run from udev (81-omamobile-markw-charge-led.rules) on the LEDs' add
-# and on the battery's events. It sets a trigger only where the LED has
-# none: a "pattern" means feedbackd is blinking it for a notification,
-# and a trigger already set needs nothing. The blue channel is left
-# alone (it doesn't light on the tested unit, device/markw/NOTES.md).
+# and on the battery's events; it sets the brightness itself and writes
+# only when it changes. It does not use the kernel's battery triggers
+# (qcom-battery-charging, -full): those fire from power_supply_changed()
+# while the system suspends and resumes, and that write reached the
+# suspended I2C controller (an external abort in the leds worker, which
+# then held the LED's lock: device/markw/BRINGUP-SUSPEND.md, 2026-11-10).
+# udev is frozen during a suspend, so a write from here never lands in
+# that window. A trigger
+# left from an older version is released. An LED running a "pattern"
+# (feedbackd blinking it for a notification) is left alone, and so is
+# the blue channel (it doesn't light on the tested unit).
 set -u
 sysfs=${OMAMOBILE_SYSFS:-/sys}
+leds=$sysfs/class/leds
 
-claim() {  # claim LED TRIGGER
-  local f=$sysfs/class/leds/$1/trigger current
-  [[ -w $f ]] || return 0
-  current=$(sed -E 's/.*\[([^]]*)\].*/\1/' "$f") || return 0
-  [[ $current == none ]] || return 0
-  grep -qw -- "$2" "$f" || return 0   # the fuel gauge isn't there yet
-  echo "$2" >"$f" 2>/dev/null || true
+status=$(cat "$sysfs/class/power_supply/qcom-battery/status" 2>/dev/null) || status=""
+red=0 green=0
+case $status in
+  Charging) red=255 ;;
+  Full) green=255 ;;
+esac
+
+show() {  # show LED BRIGHTNESS
+  local d=$leds/$1 current
+  [[ -w $d/brightness ]] || return 0
+  if [[ -r $d/trigger ]]; then
+    current=$(sed -E 's/.*\[([^]]*)\].*/\1/' "$d/trigger") || return 0
+    case $current in
+      none) ;;
+      qcom-battery-*) echo none >"$d/trigger" 2>/dev/null || return 0 ;;
+      *) return 0 ;;   # feedbackd's pattern, or a trigger someone chose
+    esac
+  fi
+  [[ $(cat "$d/brightness" 2>/dev/null) == "$2" ]] && return 0
+  echo "$2" >"$d/brightness" 2>/dev/null || true
 }
 
-claim red:indicator qcom-battery-charging
-claim green:indicator qcom-battery-full
+show red:indicator "$red"
+show green:indicator "$green"
 exit 0

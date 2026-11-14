@@ -147,25 +147,37 @@ setusb device 'Unknown [SDP] DCP CDP' 0; ur && fail "a dead link that stays dead
 [[ $(grep -c rebinding "$us/out") == 2 ]] || fail "a dead link is rebound twice at most"
 [[ $(cat "$us/cfs/usb_gadget/g/UDC") == 7000000.usb ]] || fail "the gadget ends up bound to the controller"
 pass "USB rescue: rebinds a dead link on a computer's port only, at most twice"
-# Charge LED: a fake sysfs. Triggers go only to LEDs with none set, and
-# only once the fuel gauge offers them.
+# Charge LED: a fake sysfs. The script sets brightness from the battery
+# status and never hands the LED to the kernel's battery triggers.
 [[ -x $tmp/root/usr/lib/omamobile/omamobile-markw-charge-led ]] || fail "the charge LED script is staged"
 grep -c 'KERNEL=="qcom-battery"' "$tmp/root/usr/lib/udev/rules.d/81-omamobile-markw-charge-led.rules" >/dev/null \
   || fail "the battery's events run the charge LED script"
-cl=$tmp/cled; mkdir -p "$cl/class/leds/red:indicator" "$cl/class/leds/green:indicator"
+cl=$tmp/cled; mkdir -p "$cl/class/leds/red:indicator" "$cl/class/leds/green:indicator" "$cl/class/power_supply/qcom-battery"
 setled() { echo "$2" >"$cl/class/leds/$1/trigger"; }
 led() { sed -E 's/.*\[([^]]*)\].*/\1/' "$cl/class/leds/$1/trigger"; }
+lit() { cat "$cl/class/leds/$1/brightness"; }
+bat() { echo "$1" >"$cl/class/power_supply/qcom-battery/status"; }
 crun() { OMAMOBILE_SYSFS=$cl bash vendor/omamobile-markw-charge-led || fail "the charge LED script exits 0"; }
+echo 0 >"$cl/class/leds/red:indicator/brightness"; echo 0 >"$cl/class/leds/green:indicator/brightness"
 # A fake trigger file shows the written value as the selection.
-setled red:indicator '[none] heartbeat pattern'; setled green:indicator '[none] heartbeat pattern'
-crun; [[ $(led red:indicator) == none ]] || fail "no trigger before the fuel gauge offers one"
 setled red:indicator '[none] pattern qcom-battery-charging qcom-battery-full'
 setled green:indicator '[none] pattern qcom-battery-charging qcom-battery-full'
-crun; [[ $(cat "$cl/class/leds/red:indicator/trigger") == qcom-battery-charging ]] || fail "red shows charging"
-[[ $(cat "$cl/class/leds/green:indicator/trigger") == qcom-battery-full ]] || fail "green shows full"
+crun; [[ $(lit red:indicator) == 0 && $(lit green:indicator) == 0 ]] || fail "no battery status: both off"
+bat Charging; crun
+[[ $(lit red:indicator) == 255 && $(lit green:indicator) == 0 ]] || fail "red shows charging"
+[[ $(led red:indicator) == none ]] || fail "charging sets no kernel trigger"
+bat Full; crun
+[[ $(lit red:indicator) == 0 && $(lit green:indicator) == 255 ]] || fail "green shows full"
+bat Discharging; crun
+[[ $(lit red:indicator) == 0 && $(lit green:indicator) == 0 ]] || fail "unplugged: both off"
+setled red:indicator 'none pattern [qcom-battery-charging] qcom-battery-full'
+bat Charging; crun
+[[ $(cat "$cl/class/leds/red:indicator/trigger") == none ]] || fail "an old battery trigger is released"
+[[ $(lit red:indicator) == 255 ]] || fail "red shows charging after the release"
 setled red:indicator 'none [pattern] qcom-battery-charging qcom-battery-full'
-crun; [[ $(led red:indicator) == pattern ]] || fail "a feedbackd blink is never cut off"
-pass "charge LED: red charging, green full, only on LEDs with no trigger"
+echo 7 >"$cl/class/leds/red:indicator/brightness"; bat Full; crun
+[[ $(led red:indicator) == pattern && $(lit red:indicator) == 7 ]] || fail "a feedbackd blink is never cut off"
+pass "charge LED: red charging, green full, set from userspace without kernel triggers"
 grep -qx 'w /sys/devices/system/cpu/cpufreq/schedutil/rate_limit_us - - - - 20000' \
   "$tmp/root/usr/lib/tmpfiles.d/omamobile-schedutil.conf" \
   || fail "schedutil changes the clock at most every 20 ms"
@@ -187,6 +199,13 @@ grep -q '^AUTO_SUSPEND_DELAY=10$' "$tmp/root/usr/share/omamobile/device.conf" \
 ! find "$tmp/root" -lname '*omamobile-autosuspend.service' | grep -c . >/dev/null \
   || fail "auto-suspend ships disabled until it is proven"
 bash test/autosuspend.sh || fail "auto-suspend decisions"
+[[ -x $tmp/root/usr/lib/omamobile/omamobile-markw-screen-power && -f $tmp/root/usr/lib/systemd/system/omamobile-markw-screen-power.service ]] \
+  || fail "install stages the screen-off power saver"
+! find "$tmp/root" -lname '*omamobile-markw-screen-power.service' | grep -c . >/dev/null \
+  || fail "the screen-off power saver ships disabled until CPU hotplug is proven"
+grep -q '^SCREEN_OFF_CPUS=4-7$' "$tmp/root/usr/share/omamobile/device.conf" \
+  || fail "the descriptor names the CPUs to take offline with the screen off"
+bash test/screen-power.sh || fail "screen-off power saver"
 [[ ! -e $tmp/root/usr/bin/omamobile-display-touch ]] || fail "global touch disable hook must stay absent"
 grep -qx 'POWER_KEY_WAKE_ONLY=1' "$tmp/root/usr/share/omamobile/device.conf" || fail "Power-only wake policy staged"
 ucm=$tmp/root/usr/share/alsa/ucm2
