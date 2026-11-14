@@ -44,6 +44,22 @@ screens_off() {
   (( found ))
 }
 
+# Established SSH sessions that can still reach the phone. With the cable
+# out, a session over usb0 is dead, but its TCP connection stays
+# established until keepalives give up, which kept the phone awake for
+# minutes after an unplug. Those don't count.
+ssh_sessions() {
+  local sessions addr
+  sessions=$(ss -Htn state established '( sport = :22 )' 2>/dev/null)
+  if [[ $(cat "$root"/sys/class/net/usb0/carrier 2>/dev/null) != 1 ]]; then
+    sessions=$(grep -v -F '%usb0:' <<<"$sessions")
+    for addr in $(ip -o addr show dev usb0 2>/dev/null | sed -n 's/.* inet6\{0,1\} \([^/]*\)\/.*/\1/p'); do
+      sessions=$(awk -v a="$addr" '{ l = $3; gsub(/[][]/, "", l); sub(/:[0-9]+$/, "", l); if (l != a) print }' <<<"$sessions")
+    done
+  fi
+  grep -v '^[[:space:]]*$' <<<"$sessions"
+}
+
 # Prints why the phone must stay awake, or nothing.
 awake_reason() {
   local f
@@ -57,7 +73,7 @@ awake_reason() {
   for f in "$root"/home/*/.local/state/omarchy/indicators/stay-awake; do
     [[ -e $f ]] && { echo "Stay awake is on"; return; }
   done
-  f=$(ss -Htn state established '( sport = :22 )' 2>/dev/null | head -n1)
+  f=$(ssh_sessions | head -n1)
   [[ -n $f ]] && { echo "SSH session open"; return; }
   f=$(systemd-inhibit --list --mode=block --what=sleep --no-legend 2>/dev/null | head -n1)
   [[ -n $f ]] && { echo "sleep inhibitor: ${f%%  *}"; return; }
@@ -96,11 +112,15 @@ while sleep "$poll"; do
   before=$(cat /sys/power/suspend_stats/success 2>/dev/null || echo 0)
   systemctl suspend || echo "systemctl suspend failed"
   # Wait for the resume (or a minute), then give the user the full delay.
+  # systemd freezes user sessions before the sleep hooks run, so a slow
+  # hook delays the sleep itself; say so rather than claim a resume.
+  resumed=0
   for _ in $(seq 60); do
-    [[ $(cat /sys/power/suspend_stats/success 2>/dev/null || echo 0) != "$before" ]] && break
+    [[ $(cat /sys/power/suspend_stats/success 2>/dev/null || echo 0) != "$before" ]] && { resumed=1; break; }
     sleep 1
   done
-  echo "resumed (suspend_stats success $(cat /sys/power/suspend_stats/success 2>/dev/null), fail $(cat /sys/power/suspend_stats/fail 2>/dev/null))"
+  stats="suspend_stats success $(cat /sys/power/suspend_stats/success 2>/dev/null), fail $(cat /sys/power/suspend_stats/fail 2>/dev/null)"
+  if (( resumed )); then echo "resumed ($stats)"; else echo "no completed suspend within 60 s ($stats)"; fi
   off_since=$(date +%s)
   last=""
 done

@@ -41,6 +41,12 @@ cat >"$t/bin/ss" <<'EOF'
 #!/bin/bash
 cat "$FAKE_SS" 2>/dev/null
 EOF
+cat >"$t/bin/ip" <<'EOF'
+#!/bin/bash
+[[ $* == "-o addr show dev usb0" ]] || exit 1
+echo '5: usb0    inet 198.51.100.1/29 brd 198.51.100.7 scope global usb0\       valid_lft forever preferred_lft forever'
+echo '5: usb0    inet6 fe80::1/64 scope link \       valid_lft forever preferred_lft forever'
+EOF
 cat >"$t/bin/systemctl" <<'EOF'
 #!/bin/bash
 echo "systemctl must not run in --check" >&2; exit 99
@@ -67,6 +73,13 @@ echo 'closed' >"$r/proc/asound/card0/pcm0p/sub0/status"
 touch "$r/home/u/.local/state/omarchy/indicators/stay-awake"; expect "awake: Stay awake is on" "Stay awake keeps it awake"
 rm "$r/home/u/.local/state/omarchy/indicators/stay-awake"
 printf '0 0 192.0.2.17:22 192.0.2.40:51234\n' >"$t/ss"; expect "awake: SSH session open" "an SSH session keeps it awake"
+# usb0 is 198.51.100.1 here: with the cable out its sessions are dead.
+printf '0 51328 198.51.100.1:22 198.51.100.2:55845\n0 0 [fe80::1]%%usb0:22 [fe80::2]%%usb0:40000\n' >"$t/ss"
+expect "suspend" "a stale SSH session over usb0 doesn't count with the cable out"
+echo 1 >"$r/sys/class/net/usb0/carrier"; expect "awake: USB cable in a computer" "the cable in still keeps it awake"
+echo 0 >"$r/sys/class/net/usb0/carrier"
+printf '0 0 198.51.100.1:22 198.51.100.2:55845\n0 0 192.0.2.17:22 192.0.2.40:51234\n' >"$t/ss"
+expect "awake: SSH session open" "a Wi-Fi SSH session still counts next to a stale usb0 one"
 rm "$t/ss"
 printf 'mpv  1000 u 123 mpv sleep Playing block\n' >"$t/inhibit"; expect "awake: sleep inhibitor: mpv" "a block sleep inhibitor keeps it awake"
 rm "$t/inhibit"
