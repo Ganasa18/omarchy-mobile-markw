@@ -1,0 +1,159 @@
+From: Omarchy Mobile <omamobile@localhost>
+Subject: [PATCH] usb: dwc3: defer connector role notifications to the role worker
+
+The role switch and extcon callbacks notify the glue synchronously before
+queueing the controller mode change on system_freezable_wq. A caller on
+a non-freezable workqueue can therefore reach Qualcomm's QSCRATCH VBUS
+override while the glue clocks are off for system sleep. Runtime PM does
+not protect an active device whose runtime PM is disabled during sleep.
+
+Cache the connector role with the requested controller mode and notify
+the glue from the freezable worker. Keep the notification before the
+mode-equality early returns: NONE and DEVICE can map to the same mode.
+Mode-only requests preserve an already pending connector notification.
+
+This adapts the DWC3 maintainer's proposed fix to the MSM8953 v7.1.3-r0
+tree. A host regression harness reproduces the unsafe synchronous call
+on the original source and checks deferred/coalesced role notifications.
+It has not yet been shown to fix the Redmi 4 Prime's suspend resets.
+
+Suggested-by: Thinh Nguyen <Thinh.Nguyen@synopsys.com>
+Link: https://lore.kernel.org/all/auu9hx_Xnjbi3WkB@vbox/
+---
+diff --git a/drivers/usb/dwc3/core.c b/drivers/usb/dwc3/core.c
+--- a/drivers/usb/dwc3/core.c
++++ b/drivers/usb/dwc3/core.c
+@@ -169,14 +169,23 @@
+ 	int ret;
+ 	u32 reg;
+ 	u32 desired_dr_role;
++	enum usb_role requested_role;
++	bool notify_glue;
+ 	int i;
+ 
+ 	mutex_lock(&dwc->mutex);
+ 	spin_lock_irqsave(&dwc->lock, flags);
+ 	desired_dr_role = dwc->desired_dr_role;
++	requested_role = dwc->requested_role;
++	notify_glue = dwc->requested_role_pending;
++	dwc->requested_role_pending = false;
+ 	spin_unlock_irqrestore(&dwc->lock, flags);
+ 
+ 	pm_runtime_get_sync(dwc->dev);
++
++	/* NONE and DEVICE can share a controller mode but need distinct notifications. */
++	if (notify_glue)
++		dwc3_pre_set_role(dwc, requested_role);
+ 
+ 	if (dwc->current_dr_role == DWC3_GCTL_PRTCAP_OTG)
+ 		dwc3_otg_update(dwc, 0);
+@@ -287,7 +296,8 @@
+ 	mutex_unlock(&dwc->mutex);
+ }
+ 
+-void dwc3_set_mode(struct dwc3 *dwc, u32 mode)
++static void __dwc3_queue_mode(struct dwc3 *dwc, u32 mode, enum usb_role role,
++			      bool notify_glue)
+ {
+ 	unsigned long flags;
+ 
+@@ -296,9 +306,23 @@
+ 
+ 	spin_lock_irqsave(&dwc->lock, flags);
+ 	dwc->desired_dr_role = mode;
++	if (notify_glue) {
++		dwc->requested_role = role;
++		dwc->requested_role_pending = true;
++	}
+ 	spin_unlock_irqrestore(&dwc->lock, flags);
+ 
+ 	queue_work(system_freezable_wq, &dwc->drd_work);
++}
++
++void dwc3_set_mode(struct dwc3 *dwc, u32 mode)
++{
++	__dwc3_queue_mode(dwc, mode, USB_ROLE_NONE, false);
++}
++
++void dwc3_set_role(struct dwc3 *dwc, u32 mode, enum usb_role role)
++{
++	__dwc3_queue_mode(dwc, mode, role, true);
+ }
+ 
+ u32 dwc3_core_fifo_space(struct dwc3_ep *dep, u8 type)
+diff --git a/drivers/usb/dwc3/core.h b/drivers/usb/dwc3/core.h
+--- a/drivers/usb/dwc3/core.h
++++ b/drivers/usb/dwc3/core.h
+@@ -994,7 +994,8 @@
+ /**
+  * struct dwc3_glue_ops - The ops indicate the notifications that
+  *				need to be passed on to glue layer
+- * @pre_set_role: Notify glue of role switch notifications
++ * @pre_set_role: Notify glue of role changes from the freezable role worker,
++ *		outside system sleep and serialized by the controller mutex
+  * @pre_run_stop: Notify run stop enable/disable information to glue
+  */
+ struct dwc3_glue_ops {
+@@ -1050,6 +1051,8 @@
+  * @dr_mode: requested mode of operation
+  * @current_dr_role: current role of operation when in dual-role mode
+  * @desired_dr_role: desired role of operation when in dual-role mode
++ * @requested_role: connector role to pass to the glue, protected by @lock
++ * @requested_role_pending: @requested_role has not yet reached the glue
+  * @edev: extcon handle
+  * @edev_nb: extcon notifier
+  * @hsphy_mode: UTMI phy mode, one of following:
+@@ -1244,6 +1247,8 @@
+ 	enum usb_dr_mode	dr_mode;
+ 	u32			current_dr_role;
+ 	u32			desired_dr_role;
++	enum usb_role		requested_role;
++	bool			requested_role_pending;
+ 	struct extcon_dev	*edev;
+ 	struct notifier_block	edev_nb;
+ 	enum usb_phy_interface	hsphy_mode;
+@@ -1590,6 +1595,7 @@
+ /* prototypes */
+ void dwc3_set_prtcap(struct dwc3 *dwc, u32 mode, bool ignore_susphy);
+ void dwc3_set_mode(struct dwc3 *dwc, u32 mode);
++void dwc3_set_role(struct dwc3 *dwc, u32 mode, enum usb_role role);
+ u32 dwc3_core_fifo_space(struct dwc3_ep *dep, u8 type);
+ 
+ #define DWC3_IP_IS(_ip)							\
+diff --git a/drivers/usb/dwc3/drd.c b/drivers/usb/dwc3/drd.c
+--- a/drivers/usb/dwc3/drd.c
++++ b/drivers/usb/dwc3/drd.c
+@@ -439,8 +439,7 @@
+ 	enum usb_role role = mode == DWC3_GCTL_PRTCAP_HOST ?
+ 				     USB_ROLE_HOST : USB_ROLE_DEVICE;
+ 
+-	dwc3_pre_set_role(dwc, role);
+-	dwc3_set_mode(dwc, mode);
++	dwc3_set_role(dwc, mode, role);
+ 
+ 	return NOTIFY_DONE;
+ }
+@@ -468,8 +467,7 @@
+ 		break;
+ 	}
+ 
+-	dwc3_pre_set_role(dwc, role);
+-	dwc3_set_mode(dwc, mode);
++	dwc3_set_role(dwc, mode, role);
+ 	return 0;
+ }
+ 
+diff --git a/drivers/usb/dwc3/dwc3-qcom.c b/drivers/usb/dwc3/dwc3-qcom.c
+--- a/drivers/usb/dwc3/dwc3-qcom.c
++++ b/drivers/usb/dwc3/dwc3-qcom.c
+@@ -587,8 +587,8 @@
+ 	pm_runtime_put_sync(qcom->dev);
+ 
+ 	/*
+-	 * Current role changes via usb_role_switch_set_role callback protected
+-	 * internally by mutex lock.
++	 * Role notifications run in the freezable role worker, serialized by
++	 * the DWC3 controller mutex and never during system sleep.
+ 	 */
+ 	qcom->current_role = next_role;
+ }

@@ -1,0 +1,62 @@
+From: Omarchy Mobile <omamobile@localhost>
+Subject: [PATCH] i2c: qup: refuse transfers while system suspended
+
+qup_i2c_suspend() turns the controller's clocks off but leaves its
+runtime PM status active and never tells the I2C core the adapter is
+suspended. A transfer that comes after it, before qup_i2c_resume(), so
+finds pm_runtime_get_sync() a no-op and touches the QUP registers with
+their clocks off.
+
+Such transfers happen: LED triggers fire from power_supply_changed()
+during suspend and resume, and a leds-aw2013 brightness work then
+wrote to the controller after it had suspended. On a Redmi 4 Prime
+(msm8953-xiaomi-markw) that ended in
+
+  Internal error: synchronous external abort: 0000000096000010
+  Workqueue: leds set_brightness_delayed
+  pc : qup_i2c_xfer_v2+0xc1c/0xcd4
+   aw2013_brightness_set+0x174/0x2bc [leds_aw2013]
+
+when it was caught, and otherwise in a bus hang that the SoC turned
+into a PS_HOLD reset at almost every s2idle. With the LED triggers
+detached, 10 of 10 s2idle cycles and a 300 s one resumed cleanly where
+every run before had reset in its first cycle.
+
+Mark the adapter suspended first, so the core rejects late transfers
+with -ESHUTDOWN instead of reaching the hardware, and suspend and
+resume through pm_runtime_force_suspend()/pm_runtime_force_resume(),
+so the runtime PM status matches the clocks.
+
+---
+ drivers/i2c/busses/i2c-qup.c | 16 +++++++++++-----
+ 1 file changed, 10 insertions(+), 6 deletions(-)
+
+--- a/drivers/i2c/busses/i2c-qup.c
++++ b/drivers/i2c/busses/i2c-qup.c
+@@ -1981,16 +1981,20 @@
+
+ static int qup_i2c_suspend(struct device *device)
+ {
+-	if (!pm_runtime_suspended(device))
+-		return qup_i2c_pm_suspend_runtime(device);
+-	return 0;
++	struct qup_i2c_dev *qup = dev_get_drvdata(device);
++
++	i2c_mark_adapter_suspended(&qup->adap);
++	return pm_runtime_force_suspend(device);
+ }
+
+ static int qup_i2c_resume(struct device *device)
+ {
+-	qup_i2c_pm_resume_runtime(device);
+-	pm_request_autosuspend(device);
+-	return 0;
++	struct qup_i2c_dev *qup = dev_get_drvdata(device);
++	int ret;
++
++	ret = pm_runtime_force_resume(device);
++	i2c_mark_adapter_resumed(&qup->adap);
++	return ret;
+ }
+
+ static const struct dev_pm_ops qup_i2c_qup_pm_ops = {

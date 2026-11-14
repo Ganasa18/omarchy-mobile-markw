@@ -21,6 +21,9 @@ for p in /src/device/markw/kernel/patches/*.patch; do
   patch -p1 --forward --fuzz=0 --no-backup-if-mismatch < "$p"
 done
 
+# Exercise role-switch callbacks with a frozen worker before cross-building.
+python3 /src/device/markw/kernel/test/usb-role-pm.py "$tree"
+
 O=$tree/out
 mkdir -p "$O"
 if gzip -t /input/config 2>/dev/null; then
