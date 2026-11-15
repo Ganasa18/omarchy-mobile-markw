@@ -1639,3 +1639,19 @@ the original, which stays in place).
 | L1 | After the owner's go: RAM boot `probe-oma14-syspc` again | SSH; module from `updates/` loaded; sound card present; codec clock enabled while awake as before | no SSH, no card | `rm` the `updates/` file, `depmod`, reboot | medium |
 | L2 | Play a short tone (the speaker sounds), then guarded `rtcwake -m freeze -s 60` | resume; LPASS `numshutdowns`/XO time rise; no Oops | no resume | as L1 | medium |
 | L3 | Play the tone again after the resume | sound as before (the codec kept its state) | silence | as L1 | low |
+
+#### Results (2026-11-15, `7.1.3-msm8953-oma14` + candidate 0018 module)
+
+- L1 pass: RAM boot of probe-oma14-syspc; `snd-soc-msm8916-digital` from
+  `updates/`, taint 8704 (E for the unsigned module, W for the known DSI
+  WARNs); sound card present; the codec clock on while awake, as
+  designed (only suspend gates it).
+- L2 pass: a tone played (`pw-play` rc 0, every PCM closed again after),
+  then a guarded 60 s `rtcwake` freeze: resumed by the RTC, success 0 ->
+  1, fail 0, no Oops or new WARNING, watchdog armed and disarmed.
+  **LPASS XO-off time 0.1 s -> 61.2 s, shutdowns 5 -> 6**: the ADSP now
+  sleeps through s2idle. APSS shutdowns 0 -> 1 again (system-pc).
+  The codec clock is enabled again after the resume.
+- L3: the tone played again after the resume (`pw-play` rc 0, no ASoC,
+  q6afe or codec errors); audible check by the owner pending.
+- Left holding XO: MPSS only (modem off). vlow/vmin still 0.
