@@ -1662,7 +1662,7 @@ Why before the modem: once MPSS sleeps too, RPM can shut XO down and the
 GIC stops seeing interrupts; without MPM only RPM's scheduled wakeup
 would bring the CPUs back, never the power key.
 
-`device/markw/kernel/candidates/0019-arm64-dts-qcom-msm8953-add-the-MPM-wakeup-interrupt-controller.patch`,
+`device/markw/kernel/patches/0019-arm64-dts-qcom-msm8953-add-the-MPM-wakeup-interrupt-controller.patch`,
 from the vendor's `qcom,mpm@601d4` (`msm8953-pm.dtsi`: vMPM in message RAM
 at 0x601d4, IPC 0xb011008 bit 1, `interrupts = <0 171 1>`, 96 pins,
 `gic-map` values are GIC hwirqs: SPMI `<88 222>` is SPI 190, TSENS
@@ -1755,3 +1755,9 @@ played right at suspend, a paused player still holding the device, or the test
 copy's own beep keeps it up for that sleep. No kernel change is planned for
 this. If it matters later, the auto-suspend hook can wait for
 `/proc/asound/card0/pcm*p/sub0/status` to read `closed`.
+
+**Adopted 2026-11-15:** candidates 0019-0021 are now patches 0019-0021, and
+`markw.config` carries `CONFIG_QCOM_MPM=y` with the release name
+`-msm8953-oma16`. The committed tree builds the kernel that passed M1-M3 (the
+three patches match the oma16 build export byte for byte). The MPM must be
+built in, never a module: the SPMI bus names it as its interrupt parent.
