@@ -175,3 +175,73 @@ has dropped, with a patch in `device/markw/kernel/patches`.
   property added (`fdtput`; `dtc` diff of the two DTBs shows only that
   line). Next, owner's go: boot it, expect `TCC_CFG` & 7 = 2 and one
   taper to 100 % without the cycling.
+
+## Fuel gauge reading (2026-11-15, oma12 candidate)
+
+Why: the gauge's capacity is not a usable measure. After an overnight
+suspend test it read 69 % at the replug and 77 % about 15 minutes later on
+a laptop port (about 400 mA, so roughly 100 mAh of the 4000 mAh battery,
+2.5 points); the night's 99 % -> 69 % therefore says little about the
+sleep current (BRINGUP-SUSPEND.md, 2026-11-15). current_now agrees with
+what the phone does (about 50 mA screen-off awake, 300 mA screen on,
+400 mA charging) but has not been checked against an external meter.
+
+Facts from the source:
+
+- Mainline `pmi8994_fg` reports capacity from the gauge's monotonic SOC
+  register (0x09) and reads only temperature, voltage and current from
+  the gauge's SRAM. It never loads a battery profile, never writes the
+  nominal capacity and never reads the coulomb counter.
+- The downstream driver (Xiaomi's GPL `markw-m-oss` kernel,
+  `drivers/power/qpnp-fg.c`) loads a 128-byte profile into SRAM at 0x4c0
+  when the integrity bit at 0x53c is clear or the loaded profile differs,
+  picking it by battery ID. Its SRAM table matches the addresses mainline
+  already uses (BATT_TEMP 0x550, voltage and current at 0x5cc).
+- markw has three profiles in that tree (`MARKW-qrd-{Default,Coslight,
+  Feimaotui}-4v4-4000mah.dtsi`, 4.4 V, 4000 mAh), chosen by a 1, 100 or
+  50 kOhm ID resistor. The profile data is GPL source; it is not copied
+  here until a step needs it.
+- SRAM is volatile but survives a reboot while the battery is connected,
+  so the profile MIUI loaded may still be in the gauge when Linux boots.
+  Whether it is, is the first thing to learn.
+
+Patch 0014 (`power: supply: pmi8994_fg: report the coulomb counter and
+gauge state`) is read-only: `charge_counter` (CC_CHARGE 0x570 scaled by
+the nominal capacity at 0x4f4, uAh), `voltage_ocv` (0x588), and
+`/sys/kernel/debug/pmi8994_fg/info` with the profile integrity flag, the
+battery ID, the gauge's own SOC, the nominal capacity, the counter and the
+first 32 bytes of the loaded profile. Nothing is written to the gauge.
+Release `7.1.3-msm8953-oma12`; the probe is oma11's watchdog probe with
+only the kernel and its seven initramfs modules replaced (same DTB, same
+command line; the repack tool reproduces oma11's image byte for byte when
+given oma11's own modules).
+
+Offline checks (2026-11-15): `checkpatch --strict --no-signoff` 0/0/0;
+the driver with `W=1`: no compiler warning, and 109 kernel-doc warnings
+before and after (all from the file's existing `@brief` comments). The
+kernel built with `tools/build-markw-kernel` (Alpine clang 20.1.8; oma11's
+config came from an Ubuntu clang 20.1.8 build, the only config difference
+apart from the release and OpenSSL's ML-DSA options). The markw DTB is
+byte-identical to oma11's. Probe `out/markw/probe-oma12-fg/boot.img`:
+oma11 watchdog probe's header, command line and DTB, oma12's Image.gz and
+seven initramfs modules (vermagic checked); unpacked again, every part
+matches. Image and modules tarball checksums are in the probe's
+`SHA256SUMS` and next to the tarball (local, not committed).
+
+### Runbook G (each step after the owner's go)
+
+| Step | Command | Expect / pass | Stop if | Rollback | Risk |
+| --- | --- | --- | --- | --- | --- |
+| G0 | `tools/phone-ssh --fresh 'uname -r; cat /proc/sys/kernel/random/boot_id'` | oma11, phone answers | no SSH | none | none |
+| G1 | `tools/phone-ssh --fresh 'tar -C /usr/lib/modules --zstd -xf - && depmod 7.1.3-msm8953-oma12' < out/markw/modules-7.1.3-msm8953-oma12.tar.zst` | new release directory, oma11's kept | extraction or depmod error | remove only `/usr/lib/modules/7.1.3-msm8953-oma12` | low |
+| G2 | `./DEBUGING_RUN.sh --restart --probe "$PWD/out/markw/probe-oma12-fg/boot.img"` | fastboot, lk2nd, SSH within 3 min; `uname -r` is oma12 | no fresh SSH in 3 min | owner recovers physically; boot oma11's probe | medium |
+| G3 | `tools/phone-ssh --fresh 'cat /proc/sys/kernel/tainted; dmesg | grep -iE "pmi8994|fg|oops|abort"; cat /sys/kernel/debug/pmi8994_fg/info; cd /sys/class/power_supply/qcom-battery; cat capacity voltage_now voltage_ocv current_now charge_counter'` | taint 0, no FG error, info prints; OCV near voltage_now at low current | an SRAM access error or timeout | reboot to oma11 | none |
+| G4 | Sample `charge_counter` and `current_now` every 10 s for 10 min awake (screen off, cable out) | counter moves by about the integral of current_now | counter frozen, jumps, or moves the wrong way by much | none | none |
+| G5 | Read `charge_counter` before and after a 300 s `rtcwake -m freeze` (watchdog feeder and dead-man as in BRINGUP-SUSPEND) | counter keeps moving during the sleep | as for any suspend gate | as for any suspend gate | medium |
+
+G3 tells which way to go: an integrity bit set and a profile head matching
+one of the three markw profiles means the gauge already runs on MIUI's
+profile, and the jumps come from something else (no capacity learning, or
+SOC recalculated at plug events). A clear bit, or a head matching none,
+means the gauge runs on OTP defaults; loading a profile is then a write to
+the gauge and a separate, gated step.

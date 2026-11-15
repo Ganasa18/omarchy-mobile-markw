@@ -1,0 +1,247 @@
+From: Omarchy Mobile <omamobile@localhost>
+Subject: [PATCH] power: supply: pmi8994_fg: report the coulomb counter and gauge state
+
+The driver reports capacity from the gauge's monotonic SOC register and
+nothing else of the gauge's state, so userspace can't tell whether the
+gauge runs on a battery profile or on its defaults, and has no charge
+measure that keeps counting while the SoC is suspended. On a Redmi 4
+Prime (PMI8950) the capacity jumped across plug changes: 69 % to 77 %
+in about 15 minutes on a laptop port that delivered roughly 100 mAh of
+a 4000 mAh battery.
+
+Read, never write, the gauge's SRAM at the addresses the downstream
+qpnp-fg driver uses for this PMIC family (the existing BATT_TEMP and
+BATT_VOLTAGE_CURRENT reads match that table):
+
+  - CHARGE_COUNTER from the coulomb counter (0x570, a 28-bit fraction of
+    the nominal capacity at 0x4f4), in uAh, or -ENODATA when the gauge
+    holds no nominal capacity;
+  - VOLTAGE_OCV from the gauge's open-circuit estimate (0x588);
+  - a debugfs file, pmi8994_fg/info, with the profile integrity flag
+    (0x53c), the battery ID (0x594), the gauge's own state of charge
+    (0x56c), the nominal capacity, the counter and the first 32 bytes of
+    the loaded profile (0x4c0), to compare against the battery's profile.
+
+Every read goes word by word through the existing SRAM access path.
+
+---
+--- a/drivers/power/supply/pmi8994_fg.c
++++ b/drivers/power/supply/pmi8994_fg.c
+@@ -1,6 +1,7 @@
+ // SPDX-License-Identifier: GPL-2.0-only
+ /* Copyright (c) 2020, The Linux Foundation. All rights reserved. */
+ 
++#include <linux/debugfs.h>
+ #include <linux/device.h>
+ #include <linux/interrupt.h>
+ #include <linux/kernel.h>
+@@ -13,7 +14,9 @@
+ #include <linux/platform_device.h>
+ #include <linux/power_supply.h>
+ #include <linux/regmap.h>
++#include <linux/seq_file.h>
+ #include <linux/types.h>
++#include <linux/unaligned.h>
+ #include <linux/wait.h>
+ #include <linux/workqueue.h>
+ 
+@@ -34,6 +37,27 @@
+ #define BATT_TEMP			0x550
+ #define BATT_VOLTAGE_CURRENT		0x5cc
+ 
++/*
++ * Read-only fuel gauge state, at the SRAM addresses of the downstream
++ * qpnp-fg driver for this PMIC family: the battery profile and its
++ * integrity flag, the nominal capacity, the gauge's own state of charge,
++ * its coulomb counter, the estimated open-circuit voltage and the
++ * battery ID. Nothing here is written.
++ */
++#define BATT_PROFILE			0x4c0
++#define NOM_CAP				0x4f4
++#define PROFILE_INTEGRITY		0x53c
++#define BATT_SOC			0x56c
++#define CC_CHARGE			0x570
++#define BATT_OCV			0x588
++#define BATT_ID				0x594
++
++#define PROFILE_INTEGRITY_BIT		BIT(0)
++#define BATT_PROFILE_HEAD_LEN		32
++/* CC_CHARGE is a 28-bit fraction of the nominal capacity */
++#define CC_CHARGE_FULL			0xfffffff
++#define BATT_SOC_FULL			0xffffff
++
+ #define BATT_TEMP_JEITA_COLD		100
+ #define BATT_TEMP_JEITA_COOL		50
+ #define BATT_TEMP_JEITA_WARM		400
+@@ -511,6 +535,75 @@
+ 	return 0;
+ }
+ 
++/*
++ * pmi8994_fg_get_nom_cap() - Get the nominal capacity the gauge uses
++ *
++ * @param chip Pointer to chip
++ * @param uah Pointer to store the capacity at, in uAh
++ * @return int 0 on success, -ENODATA when the gauge holds none
++ */
++static int pmi8994_fg_get_nom_cap(struct pmi8994_fg_chip *chip, int *uah)
++{
++	u8 buf[4];
++	int ret;
++
++	ret = pmi8994_fg_sram_read(chip, buf, NOM_CAP, 4, 0);
++	if (ret)
++		return ret;
++
++	*uah = get_unaligned_le16(buf) * 1000;
++	return *uah ? 0 : -ENODATA;
++}
++
++/*
++ * pmi8994_fg_get_charge_counter() - Get the gauge's coulomb counter
++ *
++ * The PMIC keeps counting while the SoC is suspended, unlike samples of
++ * current_now taken by userspace.
++ *
++ * @param chip Pointer to chip
++ * @param val Pointer to store the charge at, in uAh
++ * @return int 0 on success, negative errno on error
++ */
++static int pmi8994_fg_get_charge_counter(struct pmi8994_fg_chip *chip, int *val)
++{
++	int nom_uah, ret;
++	u8 buf[4];
++	s32 cc;
++
++	ret = pmi8994_fg_get_nom_cap(chip, &nom_uah);
++	if (ret)
++		return ret;
++
++	ret = pmi8994_fg_sram_read(chip, buf, CC_CHARGE, 4, 0);
++	if (ret)
++		return ret;
++
++	cc = (s32)get_unaligned_le32(buf);
++	*val = div_s64((s64)cc * nom_uah, CC_CHARGE_FULL);
++	return 0;
++}
++
++/*
++ * pmi8994_fg_get_ocv() - Get the gauge's open-circuit voltage estimate
++ *
++ * @param chip Pointer to chip
++ * @param val Pointer to store value at, in uV
++ * @return int 0 on success, negative errno on error
++ */
++static int pmi8994_fg_get_ocv(struct pmi8994_fg_chip *chip, int *val)
++{
++	u8 readval[2];
++	int ret;
++
++	ret = pmi8994_fg_sram_read(chip, readval, BATT_OCV, 2, 3);
++	if (ret)
++		return ret;
++
++	*val = div_u64((u64)get_unaligned_le16(readval) * 152587, 1000);
++	return 0;
++}
++
+ /**
+  * @brief pmi8994_fg_get_temp_threshold() - Get configured temperature thresholds
+  *
+@@ -610,6 +703,8 @@
+ 	POWER_SUPPLY_PROP_CAPACITY,
+ 	POWER_SUPPLY_PROP_CURRENT_NOW,
+ 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
++	POWER_SUPPLY_PROP_VOLTAGE_OCV,
++	POWER_SUPPLY_PROP_CHARGE_COUNTER,
+ 	POWER_SUPPLY_PROP_PRESENT,
+ 	POWER_SUPPLY_PROP_TEMP,
+ 	POWER_SUPPLY_PROP_TEMP_MIN,
+@@ -678,6 +773,12 @@
+ 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
+ 		ret = pmi8994_fg_get_voltage(chip, &val->intval);
+ 		break;
++	case POWER_SUPPLY_PROP_VOLTAGE_OCV:
++		ret = pmi8994_fg_get_ocv(chip, &val->intval);
++		break;
++	case POWER_SUPPLY_PROP_CHARGE_COUNTER:
++		ret = pmi8994_fg_get_charge_counter(chip, &val->intval);
++		break;
+ 	case POWER_SUPPLY_PROP_PRESENT:
+ 		val->intval = 1;
+ 		break;
+@@ -906,6 +1007,52 @@
+ 	destroy_workqueue(chip->sram_wq);
+ }
+ 
++static int pmi8994_fg_info_show(struct seq_file *s, void *unused)
++{
++	struct pmi8994_fg_chip *chip = s->private;
++	u8 integrity[4], id[4], soc[4], profile[BATT_PROFILE_HEAD_LEN];
++	int nom_uah, cc_uah, i, ret;
++
++	guard(mutex)(&chip->lock);
++
++	ret = pmi8994_fg_sram_read(chip, integrity, PROFILE_INTEGRITY, 4, 0);
++	if (!ret)
++		ret = pmi8994_fg_sram_read(chip, id, BATT_ID, 4, 0);
++	if (!ret)
++		ret = pmi8994_fg_sram_read(chip, soc, BATT_SOC, 4, 0);
++	for (i = 0; !ret && i < BATT_PROFILE_HEAD_LEN; i += 4)
++		ret = pmi8994_fg_sram_read(chip, profile + i, BATT_PROFILE + i, 4, 0);
++	if (ret)
++		return ret;
++
++	seq_printf(s, "profile_integrity: 0x%02x (%s)\n", integrity[0],
++		   integrity[0] & PROFILE_INTEGRITY_BIT ? "loaded" : "not loaded");
++	seq_printf(s, "battery_id_raw: %u\nbattery_id_info: 0x%02x\n", id[1], id[3]);
++	seq_printf(s, "battery_soc_permyriad: %llu\n",
++		   div_u64((u64)(get_unaligned_le32(soc) >> 8) * 10000, BATT_SOC_FULL));
++
++	ret = pmi8994_fg_get_nom_cap(chip, &nom_uah);
++	if (ret)
++		seq_printf(s, "nominal_capacity_uah: unavailable (%d)\n", ret);
++	else
++		seq_printf(s, "nominal_capacity_uah: %d\n", nom_uah);
++
++	ret = pmi8994_fg_get_charge_counter(chip, &cc_uah);
++	if (ret)
++		seq_printf(s, "charge_counter_uah: unavailable (%d)\n", ret);
++	else
++		seq_printf(s, "charge_counter_uah: %d\n", cc_uah);
++
++	seq_printf(s, "profile_head: %*phN\n", BATT_PROFILE_HEAD_LEN, profile);
++	return 0;
++}
++DEFINE_SHOW_ATTRIBUTE(pmi8994_fg_info);
++
++static void pmi8994_fg_debugfs_remove(void *data)
++{
++	debugfs_remove_recursive(data);
++}
++
+ static void pmi8994_fg_unreg_notifier(void *data)
+ {
+ 	struct pmi8994_fg_chip *chip = data;
+@@ -919,6 +1066,7 @@
+ 	struct pmi8994_fg_chip *chip;
+ 	const struct pmi8994_fg_data *data;
+ 	const __be32 *prop_addr;
++	struct dentry *dir;
+ 	int irq;
+ 	u8 dma_status;
+ 	bool error_present;
+@@ -1087,6 +1235,12 @@
+ 		return ret;
+ 	}
+ 
++	dir = debugfs_create_dir("pmi8994_fg", NULL);
++	debugfs_create_file("info", 0400, dir, chip, &pmi8994_fg_info_fops);
++	ret = devm_add_action_or_reset(chip->dev, pmi8994_fg_debugfs_remove, dir);
++	if (ret)
++		return ret;
++
+ 	if (chip->chg_psy) {
+ 		ret = power_supply_reg_notifier(&chip->nb);
+ 		if (ret) {
