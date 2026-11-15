@@ -1,0 +1,60 @@
+From: Omarchy Mobile <omamobile@localhost>
+Subject: [PATCH] arm64: dts: qcom: msm8953: add a system power domain above the clusters
+
+The deepest domain state is cluster power collapse, so in s2idle the
+CPUs and both clusters power down but the apps subsystem never hands
+off to RPM: on a Redmi 4 Prime the RPM master stats show APSS with zero
+shutdowns after a 96-minute s2idle, and the RPM sleep stats show no
+XO shutdown (vlow) or VDD minimisation (vmin) at all.
+
+The vendor kernel's low-power levels have a third, system level above
+the two clusters (the CCI SPM, PSCI mode field at bit 8), whose power
+collapse (mode 3) is the one that notifies RPM. Add it as a parent
+power domain of cluster0 and cluster1 with that state: CPU mode 3,
+cluster mode 5, system mode 3, power-down bit, affinity level 2.
+
+The firmware runs in OS-initiated mode, so the last CPU down passes the
+composite state of the highest domain that powers off.
+
+---
+ arch/arm64/boot/dts/qcom/msm8953.dtsi | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+--- a/arch/arm64/boot/dts/qcom/msm8953.dtsi
++++ b/arch/arm64/boot/dts/qcom/msm8953.dtsi
+@@ -280,6 +280,16 @@
+ 				min-residency-us = <2500>;
+ 				local-timer-stop;
+ 			};
++
++			system_pc: system-power-collapse {
++				compatible = "domain-idle-state";
++				idle-state-name = "system-pc";
++				arm,psci-suspend-param = <0x42000353>;
++				entry-latency-us = <1500>;
++				exit-latency-us = <11000>;
++				min-residency-us = <100000>;
++				local-timer-stop;
++			};
+ 		};
+ 
+ 		l2_0: l2-cache-0 {
+@@ -597,11 +607,18 @@
+ 		cluster0_pd: power-domain-cluster0 {
+ 			#power-domain-cells = <0>;
+ 			domain-idle-states = <&cluster_ret>, <&cluster_gdhs>, <&cluster_pc>;
++			power-domains = <&system_pd>;
+ 		};
+ 
+ 		cluster1_pd: power-domain-cluster1 {
+ 			#power-domain-cells = <0>;
+ 			domain-idle-states = <&cluster_ret>, <&cluster_gdhs>, <&cluster_pc>;
++			power-domains = <&system_pd>;
++		};
++
++		system_pd: power-domain-system {
++			#power-domain-cells = <0>;
++			domain-idle-states = <&system_pc>;
+ 		};
+ 	};
+ 

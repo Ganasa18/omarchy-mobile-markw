@@ -1557,3 +1557,38 @@ the `system-pc` PSCI parameter (mode 3 at bit 8, so 0x353 in the low bits; the a
 to verify against TZ's PSCI before use), (2) LPASS idle: what holds the
 codec clock, (3) MPSS: boot the modem idle (BRINGUP-MODEM.md) or confirm
 it doesn't matter.
+
+### Candidate: a system power domain (step A, 2026-11-15, offline)
+
+`device/markw/kernel/candidates/0017-arm64-dts-qcom-msm8953-add-a-system-power-domain-above-the-clusters.patch`
+(kept out of `patches/` until it passes): `power-domain-system` in
+`/psci` as the parent of cluster0/cluster1, with one state `system-pc`,
+PSCI 0x42000353 (CPU 3, cluster 5, system 3 at bit 8, power-down,
+affinity level 2), exit latency 11 ms as the vendor's `system-pc`
+latency, min residency 100 ms to keep it out of short idles.
+`tools/markw-rpm-stats` reads the RPM sleep and master stats (read-only).
+
+Offline: firmware is PSCIv1.0 in OS-initiated mode (`/sys/kernel/debug/psci`,
+"OSI is supported"; setting PC mode fails, so OSI stays), and in OSI the
+highest domain to power off supplies the whole composite state
+(`psci_set_domain_state` replaces it). `checkpatch --strict` clean; the
+tree's `msm8953-xiaomi-markw.dtb` builds with W=1 and no dtc warning.
+The probe DTB is oma14's probe DTB (touchscreen and watchdog `okay`)
+decompiled, with only these nodes added (phandles 0xdb/0xdc above the
+old maximum 0xda) and recompiled; the IMU's `mount-matrix` was copied
+back byte for byte (a dts round trip reads its `\00` escapes as octal).
+Probe `out/markw/probe-oma14-syspc/boot.img`: oma14's Image.gz, ramdisk,
+header and command line unchanged; modules stay oma14's.
+
+Known gaps: genpd doesn't tie the parent's state to the clusters' (the
+vendor's `min-child-idx` does), so a cluster in retention under a
+system-pc request is up to the firmware to refuse (it should answer
+DENIED in OSI). No MPM yet: if every other master slept, XO could stop
+with no MPM-routed wake interrupt. Here MPSS never sleeps (modem off),
+so XO stays on and the GIC still wakes the CPUs.
+
+| Step | What | Expect / pass | Stop if | Rollback | Risk |
+| --- | --- | --- | --- | --- | --- |
+| K1 | After the owner's go: `./DEBUGING_RUN.sh --restart --probe out/markw/probe-oma14-syspc/boot.img`; laptop `dmesg -w` stream once SSH answers | SSH; `uname -r` oma14; `/sys/kernel/debug/pm_genpd/power-domain-system` present; taint 0 | no SSH in 3 min, Oops, CPU stall | Power held about 30 s (MIUI), then the oma14 probe | medium |
+| K2 | Read-only: after 5 minutes screen off, `pm_genpd/power-domain-system/idle_states` and `tools/markw-rpm-stats` | system-pc usage > 0 and APSS `numshutdowns` > 0, or a clear refusal (Rejected count) | lockups, RCU stalls | as K1 | low |
+| K3 | Guarded `rtcwake -m freeze -s 60` (watchdog feeder 300 s, USB dead-man, kmsg stream) | resumes by RTC; APSS shutdowns rise; vlow stays 0 while MPSS is off | no resume | Power held, oma14 probe | medium |
