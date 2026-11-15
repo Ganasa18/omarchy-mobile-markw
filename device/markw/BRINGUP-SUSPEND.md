@@ -1907,3 +1907,49 @@ no-Venus probe's. oma17's modules (820) were installed before the reboot.
 | P1 | After the owner's go: `./DEBUGING_RUN.sh --restart --probe out/markw/probe-oma17-mpmt/boot.img` | SSH, oma17, taint as before, `/sys/kernel/debug/pm_genpd` with the MPM above `power-domain-system`, cpuidle states as on oma16 | no SSH in 3 min, Oops, cpuidle missing | Power held about 30 s (MIUI), then the no-Venus oma16 probe | low |
 | P2 | Read-only after some minutes awake: vMPM words still 0 (no s2idle yet), `vlow` 0 (cpuidle unchanged) | as expected | `vlow` above 0 while awake (idle changed) | as P1 | low |
 | P3 | As O2: modem up, cable out, one guarded 60 s sleep, two beeps after it | RTC wake; **`vlow` count above 0** | no wake (Power held about 30 s) | as P1 | medium |
+
+#### Results P (2026-11-15, `7.1.3-msm8953-oma17`, probe-oma17-mpmt)
+
+- P1 pass: RAM boot to oma17 (no MIUI), taint 512 (the two known DSI
+  `clk-rcg2` WARNs at 14 s), no Oops, MPM still the parent of
+  `power-domain-system`, cpuidle WFI and cpu-power-collapse, display,
+  Wi-Fi and sound up.
+- P2 pass: awake, the vMPM wakeup words read 0 and `vlow` 0, so idle is
+  unchanged.
+- P3 (cable out, modem idle, first sleep of the boot): the vMPM wakeup
+  words read `ffffffff ffffffff` afterwards, so 0023 writes them. The
+  Power key woke it after about 45 s (IRQ 69, `pm8941_pwrkey`). APSS
+  (+44.6 s), MPSS, PRONTO and LPASS all voted XO off, **`vlow` still 0**.
+  So the wakeup time alone was not the blocker.
+
+### IPA: ipa2-lite never turns its RPM clock off (2026-11-15)
+
+`ipa_clk` (an RPM clock with a sleep-set vote, 9.6 MHz) stays enabled for
+the whole boot. ipa2-lite takes it with `devm_clk_get_enabled()`, and its
+runtime suspend only lowers the rate to 9.6 MHz, never disabling it. The
+vendor IPA driver gates its clock and bus vote when it has no active
+clients.
+
+Test Q, same boot: modem stopped, `7900000.ipa` unbound from `ipa`
+(remove returns early while the modem is down; netdevs, IRQs, QMI and the
+clock are devm, `ipa_clk` 0, taint unchanged), modem started again
+without IPA: `running`, MPSS still sleeps on its own (49 shutdowns in two
+minutes). Then a second guarded 60 s sleep, cable out. RTC wake, success
+1 -> 2, fail 0, no Oops. **APSS power-collapsed but did not vote XO off**
+(`numshutdowns` 1 -> 2, `xo_count` stayed 1): this was the boot's second
+sleep, and the CCI clocks already held one leaked enable from the first
+resume (`gcc_camss_cci_clk` 1 before the sleep). So Q says nothing about
+IPA; the CCI fix has to come first.
+
+### Runbook R: the CCI fix, then IPA
+
+`i2c-qcom-cci.ko` with candidate 0022, built against oma17 (unsigned,
+taint E): `out/markw/i2c-qcom-cci-resume-oma17.ko`, installed as
+`/usr/lib/modules/7.1.3-msm8953-oma17/updates/i2c-qcom-cci.ko` (depmod).
+The modem is stopped again, partitions `ro=1`.
+
+| Step | What | Expect / pass | Stop if | Rollback | Risk |
+| --- | --- | --- | --- | --- | --- |
+| R1 | After the owner's go: reboot into the same oma17 probe | `modinfo -n i2c_qcom_cci` is the updates file; both camera sensors bound; taint adds E only | camera probe errors, Oops | delete the file, `depmod`, reboot | low |
+| R2 | Two guarded 60 s `rtcwake` sleeps, cable in | `gcc_camss_cci_clk` 0 after each | the count rises | as R1 | low |
+| R3 | Modem stopped, IPA unbound, modem started (as Q), then a guarded 60 s sleep, cable out | APSS `xo_count` rises; `vlow` above 0 if IPA was the last holder | no wake (Power held about 30 s) | as R1 | medium |
