@@ -306,3 +306,35 @@ the gauge and a separate, gated step.
   Android lies in what qpnp-fg configures around it (hold at 100 % on
   charge termination, capacity learning, ESR and rslow compensation), or
   above the kernel.
+
+## Capacity from the counter (2026-11-15, oma13 candidate)
+
+Patch 0015 (`power: supply: pmi8994_fg: report capacity from the coulomb
+counter`) changes only what `capacity` reports; nothing is written to the
+gauge. The counter value when the charger reports FULL is 100 %; until the
+first full charge after boot that point is estimated from the monotonic
+SOC. Below full the capacity is at most 99 %. A counter step larger than a
+5 A current can explain moves the full point with it. At or below 10 % on
+the monotonic SOC the lower of the two is reported. debugfs info gains
+`monotonic_soc_capacity` and `counter_at_full_uah`.
+
+Offline (2026-11-15): `checkpatch --strict` 0/0/0; `W=1` no compiler
+warning, kernel-doc warnings 109 as before. Release
+`7.1.3-msm8953-oma13`, DTB byte-identical to oma11/oma12; probe
+`out/markw/probe-oma13-fg/boot.img` repacked from oma11's watchdog probe as
+for oma12 (header, command line and DTB unchanged, parts verified).
+
+Limits: the 100 % point is kept in kernel memory, so after every boot the
+first estimate comes from the monotonic SOC (as inaccurate as before) until
+the next full charge; the nominal 4203 mAh is used as the full capacity,
+not a learned one, so an aged battery reads high until empty-side
+correction at 10 %.
+
+### Runbook H (each step after the owner's go)
+
+| Step | Command | Expect / pass | Stop if | Rollback | Risk |
+| --- | --- | --- | --- | --- | --- |
+| H1 | `tools/phone-ssh --fresh 'tar -C /usr/lib/modules --zstd -xf - && depmod 7.1.3-msm8953-oma13' < out/markw/modules-7.1.3-msm8953-oma13.tar.zst` | new release directory | extraction or depmod error | remove only that directory | low |
+| H2 | `./DEBUGING_RUN.sh --restart --probe "$PWD/out/markw/probe-oma13-fg/boot.img"` | SSH within 3 min, `uname -r` oma13 | no fresh SSH in 3 min | owner recovers; boot oma12's probe | medium |
+| H3 | `tools/phone-ssh --fresh 'cat /sys/kernel/debug/pmi8994_fg/info; cat /sys/class/power_supply/qcom-battery/capacity; upower -i $(upower -e | grep -m1 battery) | grep percentage'` | capacity near the monotonic SOC at boot; full point set; upower shows the same | capacity outside 0-100, or the shell's battery differs | boot oma12 | none |
+| H4 | Sample capacity, monotonic SOC and the counter every 30 s for 10 min, cable in, then unplug and replug once | capacity moves about 1 point per 42 mAh; no jump at unplug/replug while the monotonic SOC jumps | capacity jumps with the monotonic SOC, or freezes while the counter moves | boot oma12 | none |

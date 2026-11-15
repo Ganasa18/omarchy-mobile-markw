@@ -1,0 +1,162 @@
+From: Omarchy Mobile <omamobile@localhost>
+Subject: [PATCH] power: supply: pmi8994_fg: report capacity from the coulomb counter
+
+The gauge's monotonic SOC follows the battery voltage far more than the
+charge. On a Redmi 4 Prime (PMI8950, with the markw battery profile
+loaded in the gauge) it went from 95 % to 85 % while the coulomb counter,
+which matches the integral of current_now within about 2 %, fell by 4 %
+of the nominal capacity; on a laptop port it rose 8 points in 15 minutes
+for about 2.5 % of charge. Users see a battery that drains in jumps and
+fills too fast, and suspend drain can't be judged from it.
+
+Report the charge used since the last full charge instead: the counter
+value when the charger reports FULL is 100 %, and until the first full
+charge after boot that point is estimated from the monotonic SOC. Below
+full the capacity stays at most 99 %. A counter step larger than a 5 A
+current explains moves the full point with it. At or below 10 % on the
+monotonic SOC the lower of the two is reported, as the voltage is the
+better guide near empty. Nothing is written to the gauge; debugfs info
+gains the monotonic capacity and the counter value taken as full.
+
+---
+--- a/drivers/power/supply/pmi8994_fg.c
++++ b/drivers/power/supply/pmi8994_fg.c
+@@ -4,6 +4,7 @@
+ #include <linux/debugfs.h>
+ #include <linux/device.h>
+ #include <linux/interrupt.h>
++#include <linux/ktime.h>
+ #include <linux/kernel.h>
+ #include <linux/math64.h>
+ #include <linux/module.h>
+@@ -58,6 +59,14 @@
+ #define CC_CHARGE_FULL			0xfffffff
+ #define BATT_SOC_FULL			0xffffff
+ 
++/*
++ * Capacity from the coulomb counter: the most a battery current can move
++ * the counter per second (5 A, in uAh), and the monotonic SOC below which
++ * the lower of the two capacities is reported.
++ */
++#define CC_MAX_UAH_PER_S		(5000000 / 3600)
++#define CC_LOW_SOC			10
++
+ #define BATT_TEMP_JEITA_COLD		100
+ #define BATT_TEMP_JEITA_COOL		50
+ #define BATT_TEMP_JEITA_WARM		400
+@@ -100,6 +109,12 @@
+ 	bool no_delayed_release;
+ 	struct workqueue_struct *sram_wq;
+ 	struct delayed_work sram_release_access_work;
++
++	/* Counter value taken as 100 %, and the last reading */
++	bool cc_anchored;
++	s64 cc_full_uah;
++	s64 cc_last_uah;
++	ktime_t cc_last_time;
+ };
+ 
+ /************************
+@@ -585,6 +600,69 @@
+ }
+ 
+ /*
++ * pmi8994_fg_get_capacity_cc() - Get remaining capacity from the counter
++ *
++ * The gauge's monotonic SOC follows the battery voltage far more than the
++ * charge: it jumps when a charger is plugged in and falls faster than the
++ * counter under load. Report the charge used since the battery was last
++ * full instead. The counter value at a full charge (the charger reports
++ * FULL) is 100 %; until the first one after boot, the 100 % point is
++ * estimated from the monotonic SOC. A counter step larger than a battery
++ * current can explain moves that point with it, so the reported capacity
++ * stays continuous. Near empty, where the voltage is the better guide,
++ * the lower of the two is reported.
++ *
++ * @param chip Pointer to chip
++ * @param val Pointer to store value at
++ * @return int 0 on success, negative errno on error
++ */
++static int pmi8994_fg_get_capacity_cc(struct pmi8994_fg_chip *chip, int *val)
++{
++	int soc, nom_uah, cc, ret;
++	ktime_t now;
++	s64 cap, step, max_step;
++
++	ret = pmi8994_fg_get_capacity(chip, &soc);
++	if (ret)
++		return ret;
++
++	if (pmi8994_fg_get_nom_cap(chip, &nom_uah) ||
++	    pmi8994_fg_get_charge_counter(chip, &cc)) {
++		*val = soc;
++		return 0;
++	}
++
++	now = ktime_get_boottime();
++	if (!chip->cc_anchored) {
++		chip->cc_full_uah = cc + div_s64((s64)(100 - soc) * nom_uah, 100);
++		chip->cc_anchored = true;
++	} else {
++		step = cc - chip->cc_last_uah;
++		max_step = CC_MAX_UAH_PER_S *
++			   (ktime_ms_delta(now, chip->cc_last_time) / 1000 + 1);
++		if (abs(step) > max_step) {
++			dev_info(chip->dev, "counter stepped %lld uAh, moving the full point\n",
++				 step);
++			chip->cc_full_uah += step;
++		}
++	}
++	chip->cc_last_uah = cc;
++	chip->cc_last_time = now;
++
++	if (chip->status == POWER_SUPPLY_STATUS_FULL || cc > chip->cc_full_uah)
++		chip->cc_full_uah = cc;
++
++	cap = 100 - div_s64((chip->cc_full_uah - cc) * 100 + nom_uah / 2, nom_uah);
++	if (chip->status != POWER_SUPPLY_STATUS_FULL)
++		cap = min_t(s64, cap, 99);
++	if (soc <= CC_LOW_SOC)
++		cap = min_t(s64, cap, soc);
++
++	*val = clamp_t(s64, cap, 0, 100);
++	return 0;
++}
++
++/*
+  * pmi8994_fg_get_ocv() - Get the gauge's open-circuit voltage estimate
+  *
+  * @param chip Pointer to chip
+@@ -765,7 +843,7 @@
+ 		val->intval = POWER_SUPPLY_TECHNOLOGY_LION;
+ 		break;
+ 	case POWER_SUPPLY_PROP_CAPACITY:
+-		ret = pmi8994_fg_get_capacity(chip, &val->intval);
++		ret = pmi8994_fg_get_capacity_cc(chip, &val->intval);
+ 		break;
+ 	case POWER_SUPPLY_PROP_CURRENT_NOW:
+ 		ret = pmi8994_fg_get_current(chip, &val->intval);
+@@ -1011,7 +1089,7 @@
+ {
+ 	struct pmi8994_fg_chip *chip = s->private;
+ 	u8 integrity[4], id[4], soc[4], profile[BATT_PROFILE_HEAD_LEN];
+-	int nom_uah, cc_uah, i, ret;
++	int nom_uah, cc_uah, soc_cap, i, ret;
+ 
+ 	guard(mutex)(&chip->lock);
+ 
+@@ -1043,6 +1121,14 @@
+ 	else
+ 		seq_printf(s, "charge_counter_uah: %d\n", cc_uah);
+ 
++	ret = pmi8994_fg_get_capacity(chip, &soc_cap);
++	if (!ret)
++		seq_printf(s, "monotonic_soc_capacity: %d\n", soc_cap);
++	if (chip->cc_anchored)
++		seq_printf(s, "counter_at_full_uah: %lld\n", chip->cc_full_uah);
++	else
++		seq_puts(s, "counter_at_full_uah: not set\n");
++
+ 	seq_printf(s, "profile_head: %*phN\n", BATT_PROFILE_HEAD_LEN, profile);
+ 	return 0;
+ }
