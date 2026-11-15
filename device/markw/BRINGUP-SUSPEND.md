@@ -1465,3 +1465,26 @@ about 30 minutes. Pass: one suspend, Power wake, fail 0, no Oops; the
 result is the average current over the sleep from the counter's
 difference, with the awake minutes before and after subtracted using
 current_now.
+
+### J4 result (2026-11-15, `7.1.3-msm8953-oma14`)
+
+- Pass as a suspend: test copy of auto-suspend from `/run` (not
+  enabled), laptop kmsg stream, qcom_wdt loaded and the feeder's
+  preflight passed. Cable out, Power to blank: asleep 16:01:09-17:37:35
+  (about 96 min 25 s) in one suspend, woken by Power (pm_wakeup_irq 68),
+  success 0 -> 1, fail 0, taint 0, no Oops/WARNING; post-resume watchdog
+  ARMED, then disarmed at its 120 s deadline.
+- **Counter over the sleep:** the logger's two samples bracket it
+  (BOOTTIME apart 5795.8 s, MONOTONIC 10.4 s, so 5785 s asleep). The
+  counter fell 83.8 mAh: **52 mA average asleep** (51.6 mA if the 10 s
+  awake inside the pair drew 270 mA). The second sample came 4 s after
+  the replug (Charging, +224 mA), which moves this by under 0.3 mAh.
+- So over a real sleep s2idle draws what the awake, screen-off control
+  drew (52 mA mean, 49 mA median over 10 min), not the 28 mA of G5b's
+  3-minute rtcwake sleep. No net saving from s2idle is shown yet. G5b's
+  number came from a sleep just after 60 s of quiet; what draws the
+  extra over a long sleep (Wi-Fi/Bluetooth on WCNSS, ADSP, no RPM
+  low-power state visible) is the next question, read-only first.
+- Logger note: it stops at the first Charging sample, so the owner's
+  quick replug after the wake ended it with no post-resume awake sample;
+  that cost nothing here because the sleep interval is complete.
