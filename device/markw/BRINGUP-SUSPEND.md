@@ -1592,3 +1592,22 @@ so XO stays on and the GIC still wakes the CPUs.
 | K1 | After the owner's go: `./DEBUGING_RUN.sh --restart --probe out/markw/probe-oma14-syspc/boot.img`; laptop `dmesg -w` stream once SSH answers | SSH; `uname -r` oma14; `/sys/kernel/debug/pm_genpd/power-domain-system` present; taint 0 | no SSH in 3 min, Oops, CPU stall | Power held about 30 s (MIUI), then the oma14 probe | medium |
 | K2 | Read-only: after 5 minutes screen off, `pm_genpd/power-domain-system/idle_states` and `tools/markw-rpm-stats` | system-pc usage > 0 and APSS `numshutdowns` > 0, or a clear refusal (Rejected count) | lockups, RCU stalls | as K1 | low |
 | K3 | Guarded `rtcwake -m freeze -s 60` (watchdog feeder 300 s, USB dead-man, kmsg stream) | resumes by RTC; APSS shutdowns rise; vlow stays 0 while MPSS is off | no resume | Power held, oma14 probe | medium |
+
+#### Results (2026-11-15, `7.1.3-msm8953-oma14`, probe-oma14-syspc)
+
+- K1 pass: RAM boot, SSH, system running; `power-domain-system` present
+  as the parent of both clusters; taint 512 (the two known `clk-rcg2`
+  DSI WARNs at 14 s), no Oops.
+- K2 pass (no regression): 5.5 minutes awake, idle: system-pc usage 0,
+  cluster0 never in cluster_pc while awake (S2 usage 0); no stall or
+  lockup. The 100 ms residency keeps it out of awake idle here.
+- K3 pass: guarded `rtcwake -m freeze -s 60` (feeder 300 s, USB dead-man,
+  kmsg stream), cable in. Slept 61.0 s, woken by the RTC (IRQ 72),
+  success 0 -> 1, fail 0, taint unchanged, no Oops or new WARNING,
+  watchdog armed and disarmed. system-pc S2idle 1; cluster0/cluster1
+  cluster_pc S2idle 1 each.
+- **RPM master stats: APSS `numshutdowns` 0 -> 1**, the first apps
+  handoff to RPM on markw. `vlow`/`vmin` still 0: MPSS (modem off) and
+  LPASS (ADSP awake) still hold XO, as expected. PRONTO slept through it.
+- Next: LPASS (what keeps the ADSP and the codec clock awake), then MPM
+  for wake interrupts, then MPSS; XO shutdown needs all three.
