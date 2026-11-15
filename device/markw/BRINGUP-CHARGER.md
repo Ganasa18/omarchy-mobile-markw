@@ -245,3 +245,32 @@ profile, and the jumps come from something else (no capacity learning, or
 SOC recalculated at plug events). A clear bit, or a head matching none,
 means the gauge runs on OTP defaults; loading a profile is then a write to
 the gauge and a separate, gated step.
+
+### Results (2026-11-15, `7.1.3-msm8953-oma12`)
+
+- G0-G2 pass: oma12 modules installed next to oma11's (820 modules,
+  depmod clean); `DEBUGING_RUN.sh --restart --probe …/probe-oma12-fg`
+  went fastboot, lk2nd, probe, SSH; `uname -r` oma12. Taint 512, the
+  documented DSI clock WARNs; no fuel gauge or SRAM error.
+- G3: the gauge **runs on a markw profile**. `profile_integrity: 0x01
+  (loaded)`, and the 32-byte profile head matches the Feimaotui profile
+  (`MARKW-qrd-Feimaotui-4v4-4000mah.dtsi`) in every byte; the nominal
+  capacity in SRAM is 4 203 000 uAh, the value in that profile's
+  nominal-capacity word (0x106b). The Default and Coslight profiles
+  differ from the fourth byte. So MIUI's profile survives in the gauge
+  across the boot into Linux, and a profile load is not what's missing.
+  At the same moment: capacity 95 %, the gauge's own `battery_soc` 92.25 %,
+  voltage_now 4.013 V, voltage_ocv 4.272 V while charging.
+- G4 pass (cable in, charging at about 158 mA): over 125 s the counter
+  rose 5.4 mAh and the integral of current_now was 5.5 mAh. The counter
+  tracks the current within about 2 % and in the same direction
+  (charging raises it, as current_now is positive when charging). In the
+  same two minutes capacity went 95 % -> 96 % for 0.13 % of the
+  battery's charge: the reported percentage is the problem, not the
+  gauge's measurement.
+- Downstream exposes this register as `CHARGE_NOW_RAW` (a raw count to
+  take differences of), not as remaining charge; read it that way.
+- Next: G5, whether the counter keeps counting across a suspend. If it
+  does, sleep drain is measurable from its difference, and a correct
+  capacity can come from the counter between a full charge and empty
+  instead of from the monotonic SOC.
