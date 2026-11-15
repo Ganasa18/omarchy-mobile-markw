@@ -1679,3 +1679,29 @@ key, charger, gauge and USB role, waits for it). TLMM gets no
 | M1 | After the owner's go: install oma15 modules, RAM boot the oma15 probe | SSH; `qcom_mpm` bound; `/proc/interrupts` shows the SPMI interrupt under the MPM domain; power key, charger status and battery as before | no SSH in 3 min (SPMI or USB role missing) | Power held about 30 s (MIUI), then probe-oma14-syspc | medium-high |
 | M2 | Guarded `rtcwake -m freeze -s 60` | resume by RTC through MPM; APSS and LPASS sleep as in K3/L2 | no resume | as M1 | medium |
 | M3 | Cable out, auto-suspend test copy, Power to wake (owner) | Power wakes it; success +1 | no wake | as M1 | medium |
+
+#### Results (2026-11-15, `7.1.3-msm8953-oma15`, probe-oma15-mpm): stopped at M1
+
+- Built and booted fine: oma15 modules installed, SSH, taint 512, no
+  Oops; `qcom_mpm` bound (GIC hwirq 203 = SPI 171); SPMI through MPM works
+  (power key, RTC alarm, VADC interrupts present; battery reads).
+- **But cpuidle was gone:** `CPUidle PSCI: failed to create CPU PM domains
+  ret=-517`, then `CPU 0 failed to PSCI idle` and `Failed to create
+  psci-cpuidle device`; no `cpuidle` directory. A guarded 60 s rtcwake
+  still resumed by RTC (IRQ 75), but MONOTONIC kept running (61.9 s)
+  and APSS shutdowns stayed 0: with WFI only, nothing slept.
+- Why: `system_pd` now has `power-domains = <&mpm>`. The PSCI domain
+  driver probes at arch_initcall_sync and defers until the MPM's genpd
+  provider exists; the MPM node sits in the RPM node, so its device only
+  appears once rpm-proc probes, and deferred probes are retried only at
+  late_initcall. `psci-cpuidle` is a faux device created at
+  device_initcall that can't defer, so it fails for good in between.
+  Moving the node would not fix it: the MPM driver itself registers at
+  device_initcall.
+- Rolled back to probe-oma14-syspc (oma14 with the 0018 module): cpuidle
+  states back, system running.
+- Next for MPM: keep the PSCI topology free of the MPM at boot and link
+  them once the MPM probes (the MPM driver adding itself as the parent of
+  the PSCI system domain, or the PSCI domain driver tolerating a parent
+  that comes later); or check how agatti avoids it. 0017 and 0018 are
+  unaffected.
