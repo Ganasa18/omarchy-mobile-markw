@@ -1517,3 +1517,43 @@ and mainline `qcom_stats` (`qcom,rpm-stats`, base 0x290000, offset at
 - Upstream-ready follow-up: an `sram@290000 { compatible =
   "qcom,rpm-stats"; reg = <0x00290000 0x10000>; }` node in msm8953.dtsi so
   `qcom_stats` exposes these in debugfs.
+
+### RPM master stats: three masters never sleep (2026-11-15, oma14)
+
+Read-only after the owner's go, message RAM 0x60150 + n * 4096, version 2
+layout of downstream `rpm_master_stat.c`, aligned 32-bit reads; boottime
+12121 s, after the 96-minute J4 sleep:
+
+| Master | active_cores | numshutdowns | xo_count | xo accumulated |
+| --- | --- | --- | --- | --- |
+| APSS | 0x1 | 0 | 0 | 0 s |
+| MPSS | 0x1 | 0 | 0 | 0 s |
+| PRONTO | 0x1 | 3091 | 3091 | 5838 s |
+| TZ | 0x0 | 0 | 0 | 0 s |
+| LPASS | 0x1 | 5 | 4 | 0.1 s |
+
+RPM shuts XO down only when every master has voted for sleep, so:
+
+- **APSS never tells RPM it sleeps.** Mainline msm8953.dtsi's deepest
+  domain state is `cluster_pc` (PSCI 0x41000053: CPU mode 3, cluster mode
+  5, system field 0). Downstream `msm8953-pm.dtsi` has a third level above
+  the clusters, `system` (CCI SPM, `qcom,psci-mode-shift = <8>`), whose
+  `system-pc` (mode 3) carries `qcom,notify-rpm`; that is the state that
+  hands the apps side to RPM. Mainline has no system-level domain, so
+  s2idle reaches cluster PC (genpd S2) and RPM still sees APSS active.
+- **MPSS is active from boot**: the modem remoteproc is `disabled` in our
+  DTB (BRINGUP-MODEM.md), so the modem never runs and never votes sleep.
+  Whether an unbooted MPSS blocks XO shutdown on its own is not proven
+  here; it is a candidate.
+- **LPASS barely sleeps** (0.1 s of XO off in the whole boot): the ADSP
+  runs and the LPASS internal digital codec core clock (9.6 MHz) stays
+  enabled while idle.
+- PRONTO (WCNSS: Wi-Fi and Bluetooth) is not the problem: it slept about
+  97 minutes, the whole J4 sleep, with Wi-Fi connected.
+
+Next, one change per boot, read-only stats before and after each short
+sleep: (1) a system-level domain idle state above cluster0/cluster1 with
+the `system-pc` PSCI parameter (0x41000353 from the downstream shifts;
+to verify against TZ's PSCI before use), (2) LPASS idle: what holds the
+codec clock, (3) MPSS: boot the modem idle (BRINGUP-MODEM.md) or confirm
+it doesn't matter.
