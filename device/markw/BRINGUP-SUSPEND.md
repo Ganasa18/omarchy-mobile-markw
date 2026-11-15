@@ -1611,3 +1611,31 @@ so XO stays on and the GIC still wakes the CPUs.
   LPASS (ADSP awake) still hold XO, as expected. PRONTO slept through it.
 - Next: LPASS (what keeps the ADSP and the codec clock awake), then MPM
   for wake interrupts, then MPSS; XO shutdown needs all three.
+
+### Candidate: gate the codec's mclk across suspend (step LPASS, 2026-11-15)
+
+Read-only on oma14 (probe-oma14-syspc): every PCM `closed`, yet
+`LPASS_CLK_ID_INTERNAL_DIGITAL_CODEC_CORE` (9.6 MHz) is prepared and
+enabled with one consumer, `c0f0000.codec` `mclk`. `msm8916-wcd-digital`
+enables mclk in probe and disables it only in remove. On msm8953 that is a
+q6afe clock, so the ADSP keeps it, and its XO vote, for the whole boot.
+The vendor's `msm8x16-wcd.c` turns this clock on before every digital
+register access and off 50 ms later, and off at codec suspend, so the
+registers need it.
+
+`device/markw/kernel/candidates/0018-ASoC-codecs-msm8916-wcd-digital-gate-mclk-across-system-suspend.patch`:
+system-sleep PM ops that put the regmap in cache-only mode and disable
+mclk at suspend, and on resume enable it, leave cache-only and
+`regcache_sync` (writes only what changed meanwhile). Offline: W=1 no
+warning, `checkpatch --strict` clean. Built against the oma14 tree as an
+unsigned `snd-soc-msm8916-digital.ko` (the build's signing key is not
+kept; signatures aren't enforced, so it loads with taint E), sha256
+`eb43466f…`, installed on the phone in
+`/usr/lib/modules/7.1.3-msm8953-oma14/updates/` (depmod picks it over
+the original, which stays in place).
+
+| Step | What | Expect / pass | Stop if | Rollback | Risk |
+| --- | --- | --- | --- | --- | --- |
+| L1 | After the owner's go: RAM boot `probe-oma14-syspc` again | SSH; module from `updates/` loaded; sound card present; codec clock enabled while awake as before | no SSH, no card | `rm` the `updates/` file, `depmod`, reboot | medium |
+| L2 | Play a short tone (the speaker sounds), then guarded `rtcwake -m freeze -s 60` | resume; LPASS `numshutdowns`/XO time rise; no Oops | no resume | as L1 | medium |
+| L3 | Play the tone again after the resume | sound as before (the codec kept its state) | silence | as L1 | low |
