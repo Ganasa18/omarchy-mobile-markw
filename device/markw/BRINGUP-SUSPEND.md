@@ -1725,3 +1725,15 @@ as oma15; DTB identical to oma15's.
   the MPM domain powered off once (vMPM written, RPM notified). RPM: APSS
   shutdowns 1, LPASS XO off 62.1 s, PRONTO 63.2 s; vlow/vmin 0 (MPSS).
 - M3 (Power wake, cable out) next, with the owner.
+- M3 pass: test copy of auto-suspend from `/run`, cable out, Power to
+  blank: asleep 21:36:36-21:46:51 (about 10 min 15 s), **woken by the
+  power key through the MPM-routed SPMI interrupt** (pm_wakeup_irq 69,
+  `pm8941_pwrkey`), success 1 -> 2, fail 0, taint 512, no Oops; the
+  owner heard the beeps and unlocked; post-resume watchdog ARMED, then
+  DISARMED at its deadline. APSS shutdowns 1 -> 2.
+- But LPASS did not sleep in M3 (XO-off time still 62.1 s, shutdowns 6):
+  the test copy plays its beep right before `systemctl suspend`, so
+  PipeWire likely still had the PCM open; in L2/M2 the sleep started
+  seconds after the tone. To check: whether an open PCM at suspend keeps
+  the ADSP up (q6afe port still running), and if so, suspend the stream
+  (or let PipeWire close it) before sleep.
