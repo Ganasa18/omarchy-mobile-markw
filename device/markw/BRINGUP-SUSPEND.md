@@ -139,6 +139,27 @@ watchdog feeder and a 90 s USB dead-man; stop at the first failure.
   explain most of it). The awake screen-off control of the same length
   is still to run, and where the current goes (CPU idle states, RPM
   sleep, clocks or regulators left on) is the next question.
+- **Where the sleep goes (read-only, 2026-11-15):** both CPU clusters
+  reach their deepest genpd state in s2idle (`power-domain-cluster0/1`
+  S2 `S2idle` 10 and 7 after five suspends); CPU idle is psci_idle with
+  WFI and core power collapse. No RPM sleep counters are available (no
+  `rpm-stats` node in the DT; `qcom_stats` is a module, not loaded), so
+  whether the SoC reaches XO shutdown/VDD min is not visible yet. Still
+  running in sleep: WCNSS (Wi-Fi connected, Bluetooth powered) and ADSP;
+  the modem was off.
+- **Awake, screen-off control (2026-11-15, 10 min):** cable out, panel
+  off (bl_power 4), no suspend, Wi-Fi and Bluetooth as overnight;
+  `current_now` every 10 s for 589 s: 53 samples, mean 52 mA, median
+  49 mA (44-165 mA; the peaks are the start beep and wakeups).
+- **So the overnight 115 mA is not a sleep current.** The phone can't draw
+  more asleep than awake with the screen off, and the gauge's capacity is
+  not a usable measure across a plug change: after the overnight run it
+  went from 69 % to 77 % in about 15 minutes on a laptop port, several
+  times what that current can add. Battery saving from s2idle is
+  therefore still unmeasured. A fair comparison needs equal long runs
+  started at the same capacity and read the same way (at the unplug, by
+  `current_now`-integrated awake samples, and at the replug), not single
+  capacity readings across a plug change.
 - Still before enabling it at boot: more boots and a day's use (the
   2026-11-03 hang came after hours of use).
 
