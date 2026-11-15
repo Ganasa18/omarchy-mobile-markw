@@ -1,0 +1,50 @@
+From: Omarchy Mobile <omamobile@localhost>
+Subject: [PATCH] i2c: qcom-cci: don't turn the clocks on at resume for a suspended device
+
+cci_suspend() does nothing when the device is already runtime suspended,
+but cci_resume() enables the clocks unconditionally and then asks for an
+autosuspend. The device's runtime PM status is still "suspended", so the
+autosuspend request does nothing and the clocks stay on: each system
+resume of an idle CCI leaks one enable of every CCI clock.
+
+On a Redmi 4 Prime (msm8953) the four CCI clocks read an enable count of
+6 after six s2idle cycles while the CCI was runtime suspended. They are
+fed from the RPM XO clock, so the apps side kept its XO vote in the RPM
+sleep set and the SoC never reached XO shutdown.
+
+Use pm_runtime_force_suspend() and pm_runtime_force_resume(), which only
+resume the device at system resume when it was active before the
+suspend.
+
+---
+ drivers/i2c/busses/i2c-qcom-cci.c | 18 +-----------------
+ 1 file changed, 1 insertion(+), 17 deletions(-)
+
+--- a/drivers/i2c/busses/i2c-qcom-cci.c
++++ b/drivers/i2c/busses/i2c-qcom-cci.c
+@@ -493,24 +493,8 @@
+ 	return 0;
+ }
+ 
+-static int __maybe_unused cci_suspend(struct device *dev)
+-{
+-	if (!pm_runtime_suspended(dev))
+-		return cci_suspend_runtime(dev);
+-
+-	return 0;
+-}
+-
+-static int __maybe_unused cci_resume(struct device *dev)
+-{
+-	cci_resume_runtime(dev);
+-	pm_request_autosuspend(dev);
+-
+-	return 0;
+-}
+-
+ static const struct dev_pm_ops qcom_cci_pm = {
+-	SET_SYSTEM_SLEEP_PM_OPS(cci_suspend, cci_resume)
++	SET_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend, pm_runtime_force_resume)
+ 	SET_RUNTIME_PM_OPS(cci_suspend_runtime, cci_resume_runtime, NULL)
+ };
+ 

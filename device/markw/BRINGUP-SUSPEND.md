@@ -1790,3 +1790,66 @@ started, so the modem isn't brought online, and no data is used.
 If XO shuts down in N4, the RTC alarm has to wake the CPUs through the MPM
 (SPMI is MPM pin 88; the power key went the same way in M3). Only the
 watchdog brings the phone back if it doesn't.
+
+#### Results N (2026-11-15, `7.1.3-msm8953-oma16`, probe-oma16-mpm)
+
+- N1: MPSS `numshutdowns` 0 for 41 minutes of uptime (modem never booted).
+- N2 pass: rmtfs on RAM copies, tqftpserv, `qcom_q6v5_mss`, `echo start`:
+  `running` 1.1 s later, partitions `ro=1`, no crash.
+- N3 pass: two minutes idle without ModemManager, **MPSS `numshutdowns`
+  0 -> 17, XO-off vote 111.6 s**: an idle modem sleeps by itself.
+- N4: guarded 60 s `rtcwake -m freeze`, cable in, no sound. RTC wake (IRQ
+  74), success 5 -> 6, fail 0, no Oops or new WARNING. MPSS, LPASS and
+  PRONTO all voted XO off through the sleep (+147 s, +62 s, +63 s) and
+  APSS power-collapsed (`numshutdowns` 5 -> 6), **yet `vlow` stayed 0**.
+- N5 pass: modem `offline`, rmtfs and tqftpserv stopped, partitions `ro=1`.
+- **APSS has `xo_count` 0 for the whole boot**: it hands off to RPM, but
+  its sleep set still asks for XO. So the modem was not the last blocker;
+  APSS's own XO vote is.
+
+### What holds APSS's XO vote: two leaked clocks (2026-11-15, read-only)
+
+`bi_tcxo` (the RPM XO clock, which votes in the sleep set too) has these
+enabled children while idle, from `/sys/kernel/debug/clk`:
+`vcodec0_clk_src`, `cci_clk_src`, `usb30_mock_utmi_clk_src` (cable in),
+`blsp1_qup2_i2c_apps_clk_src` and `gpll0_early`. Two are leaks:
+
+- **Venus**: `gcc_venus0_vcodec0_clk`, `_axi_clk` and `_ahb_clk` enabled
+  once, though Venus never probes (no `venus.mdt`, probe -22; see NOTES.md
+  2026-11-12). `venus_probe()` turns the core on with
+  `pm_runtime_get_sync()`, and its error path ends with
+  `pm_runtime_put_noidle()` and `pm_runtime_set_suspended()`, which never
+  run the suspend callback, so the clocks stay on. Calling the callback
+  wouldn't help either: `venus_runtime_suspend()` starts with
+  `hfi_core_suspend()`, which fails with no firmware running. markw has no
+  Venus firmware it can use, so the fix here is to disable the node.
+- **CCI**: `gcc_camss_cci_clk`, `cci_ahb`, `camss_ahb` and `camss_top_ahb`
+  (the CCI node's four clocks) enabled 6 times while `1b0c000.cci` reads
+  `suspended`, after exactly 6 suspends in this boot. `cci_suspend()` skips
+  a runtime-suspended device, but `cci_resume()` turns the clocks on
+  regardless, and the autosuspend it then requests does nothing because
+  the status still reads `suspended`. One leaked enable per resume. So the
+  first sleep of a boot is free of it and every later one is not.
+  Candidate `device/markw/kernel/candidates/0022-i2c-qcom-cci-dont-turn-the-clocks-on-at-resume-for-a-suspended-device.patch`
+  uses `pm_runtime_force_suspend/resume` instead. checkpatch `--strict`
+  0/0/0, W=1 no warning. The module is built against oma16 (unsigned, so
+  taint E): `out/markw/i2c-qcom-cci-resume.ko`.
+
+WirePlumber holds the camera nodes open (`/dev/video0`, `v4l-subdev*`,
+`media0`), but nothing streams. camss and the sensors read `suspended`.
+
+### Runbook O: drop the two leaks, one per boot
+
+Probe `out/markw/probe-oma16-novenus/boot.img`: oma16's probe with one
+DTB change, `venus@1d00000` `status = "disabled"` (a dts diff of the two
+DTBs shows only that line). Modules stay oma16's.
+
+| Step | What | Expect / pass | Stop if | Rollback | Risk |
+| --- | --- | --- | --- | --- | --- |
+| O1 | After the owner's go: `./DEBUGING_RUN.sh --restart --probe out/markw/probe-oma16-novenus/boot.img`, kmsg stream once SSH answers | SSH, oma16, no venus device bound, no `gcc_venus0_*` enabled, taint as before, display, Wi-Fi and sound as before | no SSH in 3 min, Oops | Power held about 30 s (MIUI), then the oma16 probe | low |
+| O2 | Modem started as N2; a first guarded 60 s sleep, cable out (a detached unit waits for the unplug, owner unplugs and replugs) | APSS `xo_count` rises; `vlow` count above 0 if nothing else holds XO | no resume, watchdog reset | as O1 | medium |
+| O3 | Install `i2c-qcom-cci-resume.ko` to `updates/`, `depmod`, reboot into the same probe (owner's go) | CCI clocks at 0 after each of three guarded sleeps; the cameras still enumerate | camera probe errors | remove the file, `depmod`, reboot | low |
+
+If XO shuts down in O2, the RTC alarm has to wake through the MPM (SPMI,
+pin 88), as the power key did in M3. Otherwise only the watchdog brings
+the phone back.
