@@ -1488,3 +1488,32 @@ current_now.
 - Logger note: it stops at the first Charging sample, so the owner's
   quick replug after the wake ended it with no post-resume awake sample;
   that cost nothing here because the sleep interval is complete.
+
+### RPM sleep stats: the SoC never reaches XO shutdown (2026-11-15, oma14)
+
+Read-only, from userspace after the owner's go, as downstream
+`rpm_stats.c` (Xiaomi GPL kernel `markw-m-oss`, `msm8953-pm.dtsi`:
+`qcom,rpm-stats`, base 0x200000 plus the offset at 0x290014, version 2)
+and mainline `qcom_stats` (`qcom,rpm-stats`, base 0x290000, offset at
++0x14 masked to 16 bits, as sdm630.dtsi) both read them:
+
+- 0x290014 reads 0x900b0, so the records sit at 0x2900b0 on either
+  reading. msm8953.dtsi has no `rpm-stats` node, which is why
+  `qcom_stats` never bound.
+- After the 96-minute J4 sleep in this boot: `vlow` (XO shutdown) count 0,
+  accumulated 0 s; `vmin` (VDD min) count 0, accumulated 0 s. s2idle here
+  idles the CPUs and clusters (genpd S2), but the SoC never leaves XO on,
+  which is why the sleep draws what awake screen-off draws (52 mA).
+- A first try read the records with 36-byte slices and got SIGBUS in the
+  Python process (kernel fine, taint 0): `/dev/mem` maps this as device
+  memory, which faults on the unaligned loads `memcpy` uses. Read it with
+  aligned 32-bit loads only, as `readl` does.
+- Candidates that can hold XO from the apps side (awake snapshot, clocks
+  enabled): LPASS internal digital codec core 9.6 MHz, venus AXI/AHB,
+  camss AHB, plus WCNSS (Wi-Fi up) and ADSP running. Which RPM master
+  never votes for sleep (APSS, MPSS, PRONTO, TZ, LPASS) is in the RPM
+  master stats in message RAM (downstream `qcom,rpm-master-stats@60150`,
+  stride 4096, version 2); not read yet.
+- Upstream-ready follow-up: an `sram@290000 { compatible =
+  "qcom,rpm-stats"; reg = <0x00290000 0x10000>; }` node in msm8953.dtsi so
+  `qcom_stats` exposes these in debugfs.
