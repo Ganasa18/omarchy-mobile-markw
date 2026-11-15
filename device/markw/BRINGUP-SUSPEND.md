@@ -1894,3 +1894,16 @@ probe again.
   CPUs' timers, and with XO off nothing would fire them. checkpatch
   `--strict` 0/0/0. The MPM is built in, so this needs kernel oma17
   (0001-0021 plus 0023).
+
+### Runbook P: the MPM wakeup time (oma17)
+
+Kernel `7.1.3-msm8953-oma17` = the committed patches 0001-0021 plus
+candidate 0023 (W=1: the same three warnings as oma16, none in the MPM).
+Probe `out/markw/probe-oma17-mpmt/boot.img`; its DTB is byte for byte the
+no-Venus probe's. oma17's modules (820) were installed before the reboot.
+
+| Step | What | Expect / pass | Stop if | Rollback | Risk |
+| --- | --- | --- | --- | --- | --- |
+| P1 | After the owner's go: `./DEBUGING_RUN.sh --restart --probe out/markw/probe-oma17-mpmt/boot.img` | SSH, oma17, taint as before, `/sys/kernel/debug/pm_genpd` with the MPM above `power-domain-system`, cpuidle states as on oma16 | no SSH in 3 min, Oops, cpuidle missing | Power held about 30 s (MIUI), then the no-Venus oma16 probe | low |
+| P2 | Read-only after some minutes awake: vMPM words still 0 (no s2idle yet), `vlow` 0 (cpuidle unchanged) | as expected | `vlow` above 0 while awake (idle changed) | as P1 | low |
+| P3 | As O2: modem up, cable out, one guarded 60 s sleep, two beeps after it | RTC wake; **`vlow` count above 0** | no wake (Power held about 30 s) | as P1 | medium |
