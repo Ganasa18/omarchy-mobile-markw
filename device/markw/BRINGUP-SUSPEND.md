@@ -1553,7 +1553,7 @@ RPM shuts XO down only when every master has voted for sleep, so:
 
 Next, one change per boot, read-only stats before and after each short
 sleep: (1) a system-level domain idle state above cluster0/cluster1 with
-the `system-pc` PSCI parameter (0x41000353 from the downstream shifts;
+the `system-pc` PSCI parameter (mode 3 at bit 8, so 0x353 in the low bits; the affinity-level field in bits 24-25 is 1 for cluster_pc and likely 2 here, 0x42000353;
 to verify against TZ's PSCI before use), (2) LPASS idle: what holds the
 codec clock, (3) MPSS: boot the modem idle (BRINGUP-MODEM.md) or confirm
 it doesn't matter.
