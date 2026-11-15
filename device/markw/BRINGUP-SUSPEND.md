@@ -1737,3 +1737,21 @@ as oma15; DTB identical to oma15's.
   seconds after the tone. To check: whether an open PCM at suspend keeps
   the ADSP up (q6afe port still running), and if so, suspend the stream
   (or let PipeWire close it) before sleep.
+
+**LPASS after a tone, checked 2026-11-15 on `7.1.3-msm8953-oma16`** (cable in,
+guarded 60 s `rtcwake -m freeze`, `tools/markw-rpm-stats` before and after):
+
+| Run | Tone before the sleep | LPASS XO-off time | Result |
+| --- | --- | --- | --- |
+| m4 | about 10 s before | 62.1 -> 123.1 s | slept |
+| m5 | none (a quoting bug in the test script stopped `runuser`) | 123.1 -> 184.9 s | slept |
+| m6 | 1 s before, from the sleeper unit; the PCM still read `state: RUNNING` | 184.9 -> 184.9 s | stayed up |
+
+Each run had success +1, fail 0, no Oops and no new WARNING. So the codec's mclk
+gating (0018) holds. The ADSP stays up only when a stream is still open as the
+phone sleeps, which is what M3's test copy did. PipeWire closes an idle sink
+after a few seconds, so ordinary use reaches XO-off on the LPASS side. A sound
+played right at suspend, a paused player still holding the device, or the test
+copy's own beep keeps it up for that sleep. No kernel change is planned for
+this. If it matters later, the auto-suspend hook can wait for
+`/proc/asound/card0/pcm*p/sub0/status` to read `closed`.
