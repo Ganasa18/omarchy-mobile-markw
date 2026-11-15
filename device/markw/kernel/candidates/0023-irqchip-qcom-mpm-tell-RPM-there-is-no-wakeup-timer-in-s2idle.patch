@@ -1,0 +1,67 @@
+From: Omarchy Mobile <omamobile@localhost>
+Subject: [PATCH] irqchip/qcom-mpm: tell RPM there is no wakeup timer in s2idle
+
+The vMPM region starts with two words that hold the time at which the
+APSS wants to be woken, as a 64-bit arch timer value, ahead of the
+enable, edge, polarity and status registers. The driver skips them, so
+they stay 0, a wakeup that is already due.
+
+On a Redmi 4 Prime (msm8953) every RPM master (APSS, MPSS, PRONTO and
+LPASS) voted XO off through a 60 s s2idle, yet the RPM sleep stats show
+no XO shutdown at all. The vendor kernel writes the next timer event
+there, and for system suspend "no timer" (all ones).
+
+Do the same in s2idle, where only wakeup interrupts, routed through the
+MPM, end the sleep. Keep writing 0 outside s2idle: RPM can't see the
+CPUs' timers, and with XO shut down nothing would fire them.
+
+---
+ drivers/irqchip/irq-qcom-mpm.c | 23 +++++++++++++++++++++++
+ 1 file changed, 23 insertions(+)
+
+--- a/drivers/irqchip/irq-qcom-mpm.c
++++ b/drivers/irqchip/irq-qcom-mpm.c
+@@ -21,6 +21,7 @@
+ #include <linux/slab.h>
+ #include <linux/soc/qcom/irq.h>
+ #include <linux/spinlock.h>
++#include <linux/suspend.h>
+ 
+ /*
+  * This is the driver for Qualcomm MPM (MSM Power Manager) interrupt controller,
+@@ -292,6 +293,20 @@
+ 	return ret;
+ }
+ 
++/*
++ * The two words in front of the registers hold the time at which the
++ * APSS wants to be woken, in arch timer ticks. RPM shuts XO down only
++ * when that time is far enough away.
++ */
++static void qcom_mpm_write_wakeup(struct qcom_mpm_priv *priv, u64 ticks)
++{
++	writel_relaxed(lower_32_bits(ticks), priv->base);
++	writel_relaxed(upper_32_bits(ticks), priv->base + 4);
++
++	/* Ensure the writes are completed */
++	wmb();
++}
++
+ static int mpm_pd_power_off(struct generic_pm_domain *genpd)
+ {
+ 	struct qcom_mpm_priv *priv = container_of(genpd, struct qcom_mpm_priv,
+@@ -301,6 +316,14 @@
+ 	for (i = 0; i < priv->reg_stride; i++)
+ 		qcom_mpm_write(priv, MPM_REG_STATUS, i, 0);
+ 
++	/*
++	 * In s2idle only a wakeup interrupt ends the sleep, and those come
++	 * through the MPM, so there is no timer for RPM to keep. Outside it,
++	 * leave the wakeup time at 0: RPM can't see the CPUs' timers, and with
++	 * XO shut down nothing else would fire them.
++	 */
++	qcom_mpm_write_wakeup(priv, idle_should_enter_s2idle() ? U64_MAX : 0);
++
+ 	/* Notify RPM to write vMPM into HW */
+ 	ret = mbox_send_message(priv->mbox_chan, NULL);
+ 	if (ret < 0)
