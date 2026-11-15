@@ -274,3 +274,35 @@ the gauge and a separate, gated step.
   does, sleep drain is measurable from its difference, and a correct
   capacity can come from the counter between a full charge and empty
   instead of from the monotonic SOC.
+- G5 (cable in, 2026-11-15): guarded `rtcwake -m freeze -s 300` on oma12
+  (qcom_wdt loaded, feeder armed then disarmed, USB dead-man): slept
+  301.1 s, RTC wake (IRQ 72), success 0 -> 1, fail 0, taint 512
+  unchanged, no Oops or new WARNING. The counter rose 1.43 mAh over 340 s
+  of boot time, while the 39 s awake at about 148 mA of charge account
+  for about 1.6 mAh: across the sleep it barely moved. That fits either a
+  counter that stops in s2idle or a charge that stops with the USB link
+  suspended (the laptop sees the gadget suspend) and roughly offsets a
+  small sleep drain. Not decided; the next run has the cable out, where a
+  stopped counter reads zero and a running one reads the sleep drain.
+- **G5b pass: the counter counts through s2idle** (cable out, 2026-11-15,
+  same oma12 boot). A unit on the phone waited for the unplug, took 69 s
+  awake with the panel off as the control, then armed the watchdog
+  feeder and ran `rtcwake -m freeze -s 180`: suspend entry 13:23:03,
+  exit 13:26:06, RTC wake (IRQ 72), success 1 -> 2, fail 0, taint 512
+  unchanged, no Oops, feeder armed then disarmed. By the counter: awake
+  60.6 mA (current_now averaged 72.7 mA over the same window), asleep
+  28.3 mA over the 182 s window. The window includes the entry and exit,
+  so 28 mA is an upper bound for the sleep itself. s2idle as it stands
+  (Wi-Fi associated, Bluetooth powered, ADSP up) about halves the
+  screen-off drain; it does not reach a deep low-power state yet.
+- **The percentage, not the counter, is off.** Between G3 and a reading
+  after G5b (same boot, cable back in): capacity 95 -> 85 %, the gauge's
+  own SOC 92.25 -> 81.92 %, but the counter fell only 169 mAh, 4.0 % of
+  the 4203 mAh nominal capacity. Since the counter matches the integral of
+  current_now, the reported SOC fell about 2.5 times faster than the
+  charge used, and rises in jumps on charge: it follows the voltage far
+  more than the charge. Downstream computes capacity from the same
+  monotonic SOC register with the same formula, so the difference on
+  Android lies in what qpnp-fg configures around it (hold at 100 % on
+  charge termination, capacity learning, ESR and rslow compensation), or
+  above the kernel.
