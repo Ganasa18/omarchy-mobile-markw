@@ -1653,5 +1653,5 @@ the original, which stays in place).
   sleeps through s2idle. APSS shutdowns 0 -> 1 again (system-pc).
   The codec clock is enabled again after the resume.
 - L3: the tone played again after the resume (`pw-play` rc 0, no ASoC,
-  q6afe or codec errors); audible check by the owner pending.
+  q6afe or codec errors); the owner heard both tones, before the sleep and after the resume: L3 pass.
 - Left holding XO: MPSS only (modem off). vlow/vmin still 0.
