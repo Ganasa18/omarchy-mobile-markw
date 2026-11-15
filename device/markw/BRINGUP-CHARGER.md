@@ -372,3 +372,12 @@ oma12/oma13.
 Runbook J (after the owner's go): J1/J2 as H1/H2 with oma14; J3 as H4's
 first part, cable in at termination: pass when capacity stays 100 % while
 status flips. J4 is the suspend measurement in BRINGUP-SUSPEND.md.
+
+### Results (2026-11-15, `7.1.3-msm8953-oma14`)
+
+- J1/J2 pass: modules installed (820), RAM boot to oma14, taint 0, no
+  Oops, system running.
+- J3 pass: cable in at termination, 36 samples at 10 s over 6 minutes:
+  status Full 15 times and Charging 21 times (about 100 mA in each
+  Charging stretch), capacity 100 % in all 36. The monotonic SOC read
+  99 %. The flicker is gone.
