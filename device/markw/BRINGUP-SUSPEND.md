@@ -1655,3 +1655,27 @@ the original, which stays in place).
 - L3: the tone played again after the resume (`pw-play` rc 0, no ASoC,
   q6afe or codec errors); the owner heard both tones, before the sleep and after the resume: L3 pass.
 - Left holding XO: MPSS only (modem off). vlow/vmin still 0.
+
+### Candidate: the MPM wakeup controller (step MPM, 2026-11-15)
+
+Why before the modem: once MPSS sleeps too, RPM can shut XO down and the
+GIC stops seeing interrupts; without MPM only RPM's scheduled wakeup
+would bring the CPUs back, never the power key.
+
+`device/markw/kernel/candidates/0019-arm64-dts-qcom-msm8953-add-the-MPM-wakeup-interrupt-controller.patch`,
+from the vendor's `qcom,mpm@601d4` (`msm8953-pm.dtsi`: vMPM in message RAM
+at 0x601d4, IPC 0xb011008 bit 1, `interrupts = <0 171 1>`, 96 pins,
+`gic-map` values are GIC hwirqs: SPMI `<88 222>` is SPI 190, TSENS
+`<2 216>` is SPI 184, both matching mainline's nodes) and mainline's
+agatti layout: `apss_mpm` slice in `rpm_msg_ram`, `mpm` in the RPM node,
+SPMI's `periph_irq` through `&mpm 88`, `system_pd` a child of `mpm`.
+`CONFIG_QCOM_MPM=y` (built in: the SPMI arbiter, and with it the power
+key, charger, gauge and USB role, waits for it). TLMM gets no
+`wakeup-parent`: `pinctrl-msm8953` has no MPM map. Built as
+`7.1.3-msm8953-oma15` with 0017-0019 applied.
+
+| Step | What | Expect / pass | Stop if | Rollback | Risk |
+| --- | --- | --- | --- | --- | --- |
+| M1 | After the owner's go: install oma15 modules, RAM boot the oma15 probe | SSH; `qcom_mpm` bound; `/proc/interrupts` shows the SPMI interrupt under the MPM domain; power key, charger status and battery as before | no SSH in 3 min (SPMI or USB role missing) | Power held about 30 s (MIUI), then probe-oma14-syspc | medium-high |
+| M2 | Guarded `rtcwake -m freeze -s 60` | resume by RTC through MPM; APSS and LPASS sleep as in K3/L2 | no resume | as M1 | medium |
+| M3 | Cable out, auto-suspend test copy, Power to wake (owner) | Power wakes it; success +1 | no wake | as M1 | medium |
