@@ -338,3 +338,24 @@ correction at 10 %.
 | H2 | `./DEBUGING_RUN.sh --restart --probe "$PWD/out/markw/probe-oma13-fg/boot.img"` | SSH within 3 min, `uname -r` oma13 | no fresh SSH in 3 min | owner recovers; boot oma12's probe | medium |
 | H3 | `tools/phone-ssh --fresh 'cat /sys/kernel/debug/pmi8994_fg/info; cat /sys/class/power_supply/qcom-battery/capacity; upower -i $(upower -e | grep -m1 battery) | grep percentage'` | capacity near the monotonic SOC at boot; full point set; upower shows the same | capacity outside 0-100, or the shell's battery differs | boot oma12 | none |
 | H4 | Sample capacity, monotonic SOC and the counter every 30 s for 10 min, cable in, then unplug and replug once | capacity moves about 1 point per 42 mAh; no jump at unplug/replug while the monotonic SOC jumps | capacity jumps with the monotonic SOC, or freezes while the counter moves | boot oma12 | none |
+
+### Results (2026-11-15, `7.1.3-msm8953-oma13`)
+
+- H1-H3 pass: modules installed, RAM boot to oma13, taint 512 (the DSI
+  WARNs), no Oops. At boot capacity 97 % = the monotonic SOC, the full
+  point estimated from it; upower and the shell showed 97 % too.
+- H4, cable in near full (12 min at 15 s): the charger flips between
+  FULL and Charging every sample or two (the termination flapping seen
+  since oma6). Each FULL re-anchors the full point, so capacity reads 100
+  on FULL and 99 otherwise; the monotonic SOC stayed at 97-98 % with the
+  charger reporting a full battery.
+- H4, unplug (10 s samples): over 325 s off the cable the counter fell
+  4.7 mAh (0.11 %); capacity held 99 %, the monotonic SOC fell 98 -> 96 %
+  on the voltage step alone. After about 17 minutes off the cable
+  (14:55-15:12) and the replug: counter 13.3 mAh below the full point
+  (0.32 %, about 47 mA average with the panel off), capacity 99 %,
+  monotonic SOC 94 %. No `counter stepped` message. The old reading
+  would have shown a 4-point drop for 0.3 % of charge.
+- To fix: the 99/100 flicker while the charger flaps at termination.
+  Once the full point has been set by a FULL report, the "at most 99 %"
+  rule isn't needed; it only guards the estimated point.
