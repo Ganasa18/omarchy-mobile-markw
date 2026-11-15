@@ -1560,8 +1560,8 @@ it doesn't matter.
 
 ### Candidate: a system power domain (step A, 2026-11-15, offline)
 
-`device/markw/kernel/candidates/0017-arm64-dts-qcom-msm8953-add-a-system-power-domain-above-the-clusters.patch`
-(kept out of `patches/` until it passes): `power-domain-system` in
+`device/markw/kernel/patches/0017-arm64-dts-qcom-msm8953-add-a-system-power-domain-above-the-clusters.patch`
+(moved to `patches/` after K1-K3 passed): `power-domain-system` in
 `/psci` as the parent of cluster0/cluster1, with one state `system-pc`,
 PSCI 0x42000353 (CPU 3, cluster 5, system 3 at bit 8, power-down,
 affinity level 2), exit latency 11 ms as the vendor's `system-pc`
@@ -1623,7 +1623,7 @@ The vendor's `msm8x16-wcd.c` turns this clock on before every digital
 register access and off 50 ms later, and off at codec suspend, so the
 registers need it.
 
-`device/markw/kernel/candidates/0018-ASoC-codecs-msm8916-wcd-digital-gate-mclk-across-system-suspend.patch`:
+`device/markw/kernel/patches/0018-ASoC-codecs-msm8916-wcd-digital-gate-mclk-across-system-suspend.patch`:
 system-sleep PM ops that put the regmap in cache-only mode and disable
 mclk at suspend, and on resume enable it, leave cache-only and
 `regcache_sync` (writes only what changed meanwhile). Offline: W=1 no
