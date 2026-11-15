@@ -173,6 +173,12 @@ Results go here and in NOTES.md, with the date and `uname -r`.
   compare with a speed test in MIUI at the same spot before blaming
   ipa2-lite. Wi-Fi stayed on (its route wins); traffic was bound to the
   interface.
+- **Step 0 again, 2026-11-15** (oma16, before the MPSS suspend test in
+  BRINGUP-SUSPEND.md runbook N): MIUI had changed `modemst1`, `modemst2`
+  and `persist` since 2026-11-12's backup, so a fresh read-only one,
+  `…-after-miui`, was taken. All six sums match on both sides. The USB
+  network dropped once during the first copy, and `modemst2` was fetched
+  twice before its sum matched.
 - Next: the MIUI comparison, a test with Wi-Fi off (the default route on
   mobile data), then step 8.
 - **ModemManager crashes on a quick reconnect.** The quick settings tile

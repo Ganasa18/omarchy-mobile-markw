@@ -1761,3 +1761,32 @@ this. If it matters later, the auto-suspend hook can wait for
 `-msm8953-oma16`. The committed tree builds the kernel that passed M1-M3 (the
 three patches match the oma16 build export byte for byte). The MPM must be
 built in, never a module: the SPMI bus names it as its interrupt parent.
+
+### Step MPSS: does a modem that never booted hold XO? (runbook N, 2026-11-15)
+
+APSS, LPASS and PRONTO now vote sleep in s2idle (K3, L3, M3, m4-m6), and
+`vlow`/`vmin` are still 0. The one master left is MPSS: `active_cores` 0x1
+and `numshutdowns` 0 for the whole boot, because `qcom_q6v5_mss` stays
+blacklisted (BRINGUP-MODEM.md step 4), so the modem never boots and never
+tells RPM that it sleeps. Downstream boots the modem at every boot. The
+question is whether a modem that boots and then idles votes sleep, letting
+RPM reach XO shutdown.
+
+Before the run: a fresh read-only backup of the six NV partitions,
+`20261115T150215Z-after-miui` (MIUI had changed `modemst1`, `modemst2` and
+`persist` since 2026-11-12's). All six sums match on both sides. Nothing
+else changes on the phone: the modem starts by hand as in BRINGUP-MODEM.md
+step 5 (rmtfs on RAM copies, partitions `ro=1`). ModemManager is not
+started, so the modem isn't brought online, and no data is used.
+
+| Step | What | Expect / pass | Stop if | Rollback | Risk |
+| --- | --- | --- | --- | --- | --- |
+| N1 | Read-only: `tools/markw-rpm-stats` | MPSS `numshutdowns` 0 | — | — | none |
+| N2 | `systemctl start omamobile-markw-rmtfs tqftpserv`, `modprobe qcom_q6v5_mss`, `echo start` to the MPSS remoteproc's `state`, kmsg streamed | `running`, QRTR services listed, partitions `ro=1`, no crash loop | a crash or restart loop, eMMC errors | `echo stop`, then a reboot if it won't stop | medium |
+| N3 | Two minutes idle, then `tools/markw-rpm-stats` | MPSS `numshutdowns` rises (the modem sleeps while awake idle) | — | as N2 | low |
+| N4 | Guarded 60 s `rtcwake -m freeze` (watchdog feeder 300 s, USB dead-man, kmsg stream), cable in, no sound before it | resumes by RTC; `vlow` count above 0, or MPSS still awake with a reason | no resume; watchdog reset | Power held about 30 s (MIUI), then the oma16 probe | medium |
+| N5 | `echo stop` to the modem, then stop rmtfs and tqftpserv | `offline`; partitions `ro=1` | — | reboot | low |
+
+If XO shuts down in N4, the RTC alarm has to wake the CPUs through the MPM
+(SPMI is MPM pin 88; the power key went the same way in M3). Only the
+watchdog brings the phone back if it doesn't.
