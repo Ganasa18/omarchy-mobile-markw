@@ -1851,5 +1851,46 @@ DTBs shows only that line). Modules stay oma16's.
 | O3 | Install `i2c-qcom-cci-resume.ko` to `updates/`, `depmod`, reboot into the same probe (owner's go) | CCI clocks at 0 after each of three guarded sleeps; the cameras still enumerate | camera probe errors | remove the file, `depmod`, reboot | low |
 
 If XO shuts down in O2, the RTC alarm has to wake through the MPM (SPMI,
-pin 88), as the power key did in M3. Otherwise only the watchdog brings
-the phone back.
+pin 88), as the power key did in M3. The watchdog doesn't guard the sleep
+itself: `qcom_wdt` stops the timer in its late system-suspend callback. A
+phone that doesn't wake needs Power held for about 30 s (MIUI), then the
+probe again.
+
+#### Results O (2026-11-15, `7.1.3-msm8953-oma16`, probe-oma16-novenus)
+
+- O1 pass: the reboot went straight to fastboot (no MIUI, so the morning's
+  NV backup still holds). `venus@1d00000` `disabled`, no Venus device,
+  `gcc_venus0_*` all 0, taint 512 as before, no Oops, Wi-Fi, display and
+  the sound card up. icc and gcc still force `sync_state` at 12 s (the
+  probe's command line keeps `fw_devlink.sync_state=timeout`). Awake,
+  screen on, `bi_tcxo`'s enabled children are only the display
+  (`dsi0vco`, `esc0`, `vsync`), USB (cable in) and `gpll0_early`.
+- O2: modem started as N2, then a detached unit waited for the owner's
+  unplug, slept a guarded 60 s and beeped twice after the resume. RTC
+  wake (IRQ 74), success 0 -> 1, fail 0, no Oops. **APSS voted XO off for
+  the first time: `xo_count` 0 -> 1, 61.5 s.** MPSS (+59 s), PRONTO
+  (+62 s) and LPASS (+62 s) voted XO off through the same sleep. `vlow`
+  is still 0, so all four masters voting XO off is not enough.
+  `gcc_camss_cci_clk` read 0 before this first sleep and 1 after it: the
+  one leaked enable per resume that candidate 0022 fixes.
+- The modem was stopped afterwards (`offline`); partitions `ro=1`.
+
+### What else keeps XO on: the MPM wakeup time (2026-11-15, offline)
+
+- Read-only, awake: the vMPM words at 0x601d4 read `00000000 00000000`
+  first, then enable `0 0 0x01000000` (pin 88, SPMI), edges 0, polarity
+  `0 0 0x01000000`, status 0.
+- Downstream `mpm-of.c` (Xiaomi `markw-m-oss`) writes those first two
+  words in `msm_mpm_set()`: the absolute arch-timer time (19.2 MHz) at
+  which the APSS wants to be woken. For system suspend `lpm-levels.c`'s
+  `get_cluster_sleep_time()` returns `~0ULL`, so the words say "no
+  timer". Mainline `irq-qcom-mpm` skips both words (the `+ 2` in its
+  offsets) and leaves them 0, a wakeup that is already due. RPM likely
+  won't shut XO down for a sleep it thinks is over.
+- Candidate
+  `device/markw/kernel/candidates/0023-irqchip-qcom-mpm-tell-RPM-there-is-no-wakeup-timer-in-s2idle.patch`:
+  in `mpm_pd_power_off()`, write `U64_MAX` while `idle_should_enter_s2idle()`,
+  and 0 otherwise. Outside s2idle nothing changes: RPM can't see the
+  CPUs' timers, and with XO off nothing would fire them. checkpatch
+  `--strict` 0/0/0. The MPM is built in, so this needs kernel oma17
+  (0001-0021 plus 0023).
