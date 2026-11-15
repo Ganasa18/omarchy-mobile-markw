@@ -1705,3 +1705,23 @@ key, charger, gauge and USB role, waits for it). TLMM gets no
   the PSCI system domain, or the PSCI domain driver tolerating a parent
   that comes later); or check how agatti avoids it. 0017 and 0018 are
   unaffected.
+
+#### Results (2026-11-15, `7.1.3-msm8953-oma16`, probe-oma16-mpm)
+
+oma16 = 0001-0018 plus candidates 0019 (MPM DT), 0020 (dt_idle_genpd
+skips a parent that isn't there yet) and 0021 (the MPM links itself as
+parent of the domains that name it), `CONFIG_QCOM_MPM=y`. Build warnings
+as oma15; DTB identical to oma15's.
+
+- M1 pass: SSH, taint 512, cpuidle back (state0/state1);
+  `dt-idle-genpd: /psci/power-domain-system: parent domain not ready, not
+  linked` at 0.06 s, then `qcom_mpm ...: parent of
+  /psci/power-domain-system` at 0.57 s; genpd shows the MPM over the
+  system domain over both clusters. SPMI through MPM: power key, RTC
+  alarm present; battery reads; system running.
+- M2 pass: guarded 60 s rtcwake, cable in: slept 60.5 s (MONOTONIC 2.0 s
+  of 62.5 s wall), woken by the RTC alarm, success 0 -> 1, fail 0, no
+  Oops or new WARNING, watchdog armed and disarmed. system-pc S2idle 1;
+  the MPM domain powered off once (vMPM written, RPM notified). RPM: APSS
+  shutdowns 1, LPASS XO off 62.1 s, PRONTO 63.2 s; vlow/vmin 0 (MPSS).
+- M3 (Power wake, cable out) next, with the owner.
