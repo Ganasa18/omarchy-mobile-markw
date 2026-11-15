@@ -1,0 +1,37 @@
+From: Omarchy Mobile <omamobile@localhost>
+Subject: [PATCH] cpuidle: dt_idle_genpd: don't fail on a parent domain that probes later
+
+dt_idle_pd_init_topology() links every PM domain in the PSCI node to the
+domain its power-domains names, and gives up on all of them if one link
+fails. A parent outside the CPU idle domains, such as the Qualcomm MPM
+wakeup interrupt controller, is a platform device that probes at
+device_initcall time or later, while the PSCI domains are set up before
+that and psci-cpuidle, a faux device created at device_initcall time,
+can't wait. On msm8953 with the MPM as parent of the system domain the
+domains returned -EPROBE_DEFER and the CPUs were left without cpuidle.
+
+Skip a link whose parent isn't there yet, so the CPU idle domains come
+up, and leave that link to the parent's driver.
+
+---
+ drivers/cpuidle/dt_idle_genpd.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+--- a/drivers/cpuidle/dt_idle_genpd.c
++++ b/drivers/cpuidle/dt_idle_genpd.c
+@@ -142,6 +142,15 @@
+ 		child.args_count = 0;
+ 		ret = of_genpd_add_subdomain(&parent, &child);
+ 		of_node_put(parent.np);
++		/*
++		 * A parent outside the CPU idle domains, such as a wakeup
++		 * interrupt controller, may probe later than CPU idle can
++		 * wait for. Leave the link to its driver.
++		 */
++		if (ret == -EPROBE_DEFER) {
++			pr_info("%pOF: parent domain not ready, not linked\n", node);
++			continue;
++		}
+ 		if (ret)
+ 			return ret;
+ 	}

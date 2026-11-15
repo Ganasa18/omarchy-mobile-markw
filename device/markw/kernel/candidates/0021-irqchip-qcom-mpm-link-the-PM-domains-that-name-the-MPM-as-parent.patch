@@ -1,0 +1,62 @@
+From: Omarchy Mobile <omamobile@localhost>
+Subject: [PATCH] irqchip: qcom-mpm: link the PM domains that name the MPM as parent
+
+The MPM's genpd has to be the parent of the topmost CPU idle domain, so
+its power_off writes the vMPM and notifies RPM when the last CPU goes
+down. The CPU idle domains are set up before the MPM probes and now skip
+that link (dt_idle_genpd), so add it from here: once the MPM is ready,
+make it the parent of every PM domain provider whose power-domains names
+it.
+
+---
+ drivers/irqchip/irq-qcom-mpm.c | 32 ++++++++++++++++++++++++++++++++
+ 1 file changed, 32 insertions(+)
+
+--- a/drivers/irqchip/irq-qcom-mpm.c
++++ b/drivers/irqchip/irq-qcom-mpm.c
+@@ -322,6 +322,36 @@
+ 	return false;
+ }
+ 
++/*
++ * CPU idle sets up its PM domains before the MPM can probe, and leaves out
++ * the link to a parent that isn't there yet. Add the MPM as the parent of
++ * every PM domain that names it in power-domains.
++ */
++static void qcom_mpm_link_subdomains(struct device *dev, struct device_node *np)
++{
++	struct of_phandle_args parent = { .np = np };
++	struct of_phandle_args child = { };
++	struct of_phandle_args spec;
++	struct device_node *node;
++	int ret;
++
++	for_each_node_with_property(node, "power-domains") {
++		if (of_parse_phandle_with_args(node, "power-domains",
++					       "#power-domain-cells", 0, &spec))
++			continue;
++		of_node_put(spec.np);
++		if (spec.np != np || !of_property_present(node, "#power-domain-cells"))
++			continue;
++
++		child.np = node;
++		ret = of_genpd_add_subdomain(&parent, &child);
++		if (ret)
++			dev_dbg(dev, "%pOF not linked: %d\n", node, ret);
++		else
++			dev_info(dev, "parent of %pOF\n", node);
++	}
++}
++
+ static int qcom_mpm_probe(struct platform_device *pdev, struct device_node *parent)
+ {
+ 	struct device_node *np = pdev->dev.of_node;
+@@ -469,6 +499,8 @@
+ 		goto remove_domain;
+ 	}
+ 
++	qcom_mpm_link_subdomains(dev, np);
++
+ 	return 0;
+ 
+ remove_domain:
