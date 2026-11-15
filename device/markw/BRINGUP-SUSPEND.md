@@ -1452,3 +1452,16 @@ Check through fresh SSH after the requested duration plus 15 s, then
 clean guards. The 300 s bounded feeder is adequate for each individual
 20/120 s gate with this margin; do not reuse one feeder for the entire
 sequence. A 300 s sleep needs a separately prepared longer safety window.
+
+## Suspend drain by the coulomb counter (plan, 2026-11-15)
+
+oma12 and later expose the gauge's coulomb counter, which keeps counting
+through s2idle (BRINGUP-CHARGER.md, G5b: 28 mA asleep against 61 mA awake
+over a 3-minute sleep). J4 measures a real auto-suspend: cable out, the
+packaged `omamobile-autosuspend` started (not enabled) with the 300 s
+watchdog feeder armed after each resume, the counter snapshotted at the
+unplug and at the replug, the owner waking the phone with Power after
+about 30 minutes. Pass: one suspend, Power wake, fail 0, no Oops; the
+result is the average current over the sleep from the counter's
+difference, with the awake minutes before and after subtracted using
+current_now.

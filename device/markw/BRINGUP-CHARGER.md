@@ -359,3 +359,16 @@ correction at 10 %.
 - To fix: the 99/100 flicker while the charger flaps at termination.
   Once the full point has been set by a FULL report, the "at most 99 %"
   rule isn't needed; it only guards the estimated point.
+
+## Steady full reading (2026-11-15, oma14 candidate)
+
+Patch 0016 applies the "at most 99 %" rule only until a FULL report has
+set the full point, so the charger's FULL/Charging flapping at termination
+no longer makes a full battery flicker 99/100. Offline: `checkpatch
+--strict` 0/0/0, `W=1` no compiler warning (kernel-doc 109 as before),
+DTB unchanged; probe `out/markw/probe-oma14-fg/boot.img` repacked as for
+oma12/oma13.
+
+Runbook J (after the owner's go): J1/J2 as H1/H2 with oma14; J3 as H4's
+first part, cable in at termination: pass when capacity stays 100 % while
+status flips. J4 is the suspend measurement in BRINGUP-SUSPEND.md.
