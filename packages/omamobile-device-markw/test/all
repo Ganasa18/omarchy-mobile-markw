@@ -154,6 +154,32 @@ echo offline >"$st"; mm ok stop || fail "stop leaves an offline modem alone"
 echo running >"$st"; mm ok stop && fail "a modem that never reaches offline fails the stop"
 [[ $(cat "$st") == stop ]] || fail "stop writes stop to a running modem"
 pass "modem: booted idle after rmtfs, enabled, driver blacklisted, script states"
+# ModemManager at boot, after the modem; the sleep hook on a fake sysfs:
+# rmnet_ipa0 goes down before a suspend only when no link sits on it.
+[[ $(readlink "$tmp/root/usr/lib/systemd/system/multi-user.target.wants/ModemManager.service") == ../ModemManager.service ]] \
+  || fail "ModemManager is enabled"
+grep -qx 'After=omamobile-markw-modem.service' \
+  "$tmp/root/usr/lib/systemd/system/ModemManager.service.d/10-omamobile-markw.conf" \
+  || fail "ModemManager starts after the modem"
+hook=$tmp/root/usr/lib/systemd/system-sleep/omamobile-markw
+[[ -x $hook ]] || fail "the sleep hook is staged"
+sl=$tmp/sleep; mkdir -p "$sl/sys/class/net/rmnet_ipa0" "$sl/sys/class/net/usb0"
+echo 3 >"$sl/sys/class/net/rmnet_ipa0/ifindex"; echo 3 >"$sl/sys/class/net/rmnet_ipa0/iflink"
+echo 4 >"$sl/sys/class/net/usb0/ifindex"; echo 4 >"$sl/sys/class/net/usb0/iflink"
+printf '#!/bin/sh\necho "$@" >>%s/ip.log\n' "$sl" >"$sl/ip"; chmod +x "$sl/ip"
+hk() { rm -f "$sl/ip.log"; OMAMOBILE_SYSFS=$sl/sys OMAMOBILE_IP=$sl/ip "$hook" "$@" >/dev/null; }
+echo 0x1003 >"$sl/sys/class/net/rmnet_ipa0/flags"
+hk pre suspend || fail "the hook succeeds"
+[[ $(cat "$sl/ip.log") == "link set rmnet_ipa0 down" ]] || fail "pre brings an unused rmnet_ipa0 down"
+hk post suspend; [[ ! -e $sl/ip.log ]] || fail "post leaves rmnet_ipa0 alone"
+mkdir -p "$sl/sys/class/net/qmapmux0.0"; echo 5 >"$sl/sys/class/net/qmapmux0.0/ifindex"; echo 3 >"$sl/sys/class/net/qmapmux0.0/iflink"
+hk pre suspend; [[ ! -e $sl/ip.log ]] || fail "rmnet_ipa0 stays up while a data link is on it"
+rm -r "$sl/sys/class/net/qmapmux0.0"; echo 0x1002 >"$sl/sys/class/net/rmnet_ipa0/flags"
+hk pre suspend; [[ ! -e $sl/ip.log ]] || fail "a down rmnet_ipa0 is left alone"
+rm -r "$sl/sys/class/net/rmnet_ipa0"
+hk pre suspend || fail "the hook succeeds without rmnet_ipa0"
+[[ ! -e $sl/ip.log ]] || fail "no rmnet_ipa0, nothing to do"
+pass "ModemManager after the modem; the sleep hook drops an unused rmnet_ipa0"
 # USB rescue: a fake sysfs and configfs. The script must leave a working
 # link, a wall charger and the other roles alone, and rebind otherwise.
 [[ -x $tmp/root/usr/lib/omamobile/omamobile-markw-usb-rescue ]] || fail "the USB rescue is staged"

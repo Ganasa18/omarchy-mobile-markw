@@ -1,0 +1,40 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# systemd-sleep hook for markw, installed as
+# /usr/lib/systemd/system-sleep/omamobile-markw. systemd-sleep runs it as
+#   omamobile-markw pre|post suspend|hibernate|hybrid-sleep|suspend-then-hibernate
+# Only "systemctl suspend" (through logind, as omamobile-autosuspend does)
+# gets here; tests that call rtcwake or write /sys/power/state bypass it.
+#
+# pre: bring the IPA modem netdev (rmnet_ipa0) down when no data link sits
+# on it. ModemManager brings it up for a bearer's multiplexed link
+# (qmapmux0.0) and leaves it up after the disconnect; while it is up,
+# ipa2-lite keeps the IPA clock, an RPM clock with a sleep-set vote, on
+# across suspend, so RPM never shuts XO down and the phone sleeps at about
+# 30-50 mA instead of about 11 mA (device/markw/BRINGUP-SUSPEND.md, U and
+# V). ModemManager brings it up again on the next connect.
+# post: nothing.
+#
+# Never call into user.slice from here: systemd has frozen it.
+set -uo pipefail
+net=${OMAMOBILE_SYSFS:-/sys}/class/net
+ip=${OMAMOBILE_IP:-ip}
+dev=rmnet_ipa0
+
+log() { echo "omamobile-markw-sleep: $*"; }
+
+[[ ${1:-} == pre ]] || exit 0
+[[ -d $net/$dev ]] || exit 0
+# IFF_UP is bit 0 of flags (0x1003 for an up netdev).
+(( $(cat "$net/$dev/flags" 2>/dev/null || echo 0) & 1 )) || exit 0
+index=$(cat "$net/$dev/ifindex")
+# A data link on it names it in its iflink (qmapmux0.0@rmnet_ipa0).
+for link in "$net"/*; do
+  [[ ${link##*/} == "$dev" ]] && continue
+  if [[ $(cat "$link/iflink" 2>/dev/null) == "$index" ]]; then
+    log "$dev stays up: ${link##*/} carries data"
+    exit 0
+  fi
+done
+"$ip" link set "$dev" down && log "$dev down: no data link, so the IPA clock can go off"
+exit 0

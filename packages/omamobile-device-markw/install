@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: MIT
 # Stage omamobile-device-markw into DESTDIR. Nothing is enabled that would
 # start the radio's data path, the charger, or a camera. It enables zram
-# swap, the copy of the phone's own firmware, the light sensor bind and the
-# idle modem boot (on RAM copies of its NV, mobile data off).
+# swap, the copy of the phone's own firmware, the light sensor bind, the
+# idle modem boot (on RAM copies of its NV) and ModemManager, which
+# connects nothing until the mobile data tile is on.
 #   ./install DESTDIR [BUILDDIR]
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
@@ -54,6 +55,15 @@ ln -sf ../omamobile-markw-modem.service \
   "$destination/usr/lib/systemd/system/multi-user.target.wants/omamobile-markw-modem.service"
 install -Dm644 vendor/modprobe.d/omamobile-markw-modem.conf \
   "$destination/usr/lib/modprobe.d/omamobile-markw-modem.conf"
+# ModemManager at boot, after the modem, so the quick settings tile can
+# turn mobile data on; it connects nothing by itself. Before each suspend
+# the sleep hook brings rmnet_ipa0 down when no data link is on it, or the
+# IPA clock holds XO (BRINGUP-SUSPEND.md, U and V).
+install -Dm644 vendor/systemd/system/ModemManager.service.d/10-omamobile-markw.conf \
+  "$destination/usr/lib/systemd/system/ModemManager.service.d/10-omamobile-markw.conf"
+ln -sf ../ModemManager.service \
+  "$destination/usr/lib/systemd/system/multi-user.target.wants/ModemManager.service"
+install -Dm755 vendor/omamobile-markw-sleep "$destination/usr/lib/systemd/system-sleep/omamobile-markw"
 # Rebind the USB gadget when a computer's port gives no link after a role
 # change (device/markw/NOTES.md, 2026-11-06): started by udev, not enabled.
 install -Dm755 vendor/omamobile-markw-usb-rescue "$destination/usr/lib/omamobile/omamobile-markw-usb-rescue"

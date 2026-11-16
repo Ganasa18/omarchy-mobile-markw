@@ -2141,5 +2141,28 @@ six suspend and resume cycles.
   while the link is idle (as downstream's IPA does with its resource
   manager), which 0024 doesn't attempt.
 
-Not yet tested: sleeps longer than 4 min, Wi-Fi and notifications
-across a sleep, and auto-suspend at boot.
+- **V: ModemManager running, data off.** After `nmcli connection down`,
+  ModemManager deleted `qmapmux0.0` but left `rmnet_ipa0` up, which keeps
+  0024 from gating the IPA clock. Brought down by hand, it came up again
+  on the next connect by ModemManager itself (data worked). Cable out,
+  detached, `rmnet_ipa0` down, two guarded 240 s sleeps: RTC wakes,
+  success 8 -> 10, fail 0, taint 0, CCI 0 after each. `vmin` +472.6 s of
+  about 486 s asleep (434 entries against 46: the registered modem
+  leaves vmin briefly and often), and:
+
+  | Sleep | `charge_counter` (uAh) | Over | Average |
+  | --- | --- | --- | --- |
+  | 1 | 3485291 -> 3484480 | 243.9 s | 12.0 mA |
+  | 2 | 3484319 -> 3483613 | 242.2 s | 10.5 mA |
+
+  ModemManager costs nothing asleep once `rmnet_ipa0` is down.
+- So omamobile-device-markw 0.1.22 starts ModemManager at boot (after
+  the modem unit), and its systemd-sleep hook
+  (`/usr/lib/systemd/system-sleep/omamobile-markw`) takes `rmnet_ipa0`
+  down before a `systemctl suspend` when no link sits on it. Installed on
+  the phone (2026-11-16, oma18); the boot with it is still to come.
+
+Not yet tested: 0.1.22 across a reboot (ModemManager from boot, the
+tile), the hook through a real `systemctl suspend`, sleeps longer than
+4 min, Wi-Fi and notifications across a sleep, and auto-suspend at
+boot.

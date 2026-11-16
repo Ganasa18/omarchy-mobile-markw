@@ -7,7 +7,9 @@ pkgdesc="Omarchy Mobile support for the Xiaomi Redmi 4 Prime (markw): storage gu
 arch=(aarch64)
 url="https://github.com/derekross/omarchy-mobile"
 license=(MIT)
-depends=(bash systemd omamobile-keyring)
+depends=(bash systemd iproute2 omamobile-keyring)
+optdepends=('modemmanager: mobile data from the quick settings tile'
+            'rmtfs: the idle modem boot')
 provides=(omamobile-device)
 conflicts=(omamobile-device)
 backup=(etc/pacman.d/omamobile-mirrorlist etc/NetworkManager/conf.d/zz-omamobile-wifi-powersave.conf)
