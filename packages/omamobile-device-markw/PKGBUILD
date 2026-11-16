@@ -13,7 +13,9 @@ optdepends=('modemmanager: mobile data from the quick settings tile'
 provides=(omamobile-device)
 # omamobile-sensors is the Pixel's AoC sensor proxy; markw ships only its
 # auto-rotate client (the same files), against iio-sensor-proxy.
-conflicts=(omamobile-device omamobile-sensors)
+# omamobile-gnss is the Pixel's GNSS stack; markw ships its own
+# /usr/bin/omamobile-gnss over the modem's GPS for the Location tile.
+conflicts=(omamobile-device omamobile-sensors omamobile-gnss)
 backup=(etc/pacman.d/omamobile-mirrorlist etc/NetworkManager/conf.d/zz-omamobile-wifi-powersave.conf)
 install=omamobile-device-markw.install
 makedepends=(gcc)

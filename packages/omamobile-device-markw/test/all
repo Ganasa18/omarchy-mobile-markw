@@ -202,6 +202,48 @@ find "$tmp/root" -lname '*omamobile-autorotate.service' | grep -c . >/dev/null \
 grep -q 'iio-sensor-proxy' PKGBUILD && grep -q 'conflicts=.*omamobile-sensors' PKGBUILD \
   || fail "auto-rotate runs on iio-sensor-proxy, never next to omamobile-sensors"
 pass "auto-rotate: omamobile-sensors' client unchanged, not enabled"
+# The Location tile: a fake mmcli. Status must give the tile's JSON keys,
+# on/off must flip only gps-nmea, and nothing may print a position.
+gnss=$tmp/root/usr/bin/omamobile-gnss
+[[ -x $gnss ]] || fail "omamobile-gnss is staged"
+python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" vendor/omamobile-gnss \
+  || fail "omamobile-gnss parses"
+fakemm=$tmp/mmcli; mmstate=$tmp/mm-enabled; mmlog=$tmp/mm-log
+cat >"$fakemm" <<'EOF'
+#!/bin/bash
+echo "$*" >>"$MMLOG"
+enabled=$(cat "$MMSTATE" 2>/dev/null)
+case "$*" in
+  *--location-status*) [[ -n ${MMNOGPS:-} ]] && { echo "error: no modems" >&2; exit 1; }
+    printf '{"modem":{"location":{"capabilities":["3gpp-lac-ci","gps-nmea"],"enabled":["3gpp-lac-ci"%s]}}}\n' \
+      "$([[ $enabled == on ]] && echo ',"gps-nmea"')" ;;
+  *--location-get*) printf '{"modem":{"location":{"gps":{"latitude":"12.5","longitude":"98.5","nmea":["$GPRMC,,V,,,,,,,,,,N*53","%s"]}}}}\n' "${MMGGA:-\$GPGGA,,,,,,0,,,,,,,,*66}" ;;
+  *--location-enable-gps-nmea*) echo on >"$MMSTATE" ;;
+  *--location-disable-gps-nmea*) echo off >"$MMSTATE" ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "$fakemm"
+run_gnss() { OMAMOBILE_MMCLI=$fakemm MMSTATE=$mmstate MMLOG=$mmlog python3 "$gnss" "$@"; }
+[[ $(run_gnss status --json) == '{"location":"off","running":"no","fix":"no","satellites":"","installed":true}' ]] \
+  || fail "omamobile-gnss status: off, as the tile reads it"
+run_gnss on || fail "omamobile-gnss on"
+grep -q -- '-m any --location-enable-gps-nmea' "$mmlog" || fail "on enables gps-nmea on the modem"
+[[ $(run_gnss status --json) == '{"location":"on","running":"no","fix":"no","satellites":"0","installed":true}' ]] \
+  || fail "omamobile-gnss status: on, no fix"
+fixed=$(MMGGA='$GPGGA,120000.00,1230.000,N,09830.000,E,1,07,1.2,10.0,M,,M,,*00' run_gnss status)
+[[ $fixed == $'location: on\nfix: yes (7 satellites)' ]] || fail "omamobile-gnss status reads the GGA fix"
+MMGGA='$GPGGA,120000.00,1230.000,N,09830.000,E,1,07,1.2,10.0,M,,M,,*00' run_gnss status --json | grep -c -E '12\.5|98\.5|1230|09830' >/dev/null \
+  && fail "omamobile-gnss status prints a position"
+run_gnss off || fail "omamobile-gnss off"
+grep -q -- '--location-disable-gps-nmea' "$mmlog" || fail "off disables gps-nmea"
+grep -v -E -- '--location-(status|get|enable-gps-nmea|disable-gps-nmea)' "$mmlog" | grep -c . >/dev/null \
+  && fail "omamobile-gnss asks ModemManager for something else"
+[[ $(MMNOGPS=1 run_gnss status --json) == *'"installed":false'* ]] || fail "no modem: the tile says No GNSS"
+rc=0; run_gnss force 2>/dev/null || rc=$?
+[[ $rc == 2 ]] || fail "unknown commands give usage"
+grep -q 'conflicts=.*omamobile-gnss' PKGBUILD || fail "omamobile-gnss (the Pixel's) conflicts"
+pass "the Location tile: omamobile-gnss over ModemManager's GPS, no position printed"
 # USB rescue: a fake sysfs and configfs. The script must leave a working
 # link, a wall charger and the other roles alone, and rebind otherwise.
 [[ -x $tmp/root/usr/lib/omamobile/omamobile-markw-usb-rescue ]] || fail "the USB rescue is staged"

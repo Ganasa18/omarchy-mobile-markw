@@ -71,6 +71,9 @@ install -Dm755 vendor/autorotate/omamobile-autorotate "$destination/usr/bin/omam
 install -Dm644 vendor/autorotate/autorotate.py "$destination/usr/lib/omamobile-sensors/autorotate.py"
 install -Dm644 vendor/autorotate/omamobile-autorotate.service \
   "$destination/usr/lib/systemd/user/omamobile-autorotate.service"
+# The Location tile: omamobile-gnss's command line over the modem's GPS in
+# ModemManager. Off at every boot; the tile turns it on.
+install -Dm755 vendor/omamobile-gnss "$destination/usr/bin/omamobile-gnss"
 # Rebind the USB gadget when a computer's port gives no link after a role
 # change (device/markw/NOTES.md, 2026-11-06): started by udev, not enabled.
 install -Dm755 vendor/omamobile-markw-usb-rescue "$destination/usr/lib/omamobile/omamobile-markw-usb-rescue"
