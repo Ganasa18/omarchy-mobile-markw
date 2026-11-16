@@ -23,7 +23,9 @@ hl.exec_cmd(cmd, { workspace = "empty" }), sent with `hyprctl eval`.
 An app with a window already open is focused on its own workspace instead
 of being started again (a single-instance app would otherwise put a second
 window next to the one the user is looking at). Terminals, and `--new`,
-always start a new one. Apps that bypass the token (D-Bus activated ones,
+always start a new one. An app started under 30 s ago that has no window
+yet is left to finish starting rather than started twice. Apps that bypass
+the token (D-Bus activated ones,
 or a running instance that opens the window itself) still land on a new
 screen: a launch from a screen that holds windows first switches to an
 empty workspace, and the window maps there.
@@ -40,6 +42,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 
 HYPRCTL = os.environ.get("OMAMOBILE_HYPRCTL", "hyprctl")
 # The launch rule: windows of the started process open on a new empty workspace.
@@ -377,6 +380,39 @@ def remember(app_id):
         warn("recent apps not saved: %s" % error)
 
 
+# ---------------------------------------------------------------- starting apps
+
+# An app launched this long ago with no window yet is taken to be still
+# starting, and a second tap doesn't start it again. Chromium took over 20 s
+# to map its first window on markw, and a second tap meanwhile started a
+# second instance that opened a second window (device/markw, 2026-11-16).
+STARTING_S = 30
+
+
+def starting_path(app_id):
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+    return os.path.join(runtime, "omamobile-launch", "starting", app_id)
+
+
+def mark_starting(app_id):
+    """Best effort: never stops a launch."""
+    path = starting_path(app_id)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w"):
+            pass
+    except OSError as error:
+        warn("launch time not saved: %s" % error)
+
+
+def still_starting(app_id):
+    try:
+        age = time.time() - os.stat(starting_path(app_id)).st_mtime
+    except OSError:
+        return False
+    return 0 <= age < STARTING_S
+
+
 # ---------------------------------------------------------------- commands
 
 
@@ -389,14 +425,20 @@ def cmd_app(args):
     app_id = app_id_arg(args[0])
     remember(app_id)
     if not new:
-        window, _entry = window_for_app(app_id)
+        window, entry = window_for_app(app_id)
         if window and norm_address(window.get("address")):
             if focus_window(norm_address(window["address"])):
                 return 0
+        elif not is_terminal(entry) and still_starting(app_id):
+            warn("%s is still starting; not started again" % app_id)
+            return 0
     # Omarchy's own launch path (AppLibrary.launch): gtk-launch resolves the
     # entry, in a scope under app-graphical.slice. The suffix keeps ids such
     # as org.telegram.desktop resolving.
-    return 0 if launch(["uwsm-app", "--", "gtk-launch", app_id + ".desktop"]) else 1
+    if not launch(["uwsm-app", "--", "gtk-launch", app_id + ".desktop"]):
+        return 1
+    mark_starting(app_id)
+    return 0
 
 
 def cmd_cmd(args):
