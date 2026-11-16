@@ -1,0 +1,33 @@
+From: Omarchy Mobile <omamobile@localhost>
+Subject: [PATCH] arm64: dts: qcom: msm8953-xiaomi-markw: disable Venus
+
+The phone's own Venus firmware is rejected by the driver ("Unsupported
+property: 0"), and none ships in linux-firmware for msm8953, so the probe
+fails. venus_probe() has turned the core clocks on by then and its error
+path never turns them off, so they stay on for the whole boot. They are
+fed from the RPM XO clock, and with them on the apps side keeps XO in its
+RPM sleep set and the SoC never reaches VDD minimization in s2idle.
+
+Disable the node until there is firmware to run.
+
+---
+ arch/arm64/boot/dts/qcom/msm8953-xiaomi-markw.dts | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+--- a/arch/arm64/boot/dts/qcom/msm8953-xiaomi-markw.dts
++++ b/arch/arm64/boot/dts/qcom/msm8953-xiaomi-markw.dts
+@@ -331,6 +331,14 @@
+ 	};
+ };
+ 
++&venus {
++	/*
++	 * No Venus firmware this driver accepts ships with the phone, and a
++	 * failed probe leaves the Venus clocks on, which keeps XO running.
++	 */
++	status = "disabled";
++};
++
+ &wcd_codec {
+ 	/delete-property/ qcom,gnd-jack-type-normally-open;
+ 	qcom,mbhc-vthreshold-high = <75 225 450 510 540>;
