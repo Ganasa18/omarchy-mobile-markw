@@ -1,17 +1,18 @@
 <!-- SPDX-License-Identifier: MIT -->
 # markw: suspend (runbook)
 
-Status (2026-11-16): **s2idle reaches RPM VDD minimization.** On
-`7.1.3-msm8953-oma17` with Venus disabled, the CCI fix (0022) and the
-ipa2-lite clock gate (0024), a 60 s sleep with the modem booted and idle
-entered `vmin` three times (+61.2 s; runbook S). Patches 0017-0025 are
-adopted in `device/markw/kernel/patches/`; kernel `oma18` builds them all
-(with 0025 disabling Venus in the markw dts), and
-omamobile-device-markw 0.1.21 boots the modem idle at startup, since an
-unbooted modem holds XO. Neither is on the phone yet. Next: oma18 and
-0.1.21 on the phone, mobile data after a resume, the sleep current by
-the coulomb counter, then auto-suspend at boot after a soak. Auto-suspend
-stays off until then.
+Status (2026-11-16, later): **s2idle sleeps at about 11.6 mA.** On
+`7.1.3-msm8953-oma18` (patches 0017-0025, Venus disabled) with
+omamobile-device-markw 0.1.21 booting the modem idle, four guarded 240 s
+sleeps with the cable out spent 964 of about 976 s in RPM `vmin`, and the
+coulomb counter fell by 3153 uAh over 976 s: about 11.6 mA, against
+about 50 mA awake with the screen off (runbook T). Next: mobile data
+after a resume, longer sleeps and a soak, then auto-suspend at boot.
+Auto-suspend stays off until then.
+
+Earlier status (2026-11-16): s2idle reached RPM VDD minimization on
+oma17 with the CCI fix (0022) and the ipa2-lite clock gate (0024)
+loaded as modules (runbook S).
 
 Earlier status (2026-11-14): oma11 passed 8/8 attended s2idle cycles across two
 boots: six 20 s cycles on the first, then 20 s and 120 s on a fresh boot.
@@ -2070,3 +2071,40 @@ running modem logged "already running"); and the bring-up file
 | T1 | After the owner's go: `./DEBUGING_RUN.sh --restart --probe out/markw/probe-oma18/boot.img` | oma18, taint 512 (no E), modem `running` from the unit, rmtfs on RAM, partitions `ro=1`, no Venus device, CCI and IPA modules from the tree, display, Wi-Fi and sound | no SSH in 3 min, Oops, the modem crashing at boot | Power held about 30 s (MIUI), then the oma17 probe | low |
 | T2 | Two guarded 60 s sleeps, cable in | RTC wakes, CCI clocks 0 after each | a failure | as T1 | low |
 | T3 | Guarded 60 s sleep, cable out | `vmin` rises | no wake (Power held about 30 s) | as T1 | medium |
+
+#### Results T (2026-11-16, `7.1.3-msm8953-oma18`, probe-oma18)
+
+- T1 pass: `7.1.3-msm8953-oma18`, taint 0; `omamobile-markw-modem`,
+  `omamobile-markw-rmtfs` active, `4080000.remoteproc` `running` from
+  the unit (booted 21 s into the boot); eMMC `ro=1`; no Venus device;
+  `i2c-qcom-cci` and `ipa2-lite` from `kernel/`, no `updates/`; no Oops;
+  display connected, Wi-Fi connected, sound card present;
+  `gcc_camss_cci_clk` 0.
+- T2 pass: two guarded 60 s sleeps, cable in (charging): RTC wakes
+  (IRQ 73), success 0 -> 2, fail 0, taint 0, no new WARNING, watchdog
+  armed and disarmed each time, `gcc_camss_cci_clk` 0 and `ipa_clk` 1
+  after each. **`vmin` 0 -> 7, 121.8 s, with the charger in**: charging
+  doesn't hold XO.
+- **T3 pass, with the sleep current.** Cable out, detached test (four
+  sleeps of 240 s, each under its own watchdog feeder, `--seconds 300`
+  on `CLOCK_BOOTTIME`): four RTC wakes, success 2 -> 6, fail 0, taint 0,
+  no Oops, CCI 0 and `bi_tcxo` enable count 2 after each resume.
+  `vmin` 7 -> 46, +963.6 s of about 976 s asleep; APSS, MPSS, PRONTO
+  and LPASS each about +964 s of XO shutdown.
+
+  | Sleep | `charge_counter` (uAh) | Over | Average |
+  | --- | --- | --- | --- |
+  | 1 | 3388380 -> 3387623 | 244.0 s | 11.2 mA |
+  | 2 | 3387423 -> 3386636 | 244.3 s | 11.6 mA |
+  | 3 | 3386420 -> 3385655 | 245.3 s | 11.2 mA |
+  | 4 | 3385405 -> 3384561 | 243.9 s | 12.5 mA |
+
+  About 11.6 mA on average, resume included, against about 50 mA awake
+  with the screen off (battery control, 2026-11-14) and 46-62 mA read
+  between these sleeps. On the 4000 mAh design capacity that is about
+  340 h of sleep, if nothing wakes the phone. The counter's own error at
+  this size isn't known; a longer sleep will tell.
+
+Not yet tested: mobile data after a resume with the IPA clock gated,
+suspend with mobile data up, sleeps longer than 4 min, Wi-Fi and
+notifications across a sleep, and auto-suspend at boot.
