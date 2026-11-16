@@ -402,3 +402,27 @@ Read-only log every 15 s (status, current, the coulomb counter,
 
 The recharge cycling at full is the open item here: a 200 mV threshold
 (about 4.18 V) would stop it and keep the battery off its top.
+
+### Candidate: a 200 mV recharge threshold (oma19, 2026-11-16)
+
+Patch 0026 makes `qcom-smbchg` take the recharge threshold from the
+battery's `re-charge-voltage-microvolt`: 200 mV below float when that
+voltage is at least 200 mV below `voltage-max-design-microvolt`, else
+100 mV as before (the only two the charger offers, `CHGR_CFG` bit 0).
+Patch 0027 gives markw's battery node 4.18 V (4.38 V float less 200 mV).
+checkpatch `--strict`: 0/0/0 on both. Everything else as oma18.
+Built: `7.1.3-msm8953-oma19`, the same three W=1 warnings as oma18;
+probe `out/markw/probe-oma19/boot.img` (header and cmdline as oma11's,
+touchscreen and watchdog enabled as before), its DTB reads
+`/battery/re-charge-voltage-microvolt` 4180000; modules tarball
+`out/markw/modules-7.1.3-msm8953-oma19.tar.zst`. Not on the phone yet.
+
+On a laptop port the phone runs from USB and the battery rests at about
+4.20 V, so with 4.18 V it may sit below 100 % for hours before topping
+up: that is the intent (the owner's wish: down into the 90s, then back
+to 100).
+
+| Step | What | Expect / pass | Stop if | Rollback | Risk |
+| --- | --- | --- | --- | --- | --- |
+| R1 | After the overnight sleep on oma18, and the owner's go: modules to the phone, `./DEBUGING_RUN.sh --restart --probe out/markw/probe-oma19/boot.img` | oma19, the usual checks (modem, ModemManager, Wi-Fi, sound, eMMC `ro=1`); `CHGR_CFG` (0x10ff on the SMBCHG regmap) reads bit 0 set | no SSH in 3 min, Oops | Power held about 30 s (MIUI), then the oma18 probe | low |
+| R2 | Read-only log every 15 s, the cable in at full for 30 min (laptop, then wall) | after `Full`, no return to `Charging` until the battery is near 4.18 V; the LED stays green | battery past 40 degC | unplug; the oma18 probe | low |

@@ -1,0 +1,54 @@
+From: Omarchy Mobile <omamobile@localhost>
+Subject: [PATCH] power: supply: qcom-smbchg: take the recharge threshold from the battery
+
+smbchg_init() always sets the recharge threshold to 100 mV below the
+float voltage. A battery that has just terminated relaxes by about that
+much on its own, so on a phone left on the charger at full the charger
+restarts within a minute, tops up for a few seconds, terminates again,
+and so on: the status and the charge LED flicker between Full and
+Charging, and the battery is held at the very top of its charge.
+
+The charger also offers 200 mV. The battery's re-charge-voltage-microvolt
+(charge_restart_voltage_uv) says where charging should restart; take
+200 mV when that is at least 200 mV below voltage-max-design-microvolt,
+and keep 100 mV otherwise, as before.
+
+---
+ drivers/power/supply/qcom-smbchg.c |   17 ++++++++++++++---
+ 1 file changed, 14 insertions(+), 3 deletions(-)
+
+--- a/drivers/power/supply/qcom-smbchg.c
++++ b/drivers/power/supply/qcom-smbchg.c
+@@ -1467,7 +1467,7 @@
+  */
+ static int smbchg_init(struct smbchg_chip *chip)
+ {
+-	unsigned int value;
++	unsigned int value, rchg;
+ 	int ret;
+ 
+ 	/*
+@@ -1524,10 +1524,21 @@
+ 		msleep(200);
+ 	}
+ 
+-	/* Set recharge threshold to 100mV */
++	/*
++	 * Set the recharge threshold. The charger restarts charging either
++	 * 100 mV or 200 mV below the float voltage: take 200 mV when the
++	 * battery's re-charge voltage is at least that far below it, so that
++	 * a full battery left on the charger isn't topped up every minute.
++	 */
++	rchg = RCHG_THRESH_100MV;
++	if (chip->batt_info->charge_restart_voltage_uv > 0 &&
++	    chip->batt_info->voltage_max_design_uv > 0 &&
++	    chip->batt_info->voltage_max_design_uv -
++	    chip->batt_info->charge_restart_voltage_uv >= 200000)
++		rchg = RCHG_THRESH_200MV;
+ 	ret = qcom_pmic_sec_masked_write(chip->regmap,
+ 					 chip->base + SMBCHG_CHGR_CFG,
+-					 RCHG_LVL_BIT, RCHG_THRESH_100MV);
++					 RCHG_LVL_BIT, rchg);
+ 	if (ret)
+ 		return ret;
+ 
