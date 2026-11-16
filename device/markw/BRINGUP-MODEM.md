@@ -205,3 +205,18 @@ Results go here and in NOTES.md, with the date and `uname -r`.
 - The USB link dropped once, 50 s after the first crash (usb0 "Lost
   carrier", no role change, no kernel error) and came back on a replug;
   not shown to be related.
+
+## GPS through ModemManager, indoors (2026-11-16, oma18, device-markw 0.1.24)
+
+The modem reports `gps-raw`, `gps-nmea`, `agps-msa` and `agps-msb`
+(XTRA assistance, SUPL server preset). With the owner's go,
+`--location-enable-gps-nmea` for 10 minutes, the phone indoors near a
+window, mobile data off: NMEA every refresh (`GPGGA`, `GPRMC`, `GPVTG`,
+`GPGSA`, `GNGSA`, `GNGNS`), but `GSA` mode 1 with no satellites, no
+`GSV` sentence, `RMC` status `V`: the GNSS engine runs, no satellite was
+seen. Indoors that says nothing about the antenna; the next try is
+outdoors or at an open window, ideally with data on for XTRA. GPS was
+turned off after (`enabled: 3gpp-lac-ci` only). Coordinates are never
+logged. The quick settings Location tile drives omamobile-gnss (the
+Pixel's receiver); on markw the path would be GeoClue's `modem-gps`
+source over ModemManager, once a fix is shown.
