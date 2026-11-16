@@ -122,6 +122,38 @@ rt || fail "the rmtfs copy runs"
 echo 0 >"$fs/sys/devices/mmcblk1/mmcblk1p2/ro"
 rt && fail "a partition that isn't read-only is never read"
 pass "rmtfs: modem NV copied to RAM from read-only partitions only, unit not enabled"
+
+# The idle modem boot: enabled, after and requiring rmtfs on RAM copies,
+# the driver blacklisted from autoloading; the script on a fake sysfs.
+unit=vendor/systemd/system/omamobile-markw-modem.service
+[[ -x $tmp/root/usr/lib/omamobile/omamobile-markw-modem ]] || fail "the modem script is staged"
+[[ -L $tmp/root/usr/lib/systemd/system/multi-user.target.wants/omamobile-markw-modem.service ]] \
+  || fail "the modem unit is enabled"
+grep -qx 'blacklist qcom_q6v5_mss' "$tmp/root/usr/lib/modprobe.d/omamobile-markw-modem.conf" \
+  || fail "the modem driver is blacklisted from autoloading"
+grep -qx 'Requires=omamobile-markw-rmtfs.service' "$unit" || fail "the modem requires rmtfs on RAM copies"
+grep -q '^After=omamobile-markw-rmtfs.service' "$unit" || fail "the modem starts after rmtfs"
+grep -qx 'ConditionPathExists=/usr/bin/rmtfs' "$unit" || fail "the modem unit is skipped without rmtfs"
+grep -qi 'modemmanager' "$unit" && grep -qiE '^(Wants|Requires)=.*ModemManager' "$unit" && fail "the modem unit never starts ModemManager"
+md=$tmp/modem; mkdir -p "$md/sys/class/remoteproc/remoteproc0" "$md/sys/class/remoteproc/remoteproc2" "$md/bin"
+echo adsp >"$md/sys/class/remoteproc/remoteproc0/name"; echo running >"$md/sys/class/remoteproc/remoteproc0/state"
+echo 4080000.remoteproc >"$md/sys/class/remoteproc/remoteproc2/name"
+printf '#!/bin/sh\necho "$@" >>%s/modprobe.log\n' "$md" >"$md/bin/ok"; printf '#!/bin/sh\nexit 1\n' >"$md/bin/no"; chmod +x "$md/bin/ok" "$md/bin/no"
+mm() { OMAMOBILE_SYSFS=$md/sys OMAMOBILE_MODPROBE=$md/bin/$1 OMAMOBILE_MODEM_WAIT=1 bash vendor/omamobile-markw-modem "$2" 2>/dev/null; }
+st=$md/sys/class/remoteproc/remoteproc2/state
+echo running >"$st"; mm ok start || fail "a running modem is left alone"
+[[ $(cat "$st") == running ]] || fail "a running modem gets no second start"
+grep -qx qcom_q6v5_mss "$md/modprobe.log" || fail "start loads qcom_q6v5_mss"
+echo crashed >"$st"; mm ok start && fail "a modem in another state isn't started"
+echo offline >"$st"; mm no start && fail "a failed modprobe stops the start"
+[[ $(cat "$st") == offline ]] || fail "nothing is written after a failed modprobe"
+echo offline >"$st"; mm ok start && fail "a modem that never reaches running fails the unit"
+[[ $(cat "$st") == start ]] || fail "start writes start to the modem's state"
+echo offline >"$st"; mm ok stop || fail "stop leaves an offline modem alone"
+[[ $(cat "$st") == offline ]] || fail "an offline modem gets no stop"
+echo running >"$st"; mm ok stop && fail "a modem that never reaches offline fails the stop"
+[[ $(cat "$st") == stop ]] || fail "stop writes stop to a running modem"
+pass "modem: booted idle after rmtfs, enabled, driver blacklisted, script states"
 # USB rescue: a fake sysfs and configfs. The script must leave a working
 # link, a wall charger and the other roles alone, and rebind otherwise.
 [[ -x $tmp/root/usr/lib/omamobile/omamobile-markw-usb-rescue ]] || fail "the USB rescue is staged"

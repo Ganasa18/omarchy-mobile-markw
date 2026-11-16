@@ -1,0 +1,71 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Start or stop markw's modem (MPSS), idle. Mobile data stays off: this
+# only boots the modem, ModemManager is a separate choice.
+#
+# The modem is booted for power, not for data. A modem that never boots
+# never tells RPM it sleeps, so RPM keeps XO running and s2idle can't
+# reach VDD minimization (device/markw/BRINGUP-SUSPEND.md, runbooks N-S).
+# Once booted, an idle modem sleeps on its own.
+#
+# Its NV comes from RAM copies (omamobile-markw-rmtfs.service, which the
+# unit requires), so the eMMC is never written.
+#
+#   omamobile-markw-modem start|stop
+set -u
+sys=${OMAMOBILE_SYSFS:-/sys}
+modprobe=${OMAMOBILE_MODPROBE:-modprobe}
+wait_s=${OMAMOBILE_MODEM_WAIT:-30}
+
+say() { echo "omamobile-markw-modem: $*" >&2; }
+
+# The remoteproc directory of the modem, 4080000.remoteproc.
+modem() {
+  local r
+  for r in "$sys"/class/remoteproc/remoteproc*; do
+    [[ $(cat "$r/name" 2>/dev/null) == 4080000.remoteproc ]] && { echo "$r"; return 0; }
+  done
+  return 1
+}
+
+# Wait up to $wait_s seconds for the modem at $1 to read state $2.
+wait_state() {
+  local r=$1 want=$2 i
+  for ((i = 0; i < wait_s * 2; i++)); do
+    [[ $(cat "$r/state" 2>/dev/null) == "$want" ]] && return 0
+    sleep 0.5
+  done
+  return 1
+}
+
+case ${1:-} in
+  start)
+    # qcom_q6v5_mss is blacklisted from autoloading, so that nothing loads
+    # it before rmtfs has the NV copies ready.
+    "$modprobe" qcom_q6v5_mss || { say "could not load qcom_q6v5_mss"; exit 1; }
+    for ((i = 0; i < 20; i++)); do r=$(modem) && break; sleep 0.5; done
+    [[ -n ${r:-} ]] || { say "no modem remoteproc"; exit 1; }
+    case $(cat "$r/state") in
+      running) say "already running"; exit 0 ;;
+      offline) ;;
+      *) say "modem is $(cat "$r/state"), not starting it"; exit 1 ;;
+    esac
+    echo start >"$r/state" || { say "start refused"; exit 1; }
+    if wait_state "$r" running; then
+      say "modem running"
+    else
+      say "modem not running after ${wait_s} s ($(cat "$r/state"))"
+      exit 1
+    fi
+    ;;
+  stop)
+    r=$(modem) || exit 0
+    [[ $(cat "$r/state") == running ]] || exit 0
+    echo stop >"$r/state" || { say "stop refused"; exit 1; }
+    wait_state "$r" offline && say "modem stopped"
+    ;;
+  *)
+    echo "Usage: omamobile-markw-modem start|stop" >&2
+    exit 2
+    ;;
+esac
