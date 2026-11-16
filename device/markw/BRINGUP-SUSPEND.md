@@ -2117,9 +2117,12 @@ six suspend and resume cycles.
   answered in 0.04 s: the SIM had no data quota. Once the owner topped
   it up: ping 5/5 (average 105 ms), HTTPS 200, 1 MiB in 2.3 s (about
   450 KB/s), bound to `qmapmux0.0`.
-- With the cable in, `usb0`'s static default route (metric 1000) wins
-  over the bearer's (metric 20700), so the browser's traffic goes to the
-  laptop rather than the SIM. To fix in the package.
+- With the cable in, `usb0`'s static default route (metric 1000) won
+  over the bearer's (metric 20700), so the browser's traffic went to the
+  laptop. 20700 is NetworkManager's 700 for the gsm device plus its
+  20000 penalty for a failed connectivity check (no quota); once the
+  check passed the bearer's route was back at 700, ahead of `usb0`. No
+  change needed.
 - **U: data up across s2idle.** Cable out, detached, two guarded 120 s
   sleeps with the bearer connected: RTC wakes, success 6 -> 8, fail 0,
   taint 0, no Oops. After each resume the bearer was still connected,
