@@ -1953,3 +1953,33 @@ The modem is stopped again, partitions `ro=1`.
 | R1 | After the owner's go: reboot into the same oma17 probe | `modinfo -n i2c_qcom_cci` is the updates file; both camera sensors bound; taint adds E only | camera probe errors, Oops | delete the file, `depmod`, reboot | low |
 | R2 | Two guarded 60 s `rtcwake` sleeps, cable in | `gcc_camss_cci_clk` 0 after each | the count rises | as R1 | low |
 | R3 | Modem stopped, IPA unbound, modem started (as Q), then a guarded 60 s sleep, cable out | APSS `xo_count` rises; `vlow` above 0 if IPA was the last holder | no wake (Power held about 30 s) | as R1 | medium |
+
+#### Results R (2026-11-15/16, `7.1.3-msm8953-oma17` + 0022 module)
+
+- R1 pass: `i2c_qcom_cci` from `updates/` (taint 8704 = 512 + E for the
+  unsigned module), both camera sensors bound and runtime suspended, CCI
+  clocks 0.
+- R2 pass: two guarded 60 s `rtcwake` sleeps, cable in, RTC wakes (IRQ
+  72), success 0 -> 2, fail 0, no Oops or new WARNING;
+  `gcc_camss_cci_clk` 0 after each. 0022 fixes the leak.
+- **R3: the SoC reached VDD minimization for the first time.** IPA
+  unbound (`ipa_clk` 0), modem started without it, cable out, the boot's
+  third sleep (so the CCI fix was carrying it). Guarded 60 s sleep, RTC wake
+  (IRQ 72), success 2 -> 3, fail 0, no Oops. **`vmin` count 0 -> 4,
+  61.3 s accumulated**; `vlow` stayed 0 (on this RPM the deep mode taken
+  is `vmin`). APSS +61.4 s, MPSS +58.8 s, PRONTO +61.9 s and LPASS +61.8 s
+  of XO-off votes. P3 differed from R3 only in IPA (bound in P3), so
+  **ipa2-lite's always-on RPM clock was the last blocker**.
+- The modem then ran overnight without IPA (8 h 23 min, `running`, no
+  crash, partitions `ro=1`) and was stopped in the morning.
+
+What the deep sleep needed, in order of discovery: APSS's system-pc
+domain (0017), the codec mclk gated (0018), the MPM (0019-0021), a
+booted modem that idles, Venus disabled (failed probe leaks its clocks),
+the CCI resume leak fixed (0022), the vMPM wakeup time in s2idle (0023;
+not shown necessary on its own), and IPA's clock off.
+
+Next, one change per boot: ipa2-lite gating its clock when runtime
+suspended (its registers must not be touched then), Venus disabled in the
+markw dts, then the sleep current measured with the coulomb counter
+against the 52 mA of an awake, screen-off phone.
