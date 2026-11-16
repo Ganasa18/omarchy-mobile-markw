@@ -2105,6 +2105,38 @@ running modem logged "already running"); and the bring-up file
   340 h of sleep, if nothing wakes the phone. The counter's own error at
   this size isn't known; a longer sleep will tell.
 
-Not yet tested: mobile data after a resume with the IPA clock gated,
-suspend with mobile data up, sleeps longer than 4 min, Wi-Fi and
-notifications across a sleep, and auto-suspend at boot.
+### Mobile data around s2idle (2026-11-16, same oma18 boot)
+
+After T3, with the owner's go: `systemctl start ModemManager` (by hand,
+for this boot; the package doesn't start it) and the quick settings
+tile's gsm profile, Wi-Fi off. The bearer came up multiplexed on
+`qmapmux0.0`, so the IPA path that 0024 gates had already been through
+six suspend and resume cycles.
+
+- First, every TCP connection was refused while the carrier's DNS
+  answered in 0.04 s: the SIM had no data quota. Once the owner topped
+  it up: ping 5/5 (average 105 ms), HTTPS 200, 1 MiB in 2.3 s (about
+  450 KB/s), bound to `qmapmux0.0`.
+- With the cable in, `usb0`'s static default route (metric 1000) wins
+  over the bearer's (metric 20700), so the browser's traffic goes to the
+  laptop rather than the SIM. To fix in the package.
+- **U: data up across s2idle.** Cable out, detached, two guarded 120 s
+  sleeps with the bearer connected: RTC wakes, success 6 -> 8, fail 0,
+  taint 0, no Oops. After each resume the bearer was still connected,
+  ping 3/3 and HTTPS 200 at once (no reconnect). `ipa_clk` stayed 1
+  (0024 doesn't gate it while `rmnet_ipa0` is up, by design), and
+  **`vmin` didn't move** (46): with data up, XO stays on.
+
+  | Sleep | `charge_counter` (uAh) | Over | Average |
+  | --- | --- | --- | --- |
+  | 1 | 3474525 -> 3472736 | 122.8 s | 52.4 mA |
+  | 2 | 3472001 -> 3471017 | 122.7 s | 28.9 mA |
+
+  So with mobile data up, a sleep saves little (29-52 mA, against about
+  11.6 mA with it down and about 50 mA awake). Chromium was open on the
+  bearer throughout. Deep sleep with data up needs the IPA clock off
+  while the link is idle (as downstream's IPA does with its resource
+  manager), which 0024 doesn't attempt.
+
+Not yet tested: sleeps longer than 4 min, Wi-Fi and notifications
+across a sleep, and auto-suspend at boot.
