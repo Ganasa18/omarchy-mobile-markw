@@ -2162,7 +2162,29 @@ six suspend and resume cycles.
   down before a `systemctl suspend` when no link sits on it. Installed on
   the phone (2026-11-16, oma18); the boot with it is still to come.
 
-Not yet tested: 0.1.22 across a reboot (ModemManager from boot, the
-tile), the hook through a real `systemctl suspend`, sleeps longer than
-4 min, Wi-Fi and notifications across a sleep, and auto-suspend at
-boot.
+### 0.1.22 from boot, and `systemctl suspend` (2026-11-16, oma18)
+
+- Reboot into probe-oma18 with 0.1.22: ModemManager active from boot
+  (ordered after the modem unit), the gsm profile autoconnected (the
+  tile had been left on), route via `qmapmux0.0` at metric 700, ping
+  34 ms. Taint 512 this boot: two `clk-rcg2.c:136 update_config`
+  WARNINGs at 14.6 s while `panel_mdss_nt35596_ebbg` loaded (seen on
+  earlier boots; the first oma18 boot had none).
+- **W: the hook through `systemctl suspend`.** Data off by the tile,
+  `rmnet_ipa0` still up; cable out, detached, guarded, RTC alarm +120 s
+  then `systemctl suspend`. systemd-sleep froze `user.slice`, the hook
+  logged "rmnet_ipa0 down: no data link", RTC wake, success 0 -> 1,
+  fail 0. `vmin` +92.3 s of 117.5 s asleep; the counter fell 1364 uAh
+  over 121 s (about 35 mA asleep once 4 s awake are taken out). Data
+  had been turned off a minute before, so the radio was likely still
+  busy for the first 25 s; the overnight sleep will tell.
+- **X: Power-key wake.** Cable in, `systemctl suspend` with a 240 s RTC
+  backup alarm; the owner pressed Power about 2 min in: wake IRQ 69
+  (`pm8941_pwrkey`), success 1 -> 2, `vmin` +123 s with the charger in.
+  After the wake the BMI120 reads (z about -15255, face down) and
+  iio-sensor-proxy sees it. The rotation lock tile stays locked because
+  omamobile-sensors (`omamobile-autorotate`) isn't installed on markw:
+  not a suspend problem.
+
+Not yet tested: sleeps longer than 4 min, Wi-Fi and Bluetooth across a
+sleep, many cycles in a row, and auto-suspend at boot.
