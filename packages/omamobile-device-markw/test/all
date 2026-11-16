@@ -180,6 +180,24 @@ rm -r "$sl/sys/class/net/rmnet_ipa0"
 hk pre suspend || fail "the hook succeeds without rmnet_ipa0"
 [[ ! -e $sl/ip.log ]] || fail "no rmnet_ipa0, nothing to do"
 pass "ModemManager after the modem; the sleep hook drops an unused rmnet_ipa0"
+# Auto-rotate: omamobile-sensors' client, byte for byte, staged where its
+# wrapper looks, the user unit installed but not enabled (the tile does).
+if [[ -d ../omamobile-sensors ]]; then
+  cmp -s vendor/autorotate/autorotate.py ../omamobile-sensors/lib/autorotate.py \
+    && cmp -s vendor/autorotate/omamobile-autorotate ../omamobile-sensors/bin/omamobile-autorotate \
+    && cmp -s vendor/autorotate/omamobile-autorotate.service ../omamobile-sensors/systemd/omamobile-autorotate.service \
+    || fail "the auto-rotate files drifted from omamobile-sensors"
+fi
+[[ -x $tmp/root/usr/bin/omamobile-autorotate && -f $tmp/root/usr/lib/omamobile-sensors/autorotate.py ]] \
+  || fail "auto-rotate is staged"
+grep -q '/usr/lib/omamobile-sensors/autorotate.py' "$tmp/root/usr/bin/omamobile-autorotate" \
+  || fail "the auto-rotate wrapper finds its script"
+[[ -f $tmp/root/usr/lib/systemd/user/omamobile-autorotate.service ]] || fail "the auto-rotate user unit is staged"
+find "$tmp/root" -lname '*omamobile-autorotate.service' | grep -c . >/dev/null \
+  && fail "auto-rotate is turned on from the tile, never enabled"
+grep -q 'iio-sensor-proxy' PKGBUILD && grep -q 'conflicts=.*omamobile-sensors' PKGBUILD \
+  || fail "auto-rotate runs on iio-sensor-proxy, never next to omamobile-sensors"
+pass "auto-rotate: omamobile-sensors' client unchanged, not enabled"
 # USB rescue: a fake sysfs and configfs. The script must leave a working
 # link, a wall charger and the other roles alone, and rebind otherwise.
 [[ -x $tmp/root/usr/lib/omamobile/omamobile-markw-usb-rescue ]] || fail "the USB rescue is staged"

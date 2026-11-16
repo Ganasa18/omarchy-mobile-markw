@@ -64,6 +64,13 @@ install -Dm644 vendor/systemd/system/ModemManager.service.d/10-omamobile-markw.c
 ln -sf ../ModemManager.service \
   "$destination/usr/lib/systemd/system/multi-user.target.wants/ModemManager.service"
 install -Dm755 vendor/omamobile-markw-sleep "$destination/usr/lib/systemd/system-sleep/omamobile-markw"
+# Auto-rotate: omamobile-sensors' client, unchanged, against iio-sensor-proxy
+# (markw's BMI120 is a plain IIO device). Not enabled: the rotation lock
+# tile turns the user service on.
+install -Dm755 vendor/autorotate/omamobile-autorotate "$destination/usr/bin/omamobile-autorotate"
+install -Dm644 vendor/autorotate/autorotate.py "$destination/usr/lib/omamobile-sensors/autorotate.py"
+install -Dm644 vendor/autorotate/omamobile-autorotate.service \
+  "$destination/usr/lib/systemd/user/omamobile-autorotate.service"
 # Rebind the USB gadget when a computer's port gives no link after a role
 # change (device/markw/NOTES.md, 2026-11-06): started by udev, not enabled.
 install -Dm755 vendor/omamobile-markw-usb-rescue "$destination/usr/lib/omamobile/omamobile-markw-usb-rescue"
