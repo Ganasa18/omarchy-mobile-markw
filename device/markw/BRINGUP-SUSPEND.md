@@ -2208,5 +2208,15 @@ six suspend and resume cycles.
   ModemManager drop-in; installed on the phone, ModemManager running
   with it.
 
-Not yet tested: sleeps longer than 4 min, Bluetooth across a sleep, and
-auto-suspend at boot.
+- **Z: Bluetooth across three sleeps.** Cable in, detached, a guarded
+  30 s `systemctl suspend` each, a 10 s scan before and 5 s after each
+  wake (device counts only). All three passed (success 24 -> 27, fail 0,
+  every wake by the RTC). The controller stayed powered with `hci0`
+  present throughout, and a scan after the last wake heard 5 devices,
+  the same as before the first sleep (the in-test counts after the wakes
+  read 0-1 because they counted only devices BlueZ hadn't seen yet). The
+  only new kernel line is wcn36xx's usual `ERROR SMD_EVENT (312) not
+  supported`, once per sleep. Pairing across a sleep is untested.
+
+Not yet tested: sleeps longer than 4 min, pairing a device across a
+sleep, and auto-suspend at boot.
