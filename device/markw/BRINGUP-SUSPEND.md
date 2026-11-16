@@ -2218,5 +2218,14 @@ six suspend and resume cycles.
   only new kernel line is wcn36xx's usual `ERROR SMD_EVENT (312) not
   supported`, once per sleep. Pairing across a sleep is untested.
 
-Not yet tested: sleeps longer than 4 min, pairing a device across a
+- **BB: a `systemctl suspend` with no alarm (2026-11-16 evening).** Cable
+  out, data off, Wi-Fi on, detached. The owner woke it after 15.5 min
+  with Power (IRQ 69, confirmed by the owner); success 27 -> 28, fail 0,
+  taint 512 (boot WARNINGs only), no Oops. `charge_counter` 3680431 ->
+  3677295 uAh over 930.6 s: **12.1 mA**. `vmin` +895.4 s (96 % of the
+  sleep). The hook took `rmnet_ipa0` down, Wi-Fi reconnected, ping
+  45 ms. Auto-suspend being off, the phone then stayed awake overnight:
+  100 % to 85 %.
+
+Not yet tested: a sleep of hours on oma18, pairing a device across a
 sleep, and auto-suspend at boot.
