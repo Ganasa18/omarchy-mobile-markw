@@ -2194,5 +2194,19 @@ six suspend and resume cycles.
   it down at each sleep (logind's PrepareForSleep) and reconnected after;
   connected at the end, ping 46 ms.
 
+- **ModemManager lost the modem at the first `systemctl suspend`.**
+  `mmcli -L` found no modem after W (the remoteproc still `running`, the
+  QMI services still on QRTR). On logind's resume signal ModemManager
+  drops every modem and probes again, and the qcom-soc plugin never
+  finds this one again ("couldn't check support for device 'qcom-soc'").
+  U didn't see it: `rtcwake` alone sends no PrepareForSleep. ModemManager
+  1.24's `--test-quick-suspend-resume` keeps the modem across the sleep
+  and syncs it after: restarted with it, the modem came back, a guarded
+  30 s `systemctl suspend` ended with "resume synchronization state
+  (5/5): all done", the modem `registered`, and a connect afterwards
+  pinged (112 ms). omamobile-device-markw 0.1.24 sets the option in its
+  ModemManager drop-in; installed on the phone, ModemManager running
+  with it.
+
 Not yet tested: sleeps longer than 4 min, Bluetooth across a sleep, and
 auto-suspend at boot.
