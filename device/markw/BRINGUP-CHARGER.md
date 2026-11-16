@@ -381,3 +381,24 @@ status flips. J4 is the suspend measurement in BRINGUP-SUSPEND.md.
   status Full 15 times and Charging 21 times (about 100 mA in each
   Charging stretch), capacity 100 % in all 36. The monotonic SOC read
   99 %. The flicker is gone.
+
+## Wall charger and laptop at full (2026-11-16, `7.1.3-msm8953-oma18`)
+
+Read-only log every 15 s (status, current, the coulomb counter,
+`usb_type`, the LEDs), the battery at 100 % throughout.
+
+- Laptop port: `usb_type` `[SDP]`. Status alternated between `Full`
+  (battery current about -0.5 mA, the system on USB power) and short
+  `Charging` stretches at about 100-180 mA, about once a minute; the
+  counter rose slowly (+1.7 mAh in 7 min). No drain on the laptop at
+  full. The notification LED followed the status (green at `Full`, red
+  while `Charging`), so it flickers red at full: the 100 mV recharge
+  threshold noted above.
+- Wall charger: `usb_type` `[DCP]` within about 15 s of the plug, a
+  top-off taper from about 140 mA to 79 mA over 11 min (counter +15.3
+  mAh), then `Full` with the LED green. Temperature 30-31 degC.
+- Unplugged for the swap: `Discharging` at 52-66 mA (awake, screen on)
+  and both LEDs off.
+
+The recharge cycling at full is the open item here: a 200 mV threshold
+(about 4.18 V) would stop it and keep the battery off its top.
