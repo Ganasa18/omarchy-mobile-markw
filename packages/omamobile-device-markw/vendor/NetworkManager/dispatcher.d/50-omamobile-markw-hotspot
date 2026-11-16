@@ -1,0 +1,60 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# NetworkManager dispatcher: open ufw for a Wi-Fi hotspot while it is up.
+#
+# The quick settings Hotspot tile makes a NetworkManager connection with
+# ipv4.method shared: NetworkManager runs dnsmasq for DHCP and DNS on the
+# interface and masquerades its clients. Omarchy's ufw drops both: input
+# is deny by default, and forwarding is DROP. So while a shared
+# connection is up on an interface, accept DHCP and DNS from it and
+# forward from it to anything but usb0 (the laptop link); the replies go
+# through ufw's own RELATED,ESTABLISHED rule. The rules are runtime only,
+# in ufw's user chains, tagged with a comment: they go away when the
+# connection goes down, at a ufw reload, or at a reboot, and ufw's saved
+# rules are never touched.
+set -uo pipefail
+
+iptables=${OMAMOBILE_IPTABLES:-iptables}
+nmcli=${OMAMOBILE_NMCLI:-nmcli}
+iface=${1:-}
+action=${2:-}
+log() { echo "omamobile-markw-hotspot: $*"; }
+
+[[ -n $iface && $iface != none ]] || exit 0
+tag="omamobile-hotspot-$iface"
+rules=(
+  "ufw-user-input -i $iface -p udp --dport 67 -m comment --comment $tag -j ACCEPT"
+  "ufw-user-input -i $iface -p udp --dport 53 -m comment --comment $tag -j ACCEPT"
+  "ufw-user-input -i $iface -p tcp --dport 53 -m comment --comment $tag -j ACCEPT"
+  "ufw-user-forward -i $iface ! -o usb0 -m comment --comment $tag -j ACCEPT"
+)
+
+remove() {
+  local rule n=0
+  for rule in "${rules[@]}"; do
+    # shellcheck disable=SC2086 # each rule is a word list
+    while "$iptables" -w -D $rule 2>/dev/null; do n=$((n + 1)); done
+  done
+  (( n == 0 )) || log "$iface: removed $n hotspot rules"
+}
+
+shared() {
+  [[ -n ${CONNECTION_UUID:-} ]] || return 1
+  [[ $("$nmcli" -g ipv4.method connection show uuid "$CONNECTION_UUID" 2>/dev/null) == shared ]]
+}
+
+case $action in
+  up)
+    shared || exit 0
+    remove
+    for rule in "${rules[@]}"; do
+      # shellcheck disable=SC2086
+      "$iptables" -w -I $rule || { log "$iface: could not add: $rule"; remove; exit 0; }
+    done
+    log "$iface: hotspot up, DHCP, DNS and forwarding open on it"
+    ;;
+  down|pre-down)
+    remove
+    ;;
+esac
+exit 0

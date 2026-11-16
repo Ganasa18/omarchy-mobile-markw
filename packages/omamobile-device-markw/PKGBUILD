@@ -7,7 +7,8 @@ pkgdesc="Omarchy Mobile support for the Xiaomi Redmi 4 Prime (markw): storage gu
 arch=(aarch64)
 url="https://github.com/derekross/omarchy-mobile"
 license=(MIT)
-depends=(bash systemd iproute2 python python-gobject iio-sensor-proxy omamobile-keyring)
+# dnsmasq: NetworkManager's DHCP and DNS for the Hotspot tile.
+depends=(bash systemd iproute2 python python-gobject iio-sensor-proxy dnsmasq iptables omamobile-keyring)
 optdepends=('modemmanager: mobile data from the quick settings tile'
             'rmtfs: the idle modem boot')
 provides=(omamobile-device)

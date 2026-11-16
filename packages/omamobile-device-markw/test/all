@@ -244,6 +244,44 @@ rc=0; run_gnss force 2>/dev/null || rc=$?
 [[ $rc == 2 ]] || fail "unknown commands give usage"
 grep -q 'conflicts=.*omamobile-gnss' PKGBUILD || fail "omamobile-gnss (the Pixel's) conflicts"
 pass "the Location tile: omamobile-gnss over ModemManager's GPS, no position printed"
+# The Hotspot tile: a fake iptables that keeps a rule list, and a fake nmcli.
+hs=$tmp/root/usr/lib/NetworkManager/dispatcher.d/50-omamobile-markw-hotspot
+[[ -x $hs ]] || fail "the hotspot dispatcher script is staged and executable"
+bash -n "$hs" || fail "the hotspot dispatcher script parses"
+fakeipt=$tmp/iptables; iptrules=$tmp/ipt-rules; : >"$iptrules"
+cat >"$fakeipt" <<'EOF'
+#!/bin/bash
+[[ $1 == -w ]] || exit 9
+op=$2; shift 2; rule="$*"
+case $op in
+  -I) echo "$rule" >>"$IPTRULES" ;;
+  -D) grep -qxF -- "$rule" "$IPTRULES" || exit 1
+      awk -v r="$rule" 'done || $0 != r { print; next } { done = 1 }' "$IPTRULES" >"$IPTRULES.n" && mv "$IPTRULES.n" "$IPTRULES" ;;
+  *) exit 9 ;;
+esac
+EOF
+fakenm=$tmp/nmcli-hs
+printf '#!/bin/bash\n[[ "$*" == "-g ipv4.method connection show uuid $UUID_SHARED" ]] && echo shared || echo auto\n' >"$fakenm"
+chmod +x "$fakeipt" "$fakenm"
+run_hs() { OMAMOBILE_IPTABLES=$fakeipt OMAMOBILE_NMCLI=$fakenm IPTRULES=$iptrules UUID_SHARED=u-hot bash "$hs" "$@" >/dev/null; }
+CONNECTION_UUID=u-client run_hs wlan0 up
+[[ ! -s $iptrules ]] || fail "the hotspot rules stay off for a client Wi-Fi connection"
+CONNECTION_UUID=u-hot run_hs wlan0 up
+[[ $(wc -l <"$iptrules") == 4 ]] || fail "a shared connection opens four rules"
+grep -qxF 'ufw-user-input -i wlan0 -p udp --dport 67 -m comment --comment omamobile-hotspot-wlan0 -j ACCEPT' "$iptrules" \
+  || fail "DHCP is open on the hotspot"
+grep -qxF 'ufw-user-forward -i wlan0 ! -o usb0 -m comment --comment omamobile-hotspot-wlan0 -j ACCEPT' "$iptrules" \
+  || fail "forwarding from the hotspot never reaches usb0"
+grep -v -E -- '-i wlan0 ' "$iptrules" | grep -c . >/dev/null && fail "every hotspot rule is bound to its interface"
+CONNECTION_UUID=u-hot run_hs wlan0 up
+[[ $(wc -l <"$iptrules") == 4 ]] || fail "a second up does not add the rules twice"
+CONNECTION_UUID=u-hot run_hs wlan0 down
+[[ ! -s $iptrules ]] || fail "down removes every hotspot rule"
+run_hs wlan0 down && run_hs none up || fail "down without rules, and no interface, are fine"
+grep -v '^[[:space:]]*#' "$hs" | grep -c -E 'ufw (allow|route|insert|delete|reload)|ufw-user-input -[AP]|iptables-save|/etc/ufw' >/dev/null \
+  && fail "the hotspot script never changes ufw's saved rules"
+grep -q 'depends=.*dnsmasq' PKGBUILD || fail "the package pulls in dnsmasq for the hotspot's DHCP"
+pass "the Hotspot tile: ufw opens DHCP, DNS and forwarding only while a shared connection is up"
 # USB rescue: a fake sysfs and configfs. The script must leave a working
 # link, a wall charger and the other roles alone, and rebind otherwise.
 [[ -x $tmp/root/usr/lib/omamobile/omamobile-markw-usb-rescue ]] || fail "the USB rescue is staged"

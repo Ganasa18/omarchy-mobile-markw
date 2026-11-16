@@ -74,6 +74,10 @@ install -Dm644 vendor/autorotate/omamobile-autorotate.service \
 # The Location tile: omamobile-gnss's command line over the modem's GPS in
 # ModemManager. Off at every boot; the tile turns it on.
 install -Dm755 vendor/omamobile-gnss "$destination/usr/bin/omamobile-gnss"
+# The Hotspot tile: ufw opens DHCP, DNS and forwarding on a shared Wi-Fi
+# connection only while it is up (runtime rules, never saved).
+install -Dm755 vendor/NetworkManager/dispatcher.d/50-omamobile-markw-hotspot \
+  "$destination/usr/lib/NetworkManager/dispatcher.d/50-omamobile-markw-hotspot"
 # Rebind the USB gadget when a computer's port gives no link after a role
 # change (device/markw/NOTES.md, 2026-11-06): started by udev, not enabled.
 install -Dm755 vendor/omamobile-markw-usb-rescue "$destination/usr/lib/omamobile/omamobile-markw-usb-rescue"
