@@ -2052,3 +2052,21 @@ So the deep sleep needs, on top of the committed 0001-0021: Venus off,
 0022 (CCI), 0024 (IPA) and a booted modem. 0023 (the MPM wakeup time) is
 not proven necessary: P3 had it and no vmin because of IPA, and no run
 had IPA and CCI fixed without it.
+
+### Runbook T: oma18 and device-markw 0.1.21 (2026-11-16)
+
+oma18 built from the committed tree (0001-0025, the same three W=1
+warnings as before). Probe `out/markw/probe-oma18/boot.img`; its DTB
+matches the tested oma17 probe's except for the position of Venus'
+`status` property. Already on the phone: oma18's modules (820, no
+`updates/`); device-markw 0.1.21 (its modem unit is in
+`multi-user.target`'s wants, as the light unit; starting it by hand on a
+running modem logged "already running"); and the bring-up file
+`/etc/modprobe.d/omamobile-modem-bringup.conf`, deleted (the package's
+`/usr/lib/modprobe.d/omamobile-markw-modem.conf` replaces it).
+
+| Step | What | Expect / pass | Stop if | Rollback | Risk |
+| --- | --- | --- | --- | --- | --- |
+| T1 | After the owner's go: `./DEBUGING_RUN.sh --restart --probe out/markw/probe-oma18/boot.img` | oma18, taint 512 (no E), modem `running` from the unit, rmtfs on RAM, partitions `ro=1`, no Venus device, CCI and IPA modules from the tree, display, Wi-Fi and sound | no SSH in 3 min, Oops, the modem crashing at boot | Power held about 30 s (MIUI), then the oma17 probe | low |
+| T2 | Two guarded 60 s sleeps, cable in | RTC wakes, CCI clocks 0 after each | a failure | as T1 | low |
+| T3 | Guarded 60 s sleep, cable out | `vmin` rises | no wake (Power held about 30 s) | as T1 | medium |
