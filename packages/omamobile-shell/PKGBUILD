@@ -8,6 +8,7 @@ arch=(any)
 url="https://github.com/derekross/omarchy-mobile"
 license=(MIT GPL-3.0-or-later)  # GPL: the squeekboard layout
 depends=(omarchy omamobile-apps omamobile-omarchy omamobile-owl-widgets bash squeekboard bluez wf-recorder python python-dbus python-gobject
+         iw qrencode  # the hotspot page: AP and station checks, the join QR code
          pipewire-audio pipewire-pulse pipewire-alsa wireplumber
          inotify-tools qt6-declarative
          # Both are in Omarchy's base package list, which root images install.

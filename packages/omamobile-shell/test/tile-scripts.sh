@@ -92,6 +92,16 @@ for line in "powerprofiles autodetect power-saver" "idle allow-idle" "sit data o
 done
 pass "tile-action.sh drives battery saver, stay awake, mobile data and hotspot"
 
+# With omamobile-hotspot installed, the tile goes through it, both ways.
+stub omamobile-hotspot 'echo "hotspot-cmd $*" >>'"$log"
+run "$dir/tile-action.sh" hotspot on
+run "$dir/tile-action.sh" hotspot off
+grep -cxF "hotspot-cmd on" "$log" >/dev/null && grep -cxF "hotspot-cmd off" "$log" >/dev/null \
+  || fail "tile-action.sh hands the hotspot to omamobile-hotspot"
+[[ $(grep -c "nmcli device wifi hotspot" "$log") == 1 ]] || fail "omamobile-hotspot replaces nmcli's own hotspot"
+rm "$fake/omamobile-hotspot"
+pass "tile-action.sh uses omamobile-hotspot when it is installed"
+
 # Desktop: the probe asks omamobile-desktop-mode, the action hands over to it.
 stub omamobile-desktop-mode '[ "$1" = status ] && { echo desktop=off; exit 0; }; echo "desktop $*" >>'"$log"
 grep -cx "desktop=off" <<<"$(run "$dir/tile-state.sh")" >/dev/null || fail "tile-state.sh asks omamobile-desktop-mode"

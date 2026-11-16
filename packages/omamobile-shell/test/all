@@ -64,6 +64,10 @@ grep -c '^o.launch_on_start("ionice -c 3 nice -n 19 omamobile-prefetch --delay 4
 python3 -B -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' bin/omamobile-bt-agent || fail "omamobile-bt-agent parses"
 python3 -B test/bt-agent.py || fail "omamobile-bt-agent helpers"
 
+# The hotspot helper likewise (NetworkManager over D-Bus).
+python3 -B -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' bin/omamobile-hotspot || fail "omamobile-hotspot parses"
+python3 -B test/hotspot.py || fail "omamobile-hotspot helpers"
+
 # The fingerprint enrollment helper likewise (fprintd over D-Bus).
 python3 -B -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' bin/omamobile-fp-enroll || fail "omamobile-fp-enroll parses"
 python3 -B test/fp-enroll.py || fail "omamobile-fp-enroll helpers"

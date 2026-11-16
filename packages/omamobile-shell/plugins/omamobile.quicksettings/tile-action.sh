@@ -30,12 +30,17 @@ case $tile in
     exit 0
     ;;
   hotspot)
-    # NetworkManager makes (or reuses) a connection named "Hotspot" with a
-    # generated password; the Wi-Fi client link drops while it is up.
+    # omamobile-hotspot keeps the one "Hotspot" connection the page edits:
+    # it makes it on first use, keeps its name and password, and turns PMF
+    # off on a radio without BIP. Without it, NetworkManager makes (or
+    # reuses) the connection with a generated password. The Wi-Fi client
+    # link drops while it is up.
     if [ "$want" = on ]; then
       nmcli radio wifi on
+      command -v omamobile-hotspot >/dev/null 2>&1 && exec omamobile-hotspot on
       exec nmcli device wifi hotspot con-name Hotspot
     else
+      command -v omamobile-hotspot >/dev/null 2>&1 && exec omamobile-hotspot off
       exec nmcli connection down Hotspot
     fi
     ;;

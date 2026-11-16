@@ -1,0 +1,314 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: MIT
+"""omamobile-hotspot: the Wi-Fi hotspot behind the quick settings tile and its page.
+
+  omamobile-hotspot status --json   on, name, password, security, clients and a
+                                    join QR code (a PNG in $XDG_RUNTIME_DIR)
+  omamobile-hotspot on              start it (made on first use)
+  omamobile-hotspot off             stop it
+  omamobile-hotspot set             a new name and/or password, one JSON line on
+                                    stdin: {"name": "...", "password": "..."};
+                                    a running hotspot restarts with them
+
+One NetworkManager connection named "Hotspot" (the name the tile always
+used): an access point with WPA2-PSK and ipv4.method shared. The password
+moves over D-Bus and stdin only, never in a command line. qrencode reads
+the QR text on stdin.
+
+Protected management frames need the BIP cipher (AES-128-CMAC). A radio
+without it (wcn36xx on the Redmi 4 Prime) fails to start an access point
+with PMF optional, NetworkManager's default ("key setting validation
+failed"), so PMF is turned off for the hotspot on such a radio.
+"""
+
+import hashlib
+import json
+import os
+import secrets
+import socket
+import subprocess
+import sys
+
+CONNECTION_ID = "Hotspot"
+BIP_CIPHER = "00-0f-ac:6"   # AES-128-CMAC
+PMF_DEFAULT, PMF_DISABLE = 0, 1
+PASSWORD_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
+
+
+# ---------------------------------------------------------------- pure helpers
+
+def check_name(name):
+    """An error for an SSID that can't be used, or ""."""
+    if not isinstance(name, str) or name.strip() == "":
+        return "Enter a name"
+    if len(name.encode("utf-8")) > 32:
+        return "Names are at most 32 bytes"
+    return ""
+
+
+def check_password(password):
+    """An error for a WPA2 passphrase that can't be used, or ""."""
+    if not isinstance(password, str) or len(password) < 8:
+        return "At least 8 characters"
+    if len(password) > 63:
+        return "At most 63 characters"
+    if any(ord(c) < 32 or ord(c) > 126 for c in password):
+        return "Letters, digits and symbols only"
+    return ""
+
+
+def qr_text(name, password):
+    """The Wi-Fi join text phones' cameras read (ZXing's WIFI: format)."""
+    def esc(value):
+        return "".join("\\" + c if c in '\\;,":' else c for c in value)
+    return "WIFI:T:WPA;S:%s;P:%s;;" % (esc(name), esc(password))
+
+
+def has_bip(iw_list):
+    """Whether `iw list` shows the BIP cipher that PMF needs."""
+    return BIP_CIPHER in iw_list or "CMAC" in iw_list
+
+
+def pmf_for(iw_list):
+    return PMF_DEFAULT if has_bip(iw_list) else PMF_DISABLE
+
+
+def default_name(hostname):
+    return ("Hotspot-" + hostname)[:32] if hostname else "Hotspot"
+
+
+def new_password():
+    return "".join(secrets.choice(PASSWORD_ALPHABET) for _ in range(12))
+
+
+def count_stations(station_dump):
+    return sum(1 for line in station_dump.splitlines() if line.startswith("Station "))
+
+
+def parse_set(line):
+    """The {"name", "password"} of a set request; ValueError with the reason."""
+    try:
+        data = json.loads(line)
+    except ValueError:
+        raise ValueError("Not JSON")
+    if not isinstance(data, dict):
+        raise ValueError("Not an object")
+    out = {}
+    if "name" in data:
+        error = check_name(data["name"])
+        if error:
+            raise ValueError(error)
+        out["name"] = data["name"]
+    if "password" in data:
+        error = check_password(data["password"])
+        if error:
+            raise ValueError(error)
+        out["password"] = data["password"]
+    if not out:
+        raise ValueError("Nothing to change")
+    return out
+
+
+# ---------------------------------------------------------------- the system
+
+def run(argv, stdin=None):
+    try:
+        result = subprocess.run(argv, input=stdin, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return 1, ""
+    return result.returncode, result.stdout
+
+
+def wifi_device():
+    """The first Wi-Fi interface NetworkManager manages, or ""."""
+    code, out = run(["nmcli", "-t", "-f", "DEVICE,TYPE", "device"])
+    for line in out.splitlines() if code == 0 else []:
+        device, _, kind = line.rpartition(":")
+        if kind == "wifi":
+            return device
+    return ""
+
+
+def supports_ap(device):
+    code, out = run(["nmcli", "-g", "WIFI-PROPERTIES.AP", "device", "show", device])
+    return code == 0 and out.strip() == "yes"
+
+
+def iw_list():
+    return run(["iw", "list"])[1]
+
+
+class NM:
+    """The few NetworkManager D-Bus calls this needs."""
+
+    def __init__(self):
+        import dbus
+        self.dbus = dbus
+        self.bus = dbus.SystemBus()
+        self.settings = dbus.Interface(
+            self.bus.get_object("org.freedesktop.NetworkManager", "/org/freedesktop/NetworkManager/Settings"),
+            "org.freedesktop.NetworkManager.Settings")
+
+    def connection(self, path):
+        return self.dbus.Interface(self.bus.get_object("org.freedesktop.NetworkManager", path),
+                                   "org.freedesktop.NetworkManager.Settings.Connection")
+
+    def find(self):
+        """(path, settings) of the hotspot connection, or (None, None)."""
+        for path in self.settings.ListConnections():
+            settings = self.connection(path).GetSettings()
+            if str(settings.get("connection", {}).get("id", "")) == CONNECTION_ID:
+                return path, settings
+        return None, None
+
+    def password(self, path):
+        try:
+            got = self.connection(path).GetSecrets("802-11-wireless-security")
+        except self.dbus.DBusException:
+            return ""
+        return str(got.get("802-11-wireless-security", {}).get("psk", ""))
+
+    def ssid_bytes(self, name):
+        return self.dbus.Array([self.dbus.Byte(b) for b in name.encode("utf-8")], signature="y")
+
+    def add(self, name, password, pmf):
+        d = self.dbus
+        settings = {
+            "connection": {"id": CONNECTION_ID, "type": "802-11-wireless", "autoconnect": d.Boolean(False)},
+            "802-11-wireless": {"ssid": self.ssid_bytes(name), "mode": "ap", "band": "bg"},
+            "802-11-wireless-security": {
+                "key-mgmt": "wpa-psk", "proto": d.Array(["rsn"], signature="s"),
+                "pairwise": d.Array(["ccmp"], signature="s"), "group": d.Array(["ccmp"], signature="s"),
+                "psk": password, "pmf": d.Int32(pmf)},
+            "ipv4": {"method": "shared"},
+            "ipv6": {"method": "ignore"},
+        }
+        return self.settings.AddConnection(settings)
+
+    def update(self, path, settings, name=None, password=None, pmf=None):
+        """Change the name, password or PMF and keep everything else."""
+        d = self.dbus
+        settings = d.Dictionary({k: d.Dictionary(v, signature="sv") for k, v in settings.items()}, signature="sa{sv}")
+        # Deprecated address lists come back with GetSettings; NetworkManager
+        # rejects them next to address-data.
+        for family in ("ipv4", "ipv6"):
+            for key in ("addresses", "routes"):
+                settings.get(family, {}).pop(key, None)
+        sec = settings.setdefault("802-11-wireless-security", d.Dictionary({}, signature="sv"))
+        if name is not None:
+            settings["802-11-wireless"]["ssid"] = self.ssid_bytes(name)
+        sec["psk"] = password if password is not None else self.password(path)
+        if pmf is not None:
+            sec["pmf"] = d.Int32(pmf)
+        self.connection(path).Update(settings)
+
+
+def active_uuid():
+    code, out = run(["nmcli", "-t", "-f", "NAME,UUID", "connection", "show", "--active"])
+    for line in out.splitlines() if code == 0 else []:
+        name, _, uuid = line.rpartition(":")
+        if name == CONNECTION_ID:
+            return uuid
+    return ""
+
+
+def ensure(nm):
+    """The hotspot's D-Bus path, made with a fresh name and password if missing,
+    with PMF set for this radio."""
+    pmf = pmf_for(iw_list())
+    path, settings = nm.find()
+    if path is None:
+        return nm.add(default_name(socket.gethostname()), new_password(), pmf)
+    current = int(settings.get("802-11-wireless-security", {}).get("pmf", 0))
+    if pmf == PMF_DISABLE and current != PMF_DISABLE:
+        nm.update(path, settings, pmf=pmf)
+    return path
+
+
+def qr_png(text):
+    """A PNG of the join code in the runtime directory, named by its content."""
+    base = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp", "omamobile-hotspot")
+    os.makedirs(base, mode=0o700, exist_ok=True)
+    os.chmod(base, 0o700)
+    target = os.path.join(base, hashlib.sha256(text.encode()).hexdigest()[:16] + ".png")
+    if not os.path.exists(target):
+        for old in os.listdir(base):
+            if old.endswith(".png"):
+                os.unlink(os.path.join(base, old))
+        old_umask = os.umask(0o077)
+        try:
+            code, _ = run(["qrencode", "-t", "PNG", "-s", "10", "-m", "2", "-o", target], stdin=text)
+        finally:
+            os.umask(old_umask)
+        if code != 0:
+            return ""
+    return target
+
+
+def status():
+    device = wifi_device()
+    out = {"available": bool(device) and supports_ap(device), "device": device, "on": False,
+           "name": "", "password": "", "security": "WPA2", "clients": None, "qr": ""}
+    try:
+        nm = NM()
+        path, settings = nm.find()
+    except Exception:          # no D-Bus, no NetworkManager
+        return out
+    if path is not None:
+        out["name"] = bytes(settings.get("802-11-wireless", {}).get("ssid", [])).decode("utf-8", "replace")
+        out["password"] = nm.password(path)
+        out["on"] = active_uuid() == str(settings["connection"].get("uuid", ""))
+        if out["name"] and out["password"]:
+            out["qr"] = qr_png(qr_text(out["name"], out["password"]))
+    if out["on"] and device:
+        code, dump = run(["iw", "dev", device, "station", "dump"])
+        out["clients"] = count_stations(dump) if code == 0 else None
+    return out
+
+
+def up(nm, path):
+    device = wifi_device()
+    if not device:
+        raise RuntimeError("No Wi-Fi radio")
+    uuid = str(nm.connection(path).GetSettings()["connection"]["uuid"])
+    code, _ = run(["nmcli", "connection", "up", "uuid", uuid, "ifname", device])
+    if code != 0:
+        raise RuntimeError("The hotspot didn't start")
+
+
+def main(argv):
+    command = argv[1] if len(argv) > 1 else ""
+    try:
+        if command == "status":
+            print(json.dumps(status(), separators=(",", ":")))
+            return 0
+        if command == "on":
+            nm = NM()
+            up(nm, ensure(nm))
+            return 0
+        if command == "off":
+            uuid = active_uuid()
+            if uuid:
+                run(["nmcli", "connection", "down", "uuid", uuid])
+            return 0
+        if command == "set":
+            change = parse_set(sys.stdin.readline())
+            nm = NM()
+            path = ensure(nm)
+            _, settings = nm.find()
+            nm.update(path, settings, name=change.get("name"), password=change.get("password"))
+            if active_uuid():
+                up(nm, path)   # up again on an active connection restarts it
+            return 0
+    except (ValueError, RuntimeError) as error:
+        print(str(error), file=sys.stderr)
+        return 1
+    except Exception as error:   # D-Bus refusals: say what, not a traceback
+        print("NetworkManager refused: %s" % getattr(error, "get_dbus_message", lambda: error)(), file=sys.stderr)
+        return 1
+    print(__doc__.split("\n\n")[1], file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
