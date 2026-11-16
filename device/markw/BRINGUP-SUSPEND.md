@@ -1983,3 +1983,38 @@ Next, one change per boot: ipa2-lite gating its clock when runtime
 suspended (its registers must not be touched then), Venus disabled in the
 markw dts, then the sleep current measured with the coulomb counter
 against the 52 mA of an awake, screen-off phone.
+
+### Candidate 0024: ipa2-lite turns its clock off in system suspend (2026-11-16)
+
+`device/markw/kernel/candidates/0024-net-ipa2-lite-turn-the-IPA-clock-off-across-system-suspend.patch`.
+Runtime gating would need a reference on every register path. Several
+paths touch the hardware without one: probe, the uC commands and SRAM
+setup when the modem starts, the SSR notifier, and both IRQ handlers.
+So the clock goes off only in system suspend:
+
+- `ipa_system_suspend()` stops the netdevs as before. Then, when the
+  modem netdev isn't running (mobile data down), it disables both IPA
+  IRQs and turns the clock off.
+- `ipa_system_resume()` turns the clock on, then the IRQs, then reopens
+  the netdevs.
+- The SSR notifier (modem stop, crash or start) runs from
+  `rproc_recovery_wq`, which is `WQ_FREEZABLE`, so it can't run during
+  the sleep.
+- It can't be done in the noirq phase. Turning the clock off is an SMD
+  request to RPM, and the SMD edge IRQ (no `IRQF_NO_SUSPEND`) that
+  carries RPM's ack is off by then.
+- With mobile data up, the clock stays on; that case needs the modem to
+  reach the IPA during the sleep and is left for later.
+
+W=1 no warning, checkpatch `--strict` 0/0/0. Module built against oma17
+(unsigned; `KBUILD_MODPOST_WARN=1`, since the out tree's Module.symvers
+lists only vmlinux after the single-module builds; MODVERSIONS is off):
+`out/markw/ipa2-lite-gate-oma17.ko`.
+
+### Runbook S: the IPA clock gate (same oma17 boot, no reboot)
+
+| Step | What | Expect / pass | Stop if | Rollback | Risk |
+| --- | --- | --- | --- | --- | --- |
+| S1 | Modem `offline`, IPA unbound: `rmmod ipa2_lite`, install the module as `updates/ipa2-lite.ko`, `depmod`, `modprobe ipa2_lite` | `7900000.ipa` bound, `ipa_clk` 1, taint E only, no Oops | probe error, hang | reboot (the module stays in `updates/`: delete it and `depmod` first) | low |
+| S2 | Modem started as N2 | `running`, `rmnet_ipa0` and `ipa_lan0` back, QRTR IPA service listed | modem crash | `echo stop`, reboot | low |
+| S3 | Guarded 60 s sleep, cable out, two beeps after it | RTC wake; `ipa_clk` 1 again afterwards; **`vmin` rises**; `rmnet_ipa0` still there | no wake (Power held about 30 s) | as S1 | medium |
