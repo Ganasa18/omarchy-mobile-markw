@@ -2018,3 +2018,25 @@ lists only vmlinux after the single-module builds; MODVERSIONS is off):
 | S1 | Modem `offline`, IPA unbound: `rmmod ipa2_lite`, install the module as `updates/ipa2-lite.ko`, `depmod`, `modprobe ipa2_lite` | `7900000.ipa` bound, `ipa_clk` 1, taint E only, no Oops | probe error, hang | reboot (the module stays in `updates/`: delete it and `depmod` first) | low |
 | S2 | Modem started as N2 | `running`, `rmnet_ipa0` and `ipa_lan0` back, QRTR IPA service listed | modem crash | `echo stop`, reboot | low |
 | S3 | Guarded 60 s sleep, cable out, two beeps after it | RTC wake; `ipa_clk` 1 again afterwards; **`vmin` rises**; `rmnet_ipa0` still there | no wake (Power held about 30 s) | as S1 | medium |
+
+#### Results S (2026-11-16, `7.1.3-msm8953-oma17` + 0022 and 0024 modules)
+
+- S1 pass: with the modem `offline` and IPA unbound, `rmmod ipa2_lite`,
+  the 0024 module in `updates/`, `modprobe`: `7900000.ipa` bound, runtime
+  suspended, `ipa_clk` 1, taint 8704 unchanged, no error.
+- S2 pass: modem `running` 1.2 s after `start`, `rmnet_ipa0` and
+  `ipa_lan0` back (down, no data), both IPA control services on QRTR,
+  partitions `ro=1`.
+- **S3 pass: VDD minimization with ipa2-lite bound.** Cable out, guarded
+  60 s sleep, RTC wake (IRQ 72), success 3 -> 4, fail 0, no Oops.
+  **`vmin` 4 -> 7, +61.2 s.** APSS, MPSS, PRONTO and LPASS all voted XO
+  off. After the resume `ipa_clk` is 1 again, the modem `running`, both
+  IPA netdevs present.
+- Not yet tested: mobile data after a resume with the clock gated (a
+  ModemManager connect), and suspend with mobile data up (clock kept on
+  by design).
+
+So the deep sleep needs, on top of the committed 0001-0021: Venus off,
+0022 (CCI), 0024 (IPA) and a booted modem. 0023 (the MPM wakeup time) is
+not proven necessary: P3 had it and no vmin because of IPA, and no run
+had IPA and CCI fixed without it.
