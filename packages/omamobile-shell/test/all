@@ -64,6 +64,15 @@ grep -c '^o.launch_on_start("ionice -c 3 nice -n 19 omamobile-prefetch --delay 4
 python3 -B -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' bin/omamobile-bt-agent || fail "omamobile-bt-agent parses"
 python3 -B test/bt-agent.py || fail "omamobile-bt-agent helpers"
 
+# Every Style.font token a plugin uses exists in Omarchy's Commons/Style.qml.
+# An unknown one is undefined at run time: the text falls back to the default
+# size with only a log warning (SshPanel's Style.font.small did, 0.2.42).
+fonts='baseSize body bodySmall caption display displayLarge family heading icon iconLarge iconSmall menuFamily resolvedFamily subtitle title'
+for token in $(grep -rhoE 'Style\.font\.[A-Za-z]+' plugins widgets 2>/dev/null | sort -u | sed 's/^Style\.font\.//'); do
+  [[ " $fonts " == *" $token "* ]] || fail "Style.font.$token is not an Omarchy font token"
+done
+pass "plugins use only Omarchy's font tokens"
+
 # The hotspot helper likewise (NetworkManager over D-Bus).
 python3 -B -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' bin/omamobile-hotspot || fail "omamobile-hotspot parses"
 python3 -B test/hotspot.py || fail "omamobile-hotspot helpers"
