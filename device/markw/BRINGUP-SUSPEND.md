@@ -1,7 +1,19 @@
 <!-- SPDX-License-Identifier: MIT -->
 # markw: suspend (runbook)
 
-Status (2026-11-14): oma11 passed 8/8 attended s2idle cycles across two
+Status (2026-11-16): **s2idle reaches RPM VDD minimization.** On
+`7.1.3-msm8953-oma17` with Venus disabled, the CCI fix (0022) and the
+ipa2-lite clock gate (0024), a 60 s sleep with the modem booted and idle
+entered `vmin` three times (+61.2 s; runbook S). Patches 0017-0025 are
+adopted in `device/markw/kernel/patches/`; kernel `oma18` builds them all
+(with 0025 disabling Venus in the markw dts), and
+omamobile-device-markw 0.1.21 boots the modem idle at startup, since an
+unbooted modem holds XO. Neither is on the phone yet. Next: oma18 and
+0.1.21 on the phone, mobile data after a resume, the sleep current by
+the coulomb counter, then auto-suspend at boot after a soak. Auto-suspend
+stays off until then.
+
+Earlier status (2026-11-14): oma11 passed 8/8 attended s2idle cycles across two
 boots: six 20 s cycles on the first, then 20 s and 120 s on a fresh boot.
 Neither boot restarted during these tests; fail stayed 0. Auto-suspend
 stays off. Earlier kernels also had passing boots, so longer sleeps and

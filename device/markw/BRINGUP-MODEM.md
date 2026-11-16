@@ -6,6 +6,15 @@ data over `qmapmux0.0` works but slowly (radio suspected). Next: a
 speed comparison with MIUI at the same spot, data with Wi-Fi off, then
 step 8 (packaging).
 
+Status (2026-11-16): step 8 in part. omamobile-device-markw 0.1.21 boots
+the modem idle at startup (`omamobile-markw-modem.service`, after the
+rmtfs RAM copies; ModemManager and so mobile data stay off), because
+s2idle reaches VDD minimization only with a booted, idle modem
+(BRINGUP-SUSPEND.md runbooks N-S). Not on the phone yet. ipa2-lite turns
+its clock off in suspend when mobile data is down (kernel patch 0024);
+mobile data after a resume is still to be tested. Fresh NV backup
+`20261115T150215Z-after-miui` (all six sums match).
+
 ## Scope (owner's decision, 2026-11-03)
 
 - **Mobile data only**: a SIM in the phone gives an internet connection,
