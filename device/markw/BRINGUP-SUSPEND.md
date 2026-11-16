@@ -2186,5 +2186,13 @@ six suspend and resume cycles.
   omamobile-sensors (`omamobile-autorotate`) isn't installed on markw:
   not a suspend problem.
 
-Not yet tested: sleeps longer than 4 min, Wi-Fi and Bluetooth across a
-sleep, many cycles in a row, and auto-suspend at boot.
+- **Y: 20 sleeps in a row.** Cable in, detached, each cycle under its
+  own watchdog feeder: RTC alarm +30 s, `systemctl suspend`, 5 s awake.
+  All 20 passed (success 2 -> 22, fail 0), every wake by the RTC, CCI 0
+  after each, taint 512 throughout (the boot WARNINGs only), no Oops.
+  `vmin` +544.7 s over the 20 sleeps. Wi-Fi was on: NetworkManager took
+  it down at each sleep (logind's PrepareForSleep) and reconnected after;
+  connected at the end, ping 46 ms.
+
+Not yet tested: sleeps longer than 4 min, Bluetooth across a sleep, and
+auto-suspend at boot.
