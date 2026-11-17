@@ -51,7 +51,10 @@ considered as an ext2 `/boot` for lk2nd's extlinux loader and rejected for
 now: it widens the allowlist by one partition for a convenience (boot
 entries) that the laptop-driven update in §5 already gives.
 
-The owner gives up MIUI's user data (agreed: OS on eMMC `userdata`, the
+The owner means to move to Omarchy for good and does not need MIUI's data
+(2026-11-17): MIUI stays only as a known-good system to fall back to (its
+modem stack, and a phone that boots without lk2nd), so §4 keeps the image
+and the rehearsal but not the data. The owner gives up MIUI's user data (agreed: OS on eMMC `userdata`, the
 microSD as extra storage). MIUI's apps and files on the phone are lost at P4
 unless the owner copies them off first.
 
@@ -313,9 +316,9 @@ answer is a refusal, not a warning.
    its log): it must skip them all and fall through, not hang.
 2. **Whether a late key reaches lk2nd's menu** after stock aboot (§3).
    Convenience only; the stock-fastboot route always works.
-3. Whether MIUI's `userdata` is encrypted (FDE); it does not change the plan
-   (P4 reformats it) but `fastboot erase` vs `format` in §4.2 depends on what
-   MIUI's first boot accepts.
+3. Whether MIUI's `userdata` is encrypted (FDE). Low priority: the owner
+   does not keep MIUI's data, P4 reformats it, and a restore that MIUI
+   rejects after `fastboot erase` is retried with `fastboot format`.
 4. **A boot loop with no laptop.** After P3, a Linux crash and watchdog
    reset boots Linux again through lk2nd, forever. Options: the initramfs
    counts failed boots on `userdata` and, after three, reboots with the
