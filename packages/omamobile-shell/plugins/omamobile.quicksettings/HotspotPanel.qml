@@ -192,8 +192,10 @@ Item {
       font.pixelSize: Style.font.body
     }
     Text {
-      anchors.right: chevron.left
-      anchors.rightMargin: row.tappable ? Style.spacing.md : 0
+      // Next to the chevron on a tappable row, else at the edge: the hidden
+      // chevron keeps its width, so nothing binds a width to implicitWidth.
+      anchors.right: row.tappable ? chevron.left : parent.right
+      anchors.rightMargin: row.tappable ? Style.spacing.md : root.pad
       anchors.verticalCenter: parent.verticalCenter
       width: Math.min(implicitWidth, row.width * 0.6)
       horizontalAlignment: Text.AlignRight
@@ -210,7 +212,6 @@ Item {
       anchors.right: parent.right
       anchors.rightMargin: root.pad
       anchors.verticalCenter: parent.verticalCenter
-      width: row.tappable ? implicitWidth : 0
       visible: row.tappable
       textFormat: Text.PlainText
       text: "󰅂"
