@@ -1,0 +1,203 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# tools/markw-install against a fake fastboot, a fake phone over SSH and
+# synthetic backups (no phone, nothing written): every refusal in
+# device/markw/BRINGUP-M9.md §7 refuses before any write, and the writes
+# that pass are exactly `flash boot` and `erase userdata`.
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
+bash -n tools/markw-install
+
+W=$(mktemp -d)
+trap 'rm -rf -- "$W"' EXIT
+pass=0
+ok() { pass=$((pass + 1)); echo "ok $pass - $*"; }
+fail() { echo "not ok - $*" >&2; exit 1; }
+
+# The tool with its lk2nd pin set to the fake lk2nd's checksum: the pin is a
+# constant on purpose, so the test edits a copy rather than the tool.
+head -c 368656 /dev/urandom > "$W/lk2nd.img"
+pin=$(sha256sum < "$W/lk2nd.img" | cut -d' ' -f1)
+sed "s/^LK2ND_SHA256=.*/LK2ND_SHA256=$pin/" tools/markw-install > "$W/markw-install"
+chmod +x "$W/markw-install"
+
+# --- Fake fastboot: answers from $FB_* and logs every call ---
+cat > "$W/fastboot" <<'EOF'
+#!/bin/bash
+echo "$*" >> "$CALLS"
+case $1 in
+  devices) case ${FB_MODE:-stock} in none) ;; two) printf 'A\tfastboot\nB\tfastboot\n' ;; *) printf 'X\tfastboot\n' ;; esac ;;
+  getvar)
+    case $2 in
+      product) echo "product: ${FB_PRODUCT-markw}" ;;
+      partition-size:lk2nd) case ${FB_MODE:-stock} in lk2nd) echo "partition-size:lk2nd: 0x80000" ;; odd) echo "partition-size:lk2nd: 0x100000" ;; *) echo "partition-size:lk2nd: " ;; esac ;;
+      battery-voltage) echo "battery-voltage: ${FB_BATTERY:-}" ;;
+    esac
+    echo "Finished. Total time: 0.001s" ;;
+  flash|erase|format|boot) echo "OKAY" ;;
+esac
+exit 0
+EOF
+chmod +x "$W/fastboot"
+
+# --- Fake phone: runs the command against a fake sysfs and /dev ---
+mkdir -p "$W/sys" "$W/dev"
+cat > "$W/ssh" <<'EOF'
+#!/bin/bash
+c="$*"
+[[ $c == "uname -r" ]] && { echo "${PHONE_RELEASE:-}"; exit 0; }
+[[ $c == *dmesg* ]] && { echo "${PHONE_OOPS:-0}"; exit 0; }
+c=${c//\/sys\/class\/block/$FSYS}; c=${c//\/dev\//$FDEV/}
+bash -c "$c"
+EOF
+chmod +x "$W/ssh"
+
+mkblk() { # NAME TYPE PARTNAME [FILE]
+  local d=${1%p*}
+  mkdir -p "$W/sys/$d/device" "$W/sys/$1"
+  echo "$2" > "$W/sys/$d/device/type"
+  echo "PARTNAME=$3" > "$W/sys/$1/uevent"
+  [[ -z ${4:-} ]] || cp "$4" "$W/dev/$1"
+}
+
+# --- Synthetic backups ---
+sums() { (cd "$1" && for f in "${@:2}"; do echo "$(sha256sum < "$f" | cut -d' ' -f1)  $f"; done) > "$1/phone-sums.txt"; cp "$1/phone-sums.txt" "$1/laptop-sums.txt"; }
+IB=$W/ib/20261117T003912Z; NV=$W/nv/20261117T030058Z-after-miui
+mkdir -p "$IB" "$NV"
+{ printf 'ANDROID!'; head -c 1000 /dev/urandom | tr -d 'k'; } > "$IB/boot.img"
+truncate -s 67108864 "$IB/boot.img"
+for f in recovery.img aboot.img abootbak.img gpt-primary.bin gpt-backup.bin; do head -c 4096 /dev/urandom > "$IB/$f"; done
+sums "$IB" boot.img recovery.img aboot.img abootbak.img gpt-primary.bin gpt-backup.bin
+for n in modemst1 modemst2 fsg fsc sec persist; do head -c 2048 /dev/urandom > "$NV/$n.img"; done
+sums "$NV" modemst1.img modemst2.img fsg.img fsc.img sec.img persist.img
+
+# --- A probe image with its build record ---
+P=$W/probe; mkdir -p "$P"
+{ printf 'ANDROID!'; head -c 200000 /dev/urandom; } > "$P/boot.img"
+echo "$(sha256sum < "$P/boot.img" | cut -d' ' -f1)  boot.img" > "$P/SHA256SUMS"
+echo "7.1.3-msm8953-oma99" > "$P/kernel.release"
+
+conf_open=$W/open.conf; conf_shut=$W/shut.conf
+echo BOOT_METHOD=lk2nd-emmc > "$conf_open"; echo BOOT_METHOD=ram-only > "$conf_shut"
+
+export CALLS=$W/calls FSYS=$W/sys FDEV=$W/dev
+export MARKW_FASTBOOT=$W/fastboot MARKW_SSH=$W/ssh MARKW_LK2ND=$W/lk2nd.img
+export MARKW_INSTALL_BACKUP=$IB MARKW_NV_BACKUP=$NV MARKW_INSTALL_STATE=$W/state
+writes() { grep -cE '^(flash|erase|format)' "$CALLS" 2>/dev/null || true; }
+
+run() { # EXPECT(0|1) CONF ARGS...: runs with fresh call log
+  local want=$1 conf=$2; shift 2
+  : > "$CALLS"
+  set +e
+  MARKW_DEVICE_CONF=$conf "$W/markw-install" "$@" > "$W/out" 2>&1 < "${STDIN:-/dev/null}"
+  local rc=$?
+  set -e
+  if [[ $want == 0 ]]; then
+    [[ $rc == 0 ]] || { cat "$W/out" >&2; fail "expected success: $*"; }
+  else
+    [[ $rc != 0 ]] || { cat "$W/out" >&2; fail "expected a refusal: $*"; }
+    [[ $(writes) == 0 ]] || fail "a refusal still wrote: $* ($(cat "$CALLS" | tr '\n' ';'))"
+  fi
+}
+says() { grep -q -- "$1" "$W/out" || { cat "$W/out" >&2; fail "output lacks '$1'"; }; }
+
+# --- The gate ---
+run 1 "$conf_shut" -y --battery-checked lk2nd; says "writes need lk2nd-emmc"; ok "ram-only descriptor refuses lk2nd"
+run 1 "$conf_shut" -y --battery-checked restore; ok "ram-only descriptor refuses restore"
+run 1 "$conf_shut" -y --battery-checked commit "$P/boot.img"; ok "ram-only descriptor refuses commit"
+run 0 "$conf_shut" -y --battery-checked --dry-run lk2nd
+says "DRY: .*flash boot"; [[ $(writes) == 0 ]] || fail "dry run wrote"; ok "dry run prints the write and writes nothing"
+
+# --- lk2nd (P3) ---
+run 0 "$conf_open" -y --battery-checked lk2nd
+grep -qx "flash boot $W/lk2nd.img" "$CALLS" || fail "lk2nd write missing"
+[[ $(writes) == 1 ]] || fail "lk2nd wrote more than once"; ok "lk2nd: one flash boot of the pinned image"
+FB_MODE=lk2nd run 1 "$conf_open" -y --battery-checked lk2nd; says "needs stock fastboot"; ok "lk2nd refused from lk2nd's fastboot"
+FB_PRODUCT=flame run 1 "$conf_open" -y --battery-checked lk2nd; says "not a markw"; ok "wrong phone refused"
+FB_PRODUCT= run 1 "$conf_open" -y --battery-checked lk2nd; ok "empty product refused"
+FB_MODE=two run 1 "$conf_open" -y --battery-checked lk2nd; says "found 2"; ok "two phones refused"
+FB_MODE=none run 1 "$conf_open" -y --battery-checked lk2nd; ok "no phone refused"
+FB_MODE=odd run 1 "$conf_open" -y --battery-checked lk2nd; says "unknown lk2nd"; ok "an lk2nd with another split refused"
+cp "$W/lk2nd.img" "$W/lk2nd.keep"; printf x >> "$W/lk2nd.img"
+run 1 "$conf_open" -y --battery-checked lk2nd; says "not the pinned"; ok "changed lk2nd refused"
+mv "$W/lk2nd.keep" "$W/lk2nd.img"
+
+# --- Battery ---
+run 1 "$conf_open" -y lk2nd; says "battery-checked"; ok "unknown battery refused without --battery-checked"
+FB_BATTERY=3600mV run 1 "$conf_open" -y lk2nd; says "3600 mV"; ok "low battery refused"
+FB_BATTERY=4100mV run 0 "$conf_open" -y lk2nd; ok "battery voltage from fastboot accepted"
+
+# --- Backups ---
+mv "$IB/boot.img" "$W/boot.keep"
+run 1 "$conf_open" -y --battery-checked lk2nd; says "boot.img missing"; ok "missing MIUI boot.img refused"
+mv "$W/boot.keep" "$IB/boot.img"
+cp "$IB/laptop-sums.txt" "$W/sums.keep"; sed -i '1s/^./0/' "$IB/laptop-sums.txt"
+run 1 "$conf_open" -y --battery-checked lk2nd; says "differ"; ok "phone and laptop sums that disagree refused"
+cp "$W/sums.keep" "$IB/laptop-sums.txt"
+cp "$IB/boot.img" "$W/boot.keep"; printf 'lk2nd' | dd of="$IB/boot.img" bs=1 seek=4096 conv=notrunc status=none
+run 1 "$conf_open" -y --battery-checked lk2nd; ok "a boot.img that changed after the backup refused"
+sums "$IB" boot.img recovery.img aboot.img abootbak.img gpt-primary.bin gpt-backup.bin
+run 1 "$conf_open" -y --battery-checked lk2nd; says "holds lk2nd"; ok "a backed-up boot.img holding lk2nd refused"
+cp "$W/boot.keep" "$IB/boot.img"; sums "$IB" boot.img recovery.img aboot.img abootbak.img gpt-primary.bin gpt-backup.bin
+printf x >> "$NV/persist.img"
+run 1 "$conf_open" -y --battery-checked lk2nd; says "persist.img does not match"; ok "an NV set that changed refused"
+sums "$NV" modemst1.img modemst2.img fsg.img fsc.img sec.img persist.img
+
+# --- Typed codename ---
+echo flame > "$W/typed"
+STDIN=$W/typed run 1 "$conf_open" --battery-checked lk2nd; says "nothing was written"; ok "a wrong typed codename refused"
+echo markw > "$W/typed"
+STDIN=$W/typed run 0 "$conf_open" --battery-checked lk2nd; ok "the typed codename accepted"
+
+# --- trial and commit (P6, updates) ---
+FB_MODE=lk2nd run 1 "$conf_open" -y --battery-checked commit "$P/boot.img"; says "no passed trial"; ok "commit without a trial refused"
+run 1 "$conf_shut" -y trial "$P/boot.img"; says "needs lk2nd fastboot"; ok "trial refused from stock fastboot"
+FB_MODE=lk2nd PHONE_RELEASE=7.1.3-msm8953-oma19 run 1 "$conf_shut" -y trial "$P/boot.img"
+says "expected 7.1.3-msm8953-oma99"; [[ ! -e $W/state/trial-* ]] || fail "failed trial left a record"
+ok "a trial that boots another kernel fails and records nothing"
+FB_MODE=lk2nd PHONE_RELEASE=7.1.3-msm8953-oma99 PHONE_OOPS=1 run 1 "$conf_shut" -y trial "$P/boot.img"; ok "a trial with an Oops fails"
+FB_MODE=lk2nd PHONE_RELEASE=7.1.3-msm8953-oma99 run 0 "$conf_shut" -y trial "$P/boot.img"
+grep -qx "boot $P/boot.img" "$CALLS" || fail "trial did not boot the image"
+[[ $(writes) == 0 ]] || fail "trial wrote"; ok "trial boots in RAM only, even at ram-only"
+run 1 "$conf_open" -y --battery-checked commit "$P/boot.img"; says "needs lk2nd fastboot"; ok "commit refused from stock fastboot"
+FB_MODE=lk2nd run 0 "$conf_open" -y --battery-checked commit "$P/boot.img"
+grep -qx "flash boot $P/boot.img" "$CALLS" || fail "commit write missing"; [[ $(writes) == 1 ]] || fail "commit wrote more"
+ok "commit after a trial: one flash boot through lk2nd"
+{ printf 'ANDROID!'; head -c 100 /dev/urandom; } > "$P/other.img"
+echo "$(sha256sum < "$P/other.img" | cut -d' ' -f1)  other.img" >> "$P/SHA256SUMS"
+FB_MODE=lk2nd run 1 "$conf_open" -y --battery-checked commit "$P/other.img"; ok "another image's trial does not count"
+printf x >> "$P/boot.img"
+FB_MODE=lk2nd run 1 "$conf_open" -y --battery-checked commit "$P/boot.img"; says "does not match"; ok "an image changed after its build refused"
+truncate -s 66584577 "$P/big.img"; printf 'ANDROID!' | dd of="$P/big.img" conv=notrunc status=none
+echo "$(sha256sum < "$P/big.img" | cut -d' ' -f1)  big.img" >> "$P/SHA256SUMS"
+FB_MODE=lk2nd run 1 "$conf_open" -y trial "$P/big.img"; says "larger than boot"; ok "an image too big for boot after lk2nd refused"
+
+# --- restore ---
+FB_MODE=lk2nd run 1 "$conf_open" -y --battery-checked restore; says "needs stock fastboot"; ok "restore refused through lk2nd (it would write at 512 KiB)"
+run 0 "$conf_open" -y --battery-checked restore
+[[ $(sed -n 's/^\(flash\|erase\)/&/p' "$CALLS" | tr '\n' ';') == "flash boot $IB/boot.img;erase userdata;" ]] || fail "restore writes: $(tr '\n' ';' < "$CALLS")"
+ok "restore: MIUI's boot.img, then erase userdata, nothing else"
+
+# --- verify (read-only, on the phone) ---
+{ head -c 524288 <(cat "$W/lk2nd.img" /dev/zero); cat "$P/other.img"; } > "$W/p21"
+mkblk mmcblk0p1 SD boot "$W/p21"      # a card partition named boot is not the eMMC
+run 1 "$conf_shut" -y verify "$P/other.img"; says "not found"; ok "verify ignores a boot partition on the microSD"
+mkblk mmcblk1p21 MMC boot "$W/p21"
+run 0 "$conf_shut" -y verify "$P/other.img"; says "mmcblk1p21"; ok "verify finds boot by PARTNAME on the eMMC"
+printf 'zz' | dd of="$W/dev/mmcblk1p21" bs=1 seek=524300 conv=notrunc status=none
+run 1 "$conf_shut" -y verify "$P/other.img"; says "not $P/other.img"; ok "verify catches a damaged image"
+printf 'zz' | dd of="$W/dev/mmcblk1p21" bs=1 seek=100 conv=notrunc status=none
+run 1 "$conf_shut" -y verify "$P/other.img"; says "pinned lk2nd"; ok "verify catches a damaged lk2nd"
+
+# --- The tool's own text ---
+n=$(grep -cE '"\$FASTBOOT" (flash|erase|format)' tools/markw-install)
+[[ $n == 2 ]] || fail "expected two fastboot writes in the tool, found $n"
+grep -qE '"\$FASTBOOT" flash boot "\$1"$' tools/markw-install || fail "flash target is not the constant boot"
+grep -qE '"\$FASTBOOT" erase userdata$' tools/markw-install || fail "erase target is not the constant userdata"
+! grep -nE 'DRY: .*(flash|erase) [a-z_]*\$' tools/markw-install || fail "a dry-run line takes a partition from a variable"
+ok "only two writes in the tool, both to constant partitions"
+run 1 "$conf_open" -y frobnicate; ok "unknown command refused"
+run 1 "$conf_open" -y lk2nd extra; ok "an argument where none is taken refused"
+run 1 "$conf_open" -y commit; ok "commit without an image refused"
+
+echo "ok - markw-install: $pass tests"

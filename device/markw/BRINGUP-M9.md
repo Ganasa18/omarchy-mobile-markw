@@ -167,7 +167,7 @@ lk2nd's fastboot.** The installed Linux never gets `boot` writable: its
 guard allows `userdata` alone, so a bug or a bad command on the phone
 cannot touch the boot chain.
 
-The transaction (`tools/markw-install update`, future):
+The transaction (`tools/markw-install trial IMG`, then `commit IMG`; steps 2 and 6 by hand for now):
 
 1. Build the new image with `tools/build-markw-probe --root-uuid <userdata
    UUID>`; record its SHA-256 and kernel release.
@@ -273,10 +273,27 @@ on all 49 partitions after the return to Linux.
 ### P2. Installer, offline
 
 - **Run:** `tools/markw-install` with its tests (§7) in WSL; `--dry-run`
-  against a fake fastboot and a loop-file eMMC.
+  against a fake fastboot and a fake phone.
 - **Expect:** every negative test refuses, dry run prints the exact
   commands and writes nothing.
 - **Stop:** any test fails. **Risk:** none (no phone).
+
+**Result (2026-11-17): passed.** `tools/markw-install` (check, lk2nd,
+trial, commit, verify, restore) and `tests/markw-install`, 42 tests in WSL
+against a fake fastboot, a fake phone over SSH (a fake sysfs and `/dev`)
+and synthetic backups. Every refusal of §7 refuses before any write: the
+`ram-only` descriptor (all writes; `--dry-run` only prints), a wrong or
+empty product, two phones or none, an lk2nd with another split, a changed
+lk2nd, an unknown or low battery, a missing or changed MIUI `boot.img`,
+sums that disagree, a backed-up `boot.img` holding lk2nd, a changed NV
+set, a wrong typed codename, `commit` with no passed `trial` (or a trial of
+another image, or one that booted another kernel or an Oops), an image
+changed after its build or too big for `boot` after lk2nd, `restore`
+through lk2nd (which would write MIUI's image at 512 KiB), and `verify`
+against a `boot` partition on the microSD. The tool holds exactly two
+fastboot writes, `flash boot` and `erase userdata`, both with constant
+names. P4 (format `userdata`) and P5 (root copy) are not in the tool yet:
+they need the initramfs's `EMMC_RW` first, and refuse by not existing.
 
 ### P3. lk2nd into `boot` (M10, write)
 

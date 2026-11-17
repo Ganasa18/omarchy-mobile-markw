@@ -1,0 +1,253 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# The Redmi 4 Prime (markw) persistent installer, from the laptop
+# (device/markw/BRINGUP-M9.md). It writes two things and nothing else:
+# the eMMC `boot` partition (lk2nd at its start, the Linux image after
+# lk2nd's 512 KiB) and, to go back to MIUI, `userdata` (erased). No command
+# takes a partition name.
+#
+#   tools/markw-install check            read-only: backups, pins, the phone
+#                                        in fastboot (stock or lk2nd)
+#   tools/markw-install lk2nd            stock fastboot: lk2nd into `boot` (P3)
+#   tools/markw-install trial IMG        lk2nd fastboot: boot IMG in RAM, wait
+#                                        for SSH and its kernel release (no write)
+#   tools/markw-install commit IMG       lk2nd fastboot: IMG after lk2nd, only
+#                                        once `trial IMG` passed (P6, updates)
+#   tools/markw-install verify IMG       Linux, read-only: `boot` holds the
+#                                        pinned lk2nd and IMG at 512 KiB
+#   tools/markw-install restore          stock fastboot: MIUI's backed-up
+#                                        boot.img into `boot`, `userdata` erased
+#
+# Options: --dry-run (print the fastboot writes instead of running them; the
+# checks still run), --battery-checked (the owner saw the charge at 50 % or
+# more on the phone before fastboot, which can't report it), -y (skip the
+# typed codename; tests only). Environment: MARKW_FASTBOOT, MARKW_SSH,
+# MARKW_LK2ND, MARKW_INSTALL_BACKUP, MARKW_NV_BACKUP, MARKW_DEVICE_CONF,
+# MARKW_INSTALL_STATE.
+#
+# Every write needs device/markw/device.conf at BOOT_METHOD=lk2nd-emmc, the
+# owner's go for the persistent install (the 90 % gate); at ram-only every
+# write is refused, and --dry-run only prints. A failed check is a refusal,
+# never a warning.
+set -euo pipefail
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+FASTBOOT=${MARKW_FASTBOOT:-fastboot}
+SSH=${MARKW_SSH:-$ROOT/tools/phone-ssh --fresh}
+LK2ND=${MARKW_LK2ND:-$HOME/android/markw/lk2nd-msm8953.img}
+REF=$HOME/android/reference/markw
+CONF=${MARKW_DEVICE_CONF:-$ROOT/device/markw/device.conf}
+STATE=${MARKW_INSTALL_STATE:-$ROOT/logs/markw-install}
+
+# Pins. lk2nd 23.1 (tag object 24d3f25), checked on the phone on 2026-11-17.
+LK2ND_SHA256=2170c90c4b28a0d6dd31ec942500dc1fc4da94a34dbfd0676238ba1de1353cfa
+LK2ND_SPLIT=0x80000          # lk2nd's own part of `boot` (512 KiB)
+BOOT_BYTES=67108864          # `boot` (p21), 64 MiB
+IMAGE_MAX=$((BOOT_BYTES - 524288))
+NV_PARTS="modemst1 modemst2 fsg fsc sec persist"
+
+dry=0 yes=0 battery=0 cmd="" img=""
+die() { echo "markw-install: $*" >&2; exit 1; }
+say() { echo "==> $*"; }
+usage() { sed -n '3,30p' "$0" | sed 's/^# \{0,1\}//'; }
+while (($#)); do
+  case $1 in
+    --dry-run) dry=1 ;;
+    --battery-checked) battery=1 ;;
+    -y) yes=1 ;;
+    -h|--help) usage; exit 0 ;;
+    -*) die "unknown option: $1" ;;
+    *) if [[ -z $cmd ]]; then cmd=$1; elif [[ -z $img ]]; then img=$1; else die "too many arguments"; fi ;;
+  esac
+  shift
+done
+[[ -n $cmd ]] || { usage; exit 2; }
+case $cmd in
+  check|lk2nd|restore) [[ -z $img ]] || die "$cmd takes no argument" ;;
+  trial|commit|verify) [[ -n $img ]] || die "$cmd needs an image" ;;
+  *) die "unknown command: $cmd" ;;
+esac
+
+mkdir -p "$STATE"
+log=$STATE/$(date -u +%Y%m%dT%H%M%SZ)-$cmd.log
+exec > >(tee -a "$log") 2>&1
+
+sha() { sha256sum < "$1" | cut -d' ' -f1; }
+size() { stat -c %s "$1"; }
+
+# --- Checks (read-only) ---
+
+# The gate: the descriptor must name the persistent method.
+gate() {
+  local m
+  m=$(sed -n 's/^BOOT_METHOD=//p' "$CONF")
+  [[ $m == lk2nd-emmc ]] && return 0
+  ((dry)) && { say "gate closed (BOOT_METHOD=$m): a dry run only prints"; return 0; }
+  die "$CONF has BOOT_METHOD=$m; writes need lk2nd-emmc (the owner's go, BRINGUP-M9 §1)"
+}
+
+# A sums file pair that agrees, and files that match it.
+check_sums() { # DIR FILE...
+  local d=$1 f want got; shift
+  [[ -f $d/phone-sums.txt && -f $d/laptop-sums.txt ]] || die "$d: phone-sums.txt and laptop-sums.txt needed"
+  for f in "$@"; do
+    [[ -s $d/$f ]] || die "$d/$f missing or empty"
+    want=$(awk -v f="$f" '$2 == f { print $1 }' "$d/phone-sums.txt")
+    [[ $want =~ ^[0-9a-f]{64}$ ]] || die "$d/phone-sums.txt: no sum for $f"
+    [[ $(awk -v f="$f" '$2 == f { print $1 }' "$d/laptop-sums.txt") == "$want" ]] \
+      || die "$d: phone and laptop sums differ for $f"
+    got=$(sha "$d/$f")
+    [[ $got == "$want" ]] || die "$d/$f does not match its sums"
+  done
+}
+
+newest() { # DIR [SUFFIX]: the newest backup set by its UTC name
+  local d
+  d=$(ls -1d "$1"/[0-9]*T[0-9]*Z${2:-}* 2>/dev/null | sort | tail -1) || true
+  [[ -n $d ]] || die "no backup set in $1"
+  echo "$d"
+}
+
+backups() {
+  local ib nv
+  ib=${MARKW_INSTALL_BACKUP:-$(newest "$REF/install-backup")}
+  check_sums "$ib" boot.img recovery.img aboot.img abootbak.img gpt-primary.bin gpt-backup.bin
+  [[ $(size "$ib/boot.img") == "$BOOT_BYTES" ]] || die "$ib/boot.img is not 64 MiB"
+  [[ $(head -c 8 "$ib/boot.img") == ANDROID! ]] || die "$ib/boot.img is not an Android boot image"
+  ! grep -aq lk2nd "$ib/boot.img" || die "$ib/boot.img holds lk2nd: not MIUI's original"
+  nv=${MARKW_NV_BACKUP:-$(newest "$REF/modem-backup")}
+  # shellcheck disable=SC2086
+  check_sums "$nv" $(printf '%s.img ' $NV_PARTS)
+  say "backups: $(basename "$ib") (boot), $(basename "$nv") (NV)"
+  BACKUP=$ib
+}
+
+lk2nd_pin() {
+  [[ -f $LK2ND ]] || die "$LK2ND missing"
+  [[ $(sha "$LK2ND") == "$LK2ND_SHA256" ]] || die "$LK2ND is not the pinned lk2nd 23.1"
+}
+
+image_ok() { # IMG: SHA256SUMS and kernel.release beside it
+  local d want
+  [[ -f $1 ]] || die "$1 missing"
+  d=$(dirname "$1")
+  [[ -f $d/SHA256SUMS && -s $d/kernel.release ]] || die "$d: SHA256SUMS and kernel.release needed"
+  want=$(awk -v f="$(basename "$1")" '$2 == f { print $1 }' "$d/SHA256SUMS")
+  [[ -n $want && $(sha "$1") == "$want" ]] || die "$1 does not match $d/SHA256SUMS"
+  [[ $(head -c 8 "$1") == ANDROID! ]] || die "$1 is not an Android boot image"
+  (( $(size "$1") <= IMAGE_MAX )) || die "$1 is larger than boot minus lk2nd ($IMAGE_MAX bytes)"
+  RELEASE=$(tr -d '\n' < "$d/kernel.release")
+  IMG_SHA=$want
+}
+
+getvar() { "$FASTBOOT" getvar "$1" 2>&1 | sed -n "s/^$1: *//p" | head -1 | tr -d '\r\t '; }
+
+# Exactly one markw in fastboot; FB is stock or lk2nd.
+phone() {
+  local n
+  n=$("$FASTBOOT" devices | grep -c . || true)
+  [[ $n == 1 ]] || die "expected one phone in fastboot, found $n"
+  [[ $(getvar product) == markw ]] || die "the phone in fastboot is not a markw"
+  case $(getvar partition-size:lk2nd) in
+    "") FB=stock ;;
+    "$LK2ND_SPLIT") FB=lk2nd ;;
+    *) die "lk2nd's partition is not 512 KiB: unknown lk2nd" ;;
+  esac
+  say "phone: markw, $FB fastboot"
+}
+
+need() { [[ $FB == "$1" ]] || die "$cmd needs $1 fastboot; this is $FB fastboot"; }
+
+charged() {
+  local mv
+  mv=$(getvar battery-voltage); mv=${mv%mV}
+  if [[ $mv =~ ^[0-9]+$ ]]; then
+    ((mv >= 3800)) || die "battery at $mv mV; charge it first"
+  else
+    ((battery)) || die "fastboot can't report the battery: check it is at 50 % or more, then --battery-checked"
+  fi
+}
+
+typed() {
+  ((yes)) && return 0
+  local a
+  printf '%s\nType the codename (markw) to go on: ' "$1"
+  read -r a
+  [[ $a == markw ]] || die "stopped; nothing was written"
+}
+
+# --- The only writes. Partition names are constants here. ---
+
+write_boot() { # IMG
+  if ((dry)); then echo "DRY: $FASTBOOT flash boot $1"; return 0; fi
+  "$FASTBOOT" flash boot "$1"
+}
+
+erase_userdata() {
+  if ((dry)); then echo "DRY: $FASTBOOT erase userdata"; return 0; fi
+  "$FASTBOOT" erase userdata
+}
+
+# --- Commands ---
+
+case $cmd in
+  check)
+    backups; lk2nd_pin
+    if "$FASTBOOT" devices | grep -q .; then phone; else say "no phone in fastboot (checks without it)"; fi
+    say "check passed" ;;
+
+  lk2nd)
+    gate; backups; lk2nd_pin; phone; need stock; charged
+    typed "lk2nd 23.1 goes to the start of boot; MIUI stops booting until restore."
+    write_boot "$LK2ND"
+    say "done: 'fastboot reboot' shows lk2nd's menu (no Linux image yet)" ;;
+
+  trial)
+    image_ok "$img"; phone; need lk2nd
+    ((dry)) && { echo "DRY: $FASTBOOT boot $img"; exit 0; }
+    "$FASTBOOT" boot "$img"
+    say "waiting for SSH and $RELEASE (up to 4 min)"
+    got=""
+    for _ in $(seq 1 48); do
+      sleep 5
+      got=$($SSH uname -r 2>/dev/null | tr -d '\r') || got=""
+      [[ -n $got ]] && break
+    done
+    [[ $got == "$RELEASE" ]] || die "trial failed: SSH answered '${got:-nothing}', expected $RELEASE"
+    oops=$($SSH 'dmesg | grep -cE "Oops|BUG:|Kernel panic"' | tr -d '\r') || oops=?
+    [[ $oops == 0 ]] || die "trial failed: $oops Oops/BUG lines"
+    echo "$RELEASE" > "$STATE/trial-$IMG_SHA"
+    say "trial passed: $RELEASE; now 'commit $img' from lk2nd fastboot" ;;
+
+  commit)
+    gate; image_ok "$img"
+    [[ -f $STATE/trial-$IMG_SHA && $(cat "$STATE/trial-$IMG_SHA") == "$RELEASE" ]] \
+      || die "no passed trial for this image: run 'trial $img' first"
+    backups; phone; need lk2nd; charged
+    typed "$RELEASE goes into boot after lk2nd's 512 KiB."
+    write_boot "$img"
+    echo "$IMG_SHA $RELEASE" >> "$STATE/committed"
+    say "done: cold boot it, then 'verify $img'" ;;
+
+  verify)
+    image_ok "$img"; lk2nd_pin
+    # Resolve `boot` by PARTNAME on the eMMC (type MMC), never by index.
+    dev=$($SSH 'for f in /sys/class/block/mmcblk*p*/uevent; do d=$(basename $(dirname $f)); grep -qx PARTNAME=boot $f && [ "$(cat /sys/class/block/${d%p*}/device/type)" = MMC ] && echo $d; done; true' | tr -d '\r')
+    [[ $dev =~ ^mmcblk[0-9]+p[0-9]+$ ]] || die "eMMC boot partition not found (got '$dev')"
+    n=$(size "$LK2ND")
+    a=$($SSH "head -c $n /dev/$dev | sha256sum" | cut -d' ' -f1)
+    [[ $a == "$LK2ND_SHA256" ]] || die "boot does not start with the pinned lk2nd"
+    n=$(size "$img")
+    b=$($SSH "dd if=/dev/$dev bs=512 skip=1024 status=none | head -c $n | sha256sum" | cut -d' ' -f1)
+    [[ $b == "$IMG_SHA" ]] || die "boot at 512 KiB is not $img"
+    say "verify passed: $dev holds lk2nd and $RELEASE" ;;
+
+  restore)
+    gate; backups; phone
+    # lk2nd's fastboot writes `boot` from 512 KiB: MIUI's image must go
+    # through the stock bootloader, which writes it from 0.
+    need stock; charged
+    typed "MIUI's boot.img goes back into boot, then userdata is erased (Linux is gone)."
+    write_boot "$BACKUP/boot.img"
+    erase_userdata
+    say "done: 'fastboot reboot' starts MIUI's first-boot setup; take an NV backup after it" ;;
+esac
