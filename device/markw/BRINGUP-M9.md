@@ -111,15 +111,38 @@ Read in the pinned source (tag `23.1`, tag object `24d3f25`, commit
 - **[V] Recovery buttons.** Volume Down + Power reaches stock fastboot
   ([BRINGUP-M1](BRINGUP-M1.md) §1) whatever `boot` holds, because aboot is
   never written. That is the floor every failure in §5 lands on.
-- **Initramfs changes (code, offline):** a new `BOOT_METHOD=lk2nd-emmc` in
-  `device.conf` and an `EMMC_RW="userdata"` allowlist (the Pixel `UFS_RW` is
-  untouched). `init` then finds the root by the UUID packed at build time
-  **and** checks that its block device is the eMMC partition whose
-  `PARTNAME` is `userdata` (by `/sys/class/block/*/uevent`, never by
-  `mmcblkN`: the eMMC was mmcblk0 on oma18 and mmcblk1 on oma19). Every other
-  eMMC partition and `boot0`/`boot1` get `blockdev --setro` as today. A UUID
-  found anywhere else stops the boot with a message rather than mounting it.
-  The microSD path (`ram-only`) stays as it is.
+- **Initramfs (written 2026-11-17, `tests/markw-probe`).** The descriptor
+  stays `ram-only` until the gate opens; the eMMC root is a build option,
+  `tools/build-markw-probe --root-uuid UUID --root-on emmc`, which packs
+  `/etc/omamobile-emmc-root` instead of `/etc/omamobile-sd-root` (both
+  packed: neither is used, every disk stays read-only). The build records
+  `root-on` beside the image, and `tools/markw-install` takes only an
+  `emmc` image. In this mode `init`'s guard allows:
+  - the eMMC (type MMC) partition whose `PARTNAME` is `userdata` **and**
+    whose file system carries the packed UUID: found by name and type, never
+    by `mmcblkN` (the eMMC was mmcblk1 at P0 and mmcblk0 after P1);
+  - that partition's whole disk, because the kernel refuses writes to a
+    partition of a read-only disk. Its node is removed, as the Pixel guard
+    does for `/dev/sda`, and in Arch `10-omamobile-storage.rules` (already
+    in device-markw) gives every eMMC node mode 0000 and hides it from
+    udisks. Root on the phone could still `mknod` the disk; no tool does.
+    This is the one deviation from "never allow a whole disk"
+    (ENGINEERING-PLAN §10), and the same one the Pixel path makes;
+  - the microSD card whole, as storage (its node kept).
+
+  Every other eMMC partition, `boot0` and `boot1` (whole disks of type MMC
+  with no partitions) get `blockdev --setro` as today; a card partition
+  named `userdata` with the UUID is storage, never the root; a `userdata`
+  with another UUID leaves the whole eMMC read-only and boots nothing. The
+  microSD-root mode is unchanged.
+- **Boot-loop guard (open question 4, decided).** In the eMMC mode the
+  initramfs counts a try in `/var/lib/omamobile/boot-tries` on the root
+  before each switch and drops a runtime unit into `/run/systemd/system`
+  (as it does for the 60 min deadman) that removes the count once
+  `graphical.target` is reached. At three uncleared tries it stays in the
+  initramfs with SSH up; with no USB host its keeper reboots to the
+  bootloader after 90 s, where stock fastboot waits. A count that isn't a
+  number counts as three.
 
 ## 4. The way back to MIUI
 
@@ -170,7 +193,7 @@ cannot touch the boot chain.
 The transaction (`tools/markw-install trial IMG`, then `commit IMG`; steps 2 and 6 by hand for now):
 
 1. Build the new image with `tools/build-markw-probe --root-uuid <userdata
-   UUID>`; record its SHA-256 and kernel release.
+   UUID> --root-on emmc`; it records its SHA-256, kernel release and root.
 2. Push the new modules to `/usr/lib/modules/<release>` on the running
    phone, next to the current release's (as `bin/omamobile push` does); the
    old release's modules stay.
@@ -305,17 +328,36 @@ they need the initramfs's `EMMC_RW` first, and refuse by not existing.
 
 ### P4. Format `userdata` (M10, write, MIUI data lost)
 
-- **Run:** RAM-boot the probe with `EMMC_RW=userdata`; the installer checks
-  `PARTNAME=userdata`, its size, that nothing is mounted, then
-  `mkfs.ext4 -L omamobile-root`; record the UUID.
+- **Run:** stock fastboot, `tools/markw-install format` (`fastboot
+  format:ext4 userdata`); then RAM-boot today's microSD probe and
+  `tools/markw-install uuid`, which reads the new file system's UUID
+  read-only (by `PARTNAME` and type) into `logs/markw-install/userdata-uuid`.
+- **Then:** build the eMMC image, `tools/build-markw-probe … --root-uuid
+  <that UUID> --root-on emmc`.
+- **[A]** Stock aboot supports `format` (it answers `partition-type` and
+  `partition-size`); if it doesn't, lk2nd's fastboot (the same Qualcomm
+  code) does, and `userdata` is not split by lk2nd.
 - **Stop:** any check fails. **Rollback:** §4.2 step 3. **Risk:** medium.
 
 ### P5. Root filesystem copy (M10)
 
-- **Run:** `rsync -aHAX` of the microSD root to `userdata`, with `fstab`
-  and the machine's identity files left as they are on the SD.
-- **Expect:** `rsync` exits 0; a second run copies nothing.
-- **Rollback:** reformat (P4). **Risk:** low.
+- **Run:** from lk2nd's fastboot, `fastboot boot` the eMMC image: with an
+  empty `userdata` its initramfs finds no systemd and stays, SSH up, with
+  `userdata` writable. Then `tools/markw-install copy`: on the phone it
+  mounts the microSD root read-only (the card's ext4 partition with
+  systemd), refuses an `/extlinux` there (§3), refuses a `userdata` that is
+  not empty or would be more than 90 % full, runs `rsync -aHAX
+  --numeric-ids` and a second dry pass that must find nothing. The root has
+  no `fstab` entries (the initramfs mounts it), so nothing in it names the
+  card.
+- **Size:** the microSD root holds 19 GB on 2026-11-17, 9.5 GB of it the
+  owner's Arduino and PlatformIO toolchains; `userdata` is 24.5 GiB, so about
+  5 GiB stay free. Moving those toolchains to the card before P5 is the
+  owner's call.
+- **Expect:** `copy done`; then `tools/markw-install trial IMG` reaches
+  systemd as PID 1 (an initramfs answering with the same kernel release
+  fails the trial).
+- **Rollback:** format again (P4). **Risk:** low.
 
 ### P6. Linux image into `boot` (M10, write)
 
@@ -365,9 +407,7 @@ answer is a refusal, not a warning.
 3. Whether MIUI's `userdata` is encrypted (FDE). Low priority: the owner
    does not keep MIUI's data, P4 reformats it, and a restore that MIUI
    rejects after `fastboot erase` is retried with `fastboot format`.
-4. **A boot loop with no laptop.** After P3, a Linux crash and watchdog
-   reset boots Linux again through lk2nd, forever. Options: the initramfs
-   counts failed boots on `userdata` and, after three, reboots with the
-   `bootloader` reason, which lk2nd turns into its fastboot (§3; stock aboot
-   may take that reason first, [A]); or rely on the owner's key hold.
-   Decide before P6.
+4. ~~A boot loop with no laptop.~~ Decided: the initramfs's three-try
+   count (§3). Still [A]: whether stock aboot honours the `bootloader`
+   reason from Linux (it did for `tools/markw-debug fastboot` on 2026-11-17,
+   from the RAM-booted chain).

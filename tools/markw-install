@@ -1,16 +1,26 @@
 #!/bin/bash
 # SPDX-License-Identifier: MIT
 # The Redmi 4 Prime (markw) persistent installer, from the laptop
-# (device/markw/BRINGUP-M9.md). It writes two things and nothing else:
+# (device/markw/BRINGUP-M9.md). It writes two partitions and nothing else:
 # the eMMC `boot` partition (lk2nd at its start, the Linux image after
-# lk2nd's 512 KiB) and, to go back to MIUI, `userdata` (erased). No command
-# takes a partition name.
+# lk2nd's 512 KiB) and `userdata` (formatted for the root and filled from
+# the microSD root, or erased to go back to MIUI). No command takes a
+# partition name.
 #
 #   tools/markw-install check            read-only: backups, pins, the phone
 #                                        in fastboot (stock or lk2nd)
 #   tools/markw-install lk2nd            stock fastboot: lk2nd into `boot` (P3)
+#   tools/markw-install format           stock fastboot: ext4 on `userdata`;
+#                                        MIUI's data is lost (P4)
+#   tools/markw-install uuid             Linux, read-only: the UUID that
+#                                        format gave `userdata`, for
+#                                        build-markw-probe --root-on emmc
+#   tools/markw-install copy             the eMMC-root initramfs (an image for
+#                                        an empty `userdata` stops there):
+#                                        the microSD root into `userdata` (P5)
 #   tools/markw-install trial IMG        lk2nd fastboot: boot IMG in RAM, wait
-#                                        for SSH and its kernel release (no write)
+#                                        for SSH, its kernel release and
+#                                        systemd as PID 1 (no write)
 #   tools/markw-install commit IMG       lk2nd fastboot: IMG after lk2nd, only
 #                                        once `trial IMG` passed (P6, updates)
 #   tools/markw-install verify IMG       Linux, read-only: `boot` holds the
@@ -48,7 +58,7 @@ NV_PARTS="modemst1 modemst2 fsg fsc sec persist"
 dry=0 yes=0 battery=0 cmd="" img=""
 die() { echo "markw-install: $*" >&2; exit 1; }
 say() { echo "==> $*"; }
-usage() { sed -n '3,30p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,41p' "$0" | sed 's/^# \{0,1\}//'; }
 while (($#)); do
   case $1 in
     --dry-run) dry=1 ;;
@@ -62,7 +72,7 @@ while (($#)); do
 done
 [[ -n $cmd ]] || { usage; exit 2; }
 case $cmd in
-  check|lk2nd|restore) [[ -z $img ]] || die "$cmd takes no argument" ;;
+  check|lk2nd|format|uuid|copy|restore) [[ -z $img ]] || die "$cmd takes no argument" ;;
   trial|commit|verify) [[ -n $img ]] || die "$cmd needs an image" ;;
   *) die "unknown command: $cmd" ;;
 esac
@@ -135,6 +145,8 @@ image_ok() { # IMG: SHA256SUMS and kernel.release beside it
   [[ -n $want && $(sha "$1") == "$want" ]] || die "$1 does not match $d/SHA256SUMS"
   [[ $(head -c 8 "$1") == ANDROID! ]] || die "$1 is not an Android boot image"
   (( $(size "$1") <= IMAGE_MAX )) || die "$1 is larger than boot minus lk2nd ($IMAGE_MAX bytes)"
+  # Built with --root-on emmc: a microSD-root probe never goes into boot.
+  [[ $(cat "$d/root-on" 2>/dev/null) == emmc ]] || die "$1 was not built with --root-on emmc"
   RELEASE=$(tr -d '\n' < "$d/kernel.release")
   IMG_SHA=$want
 }
@@ -187,6 +199,45 @@ erase_userdata() {
   "$FASTBOOT" erase userdata
 }
 
+format_userdata() {
+  if ((dry)); then echo "DRY: $FASTBOOT format:ext4 userdata"; return 0; fi
+  "$FASTBOOT" format:ext4 userdata
+}
+
+# On the phone, in the eMMC-root initramfs: copy the microSD root (the ext4
+# card partition with systemd) into the eMMC userdata carrying the packed
+# UUID, which must be empty. Exit codes name the refusal.
+COPY_SCRIPT='set -u
+[ -s /etc/omamobile-emmc-root ] && [ ! -e /usr/lib/systemd/systemd ] || exit 3
+read -r U < /etc/omamobile-emmc-root
+dst="" src=""
+for f in /sys/class/block/mmcblk*p*/uevent; do
+  d=${f%/uevent}; d=${d##*/}; t=$(cat /sys/class/block/${d%p*}/device/type 2>/dev/null)
+  if [ "$t" = MMC ] && grep -qx PARTNAME=userdata "$f" && [ "$(blkid -s UUID -o value /dev/$d)" = "$U" ]; then dst=$d; fi
+  if [ "$t" = SD ] && [ "$(blkid -s TYPE -o value /dev/$d)" = ext4 ]; then src="$src $d"; fi
+done
+[ -n "$dst" ] && [ "$(cat /sys/class/block/$dst/ro)" = 0 ] || exit 4
+mkdir -p /mnt/old /mnt/new
+root=""
+for d in $src; do
+  e2fsck -p /dev/$d >/dev/null 2>&1
+  mount -o ro /dev/$d /mnt/old || continue
+  [ -x /mnt/old/usr/lib/systemd/systemd ] && { root=$d; break; }
+  umount /mnt/old
+done
+[ -n "$root" ] || exit 5
+[ ! -e /mnt/old/extlinux ] || { umount /mnt/old; exit 6; }
+mount /dev/$dst /mnt/new || { umount /mnt/old; exit 4; }
+if [ -n "$(ls -A /mnt/new | grep -vx lost+found)" ]; then umount /mnt/new /mnt/old; exit 7; fi
+need=$(df -k /mnt/old | awk "NR==2 {print \$3}"); have=$(df -k /mnt/new | awk "NR==2 {print \$4}")
+[ "$need" -lt $((have / 10 * 9)) ] || { umount /mnt/new /mnt/old; exit 8; }
+echo "copying /dev/$root ($need KiB) to /dev/$dst"
+rsync -aHAX --numeric-ids /mnt/old/ /mnt/new/ || { umount /mnt/new /mnt/old; exit 9; }
+left=$(rsync -aHAXn --numeric-ids --out-format=%n /mnt/old/ /mnt/new/ | grep -c .)
+sync; umount /mnt/new /mnt/old
+[ "$left" = 0 ] || exit 10
+echo "copied; a second pass finds nothing to copy"'
+
 # --- Commands ---
 
 case $cmd in
@@ -201,6 +252,36 @@ case $cmd in
     write_boot "$LK2ND"
     say "done: 'fastboot reboot' shows lk2nd's menu (no Linux image yet)" ;;
 
+  format)
+    gate; backups; phone; need stock; charged
+    typed "userdata gets an empty ext4 file system: MIUI's data is gone for good."
+    format_userdata
+    say "done: RAM-boot the microSD probe, then 'uuid'" ;;
+
+  uuid)
+    # Read-only: the eMMC userdata's file system, by PARTNAME and type.
+    u=$($SSH 'for f in /sys/class/block/mmcblk*p*/uevent; do d=${f%/uevent}; d=${d##*/}; grep -qx PARTNAME=userdata $f && [ "$(cat /sys/class/block/${d%p*}/device/type)" = MMC ] && echo "$(blkid -s TYPE -o value /dev/$d) $(blkid -s UUID -o value /dev/$d)"; done; true' | tr -d '\r')
+    read -r t u <<< "$u" || true
+    [[ $t == ext4 ]] || die "the eMMC userdata holds no ext4 file system ('${t:-nothing}'): run format first"
+    [[ $u =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || die "unexpected UUID '$u'"
+    echo "$u" > "$STATE/userdata-uuid"
+    say "userdata: ext4 $u; build with --root-uuid $u --root-on emmc" ;;
+
+  copy)
+    gate
+    ((dry)) && { echo "DRY: copy the microSD root into the eMMC userdata (on the phone)"; exit 0; }
+    rc=0; $SSH 'sh -s' <<< "$COPY_SCRIPT" || rc=$?
+    case $rc in
+      0) say "copy done: now 'trial IMG' with the same image" ;;
+      3) die "the phone is not in the eMMC-root initramfs: fastboot boot the --root-on emmc image first" ;;
+      4) die "no writable eMMC userdata with the image's UUID" ;;
+      5) die "no microSD root (ext4 with systemd) found" ;;
+      6) die "the microSD root has /extlinux: lk2nd would boot it first (BRINGUP-M9 §3)" ;;
+      7) die "userdata is not empty: format it again" ;;
+      8) die "the microSD root needs more than 90 % of userdata" ;;
+      *) die "copy failed (code $rc): userdata is incomplete; format it again" ;;
+    esac ;;
+
   trial)
     image_ok "$img"; phone; need lk2nd
     ((dry)) && { echo "DRY: $FASTBOOT boot $img"; exit 0; }
@@ -213,6 +294,15 @@ case $cmd in
       [[ -n $got ]] && break
     done
     [[ $got == "$RELEASE" ]] || die "trial failed: SSH answered '${got:-nothing}', expected $RELEASE"
+    # The initramfs answers SSH with the same release: only systemd as PID 1
+    # means Arch came up from the root.
+    pid1=$($SSH cat /proc/1/comm 2>/dev/null | tr -d '\r') || pid1=""
+    if [[ $pid1 != systemd ]]; then
+      if $SSH test -s /etc/omamobile-emmc-root 2>/dev/null; then
+        die "trial failed: stopped in the eMMC-root initramfs (an empty userdata? then 'copy')"
+      fi
+      die "trial failed: PID 1 is '${pid1:-unknown}', not systemd"
+    fi
     oops=$($SSH 'dmesg | grep -cE "Oops|BUG:|Kernel panic"' | tr -d '\r') || oops=?
     [[ $oops == 0 ]] || die "trial failed: $oops Oops/BUG lines"
     echo "$RELEASE" > "$STATE/trial-$IMG_SHA"

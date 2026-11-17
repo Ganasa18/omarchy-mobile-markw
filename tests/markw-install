@@ -47,6 +47,8 @@ cat > "$W/ssh" <<'EOF'
 c="$*"
 [[ $c == "uname -r" ]] && { echo "${PHONE_RELEASE:-}"; exit 0; }
 [[ $c == *dmesg* ]] && { echo "${PHONE_OOPS:-0}"; exit 0; }
+[[ $c == "cat /proc/1/comm" ]] && { echo "${PHONE_PID1-systemd}"; exit 0; }
+[[ $c == "test -s /etc/omamobile-emmc-root" ]] && { [[ -n ${PHONE_EMMC_INITRAMFS:-} ]]; exit; }
 c=${c//\/sys\/class\/block/$FSYS}; c=${c//\/dev\//$FDEV/}
 bash -c "$c"
 EOF
@@ -76,6 +78,7 @@ P=$W/probe; mkdir -p "$P"
 { printf 'ANDROID!'; head -c 200000 /dev/urandom; } > "$P/boot.img"
 echo "$(sha256sum < "$P/boot.img" | cut -d' ' -f1)  boot.img" > "$P/SHA256SUMS"
 echo "7.1.3-msm8953-oma99" > "$P/kernel.release"
+echo emmc > "$P/root-on"
 
 conf_open=$W/open.conf; conf_shut=$W/shut.conf
 echo BOOT_METHOD=lk2nd-emmc > "$conf_open"; echo BOOT_METHOD=ram-only > "$conf_shut"
@@ -172,6 +175,12 @@ truncate -s 66584577 "$P/big.img"; printf 'ANDROID!' | dd of="$P/big.img" conv=n
 echo "$(sha256sum < "$P/big.img" | cut -d' ' -f1)  big.img" >> "$P/SHA256SUMS"
 FB_MODE=lk2nd run 1 "$conf_open" -y trial "$P/big.img"; says "larger than boot"; ok "an image too big for boot after lk2nd refused"
 
+echo sd > "$P/root-on"
+FB_MODE=lk2nd run 1 "$conf_open" -y trial "$P/other.img"; says "not built with --root-on emmc"; ok "a microSD-root probe never goes into boot"
+rm "$P/root-on"
+FB_MODE=lk2nd run 1 "$conf_open" -y trial "$P/other.img"; ok "an image with no root record refused"
+echo emmc > "$P/root-on"
+
 # --- restore ---
 FB_MODE=lk2nd run 1 "$conf_open" -y --battery-checked restore; says "needs stock fastboot"; ok "restore refused through lk2nd (it would write at 512 KiB)"
 run 0 "$conf_open" -y --battery-checked restore
@@ -189,13 +198,60 @@ run 1 "$conf_shut" -y verify "$P/other.img"; says "not $P/other.img"; ok "verify
 printf 'zz' | dd of="$W/dev/mmcblk1p21" bs=1 seek=100 conv=notrunc status=none
 run 1 "$conf_shut" -y verify "$P/other.img"; says "pinned lk2nd"; ok "verify catches a damaged lk2nd"
 
+# --- trial must reach Arch, not the initramfs ---
+FB_MODE=lk2nd PHONE_RELEASE=7.1.3-msm8953-oma99 PHONE_PID1=sh PHONE_EMMC_INITRAMFS=1 run 1 "$conf_shut" -y trial "$P/other.img"
+says "stopped in the eMMC-root initramfs"; [[ ! -e $W/state/trial-$(sha256sum < "$P/other.img" | cut -d' ' -f1) ]] || fail "initramfs trial recorded"
+ok "a trial that stops in the initramfs (same kernel release) fails and records nothing"
+FB_MODE=lk2nd PHONE_RELEASE=7.1.3-msm8953-oma99 PHONE_PID1= run 1 "$conf_shut" -y trial "$P/other.img"; says "not systemd"; ok "a trial with no PID 1 answer fails"
+
+# --- format (P4) ---
+run 1 "$conf_shut" -y --battery-checked format; ok "ram-only descriptor refuses format"
+FB_MODE=lk2nd run 1 "$conf_open" -y --battery-checked format; says "needs stock fastboot"; ok "format refused through lk2nd"
+run 0 "$conf_open" -y --battery-checked format
+[[ $(grep -E '^(flash|erase|format)' "$CALLS" | tr '\n' ';') == "format:ext4 userdata;" ]] || fail "format writes: $(tr '\n' ';' < "$CALLS")"
+ok "format: one format:ext4 of userdata, nothing else"
+
+# --- uuid (read-only) ---
+run 1 "$conf_shut" -y uuid; says "no ext4"; ok "uuid refuses when no eMMC userdata is found"
+U2=3c4d5e6f-0000-4111-8222-933344445555
+mkblk mmcblk0p2 SD userdata; echo "ext4" > "$W/sys/mmcblk0p2/fstype"
+mkblk mmcblk1p49 MMC userdata
+cat > "$W/blkid" <<'EOF'
+#!/bin/bash
+d=${5##*/}; case $2 in TYPE) cat "$FSYS/$d/fstype" 2>/dev/null ;; UUID) cat "$FSYS/$d/uuid" 2>/dev/null ;; esac
+EOF
+chmod +x "$W/blkid"; export PATH=$W:$PATH
+run 1 "$conf_shut" -y uuid; says "no ext4"; ok "uuid refuses an unformatted eMMC userdata (and ignores the card's)"
+echo ext4 > "$W/sys/mmcblk1p49/fstype"; echo "$U2" > "$W/sys/mmcblk1p49/uuid"
+run 0 "$conf_shut" -y uuid; says "--root-uuid $U2 --root-on emmc"
+[[ $(cat "$W/state/userdata-uuid") == "$U2" ]] || fail "uuid not recorded"; ok "uuid reads the eMMC userdata's UUID by name and type"
+
+# --- copy (P5) ---
+run 1 "$conf_shut" -y copy; ok "ram-only descriptor refuses copy"
+run 1 "$conf_open" -y copy; says "not in the eMMC-root initramfs"; ok "copy refuses a phone that is not in the eMMC-root initramfs"
+run 0 "$conf_shut" -y --dry-run copy; says "DRY: copy"; ok "copy dry run only prints"
+# The copy script's own refusals, in a fake initramfs (its paths redirected).
+mkdir -p "$W/ci/etc"; echo "$U2" > "$W/ci/etc/omamobile-emmc-root"
+script=$(sed -n "/^COPY_SCRIPT='/,/^echo \"copied; a second pass finds nothing to copy\"'/p" tools/markw-install | sed "1s/^COPY_SCRIPT='//; \$s/'\$//")
+script=${script//\/etc\/omamobile-emmc-root/$W/ci/etc/omamobile-emmc-root}
+script=${script//\/usr\/lib\/systemd\/systemd/$W/ci/no-systemd}
+script=${script//\/sys\/class\/block/$W/sys}
+script=${script//\/dev\//$W/dev/}
+echo 1 > "$W/sys/mmcblk1p49/ro"
+set +e; bash -c "$script" >/dev/null 2>&1; rc=$?; set -e
+[[ $rc == 4 ]] || fail "copy script: a read-only userdata gave $rc, not 4"; ok "copy refuses a userdata the guard left read-only"
+echo 0 > "$W/sys/mmcblk1p49/ro"; echo "11111111-2222-3333-4444-555555555555" > "$W/sys/mmcblk1p49/uuid"
+set +e; bash -c "$script" >/dev/null 2>&1; rc=$?; set -e
+[[ $rc == 4 ]] || fail "copy script: another UUID gave $rc, not 4"; ok "copy refuses a userdata with another UUID"
+
 # --- The tool's own text ---
 n=$(grep -cE '"\$FASTBOOT" (flash|erase|format)' tools/markw-install)
-[[ $n == 2 ]] || fail "expected two fastboot writes in the tool, found $n"
+[[ $n == 3 ]] || fail "expected three fastboot writes in the tool, found $n"
 grep -qE '"\$FASTBOOT" flash boot "\$1"$' tools/markw-install || fail "flash target is not the constant boot"
 grep -qE '"\$FASTBOOT" erase userdata$' tools/markw-install || fail "erase target is not the constant userdata"
-! grep -nE 'DRY: .*(flash|erase) [a-z_]*\$' tools/markw-install || fail "a dry-run line takes a partition from a variable"
-ok "only two writes in the tool, both to constant partitions"
+grep -qE '"\$FASTBOOT" format:ext4 userdata$' tools/markw-install || fail "format target is not the constant userdata"
+! grep -nE 'DRY: .*(flash|erase|format:ext4) [a-z_]*\$' tools/markw-install || fail "a dry-run line takes a partition from a variable"
+ok "only three writes in the tool, all to constant partitions"
 run 1 "$conf_open" -y frobnicate; ok "unknown command refused"
 run 1 "$conf_open" -y lk2nd extra; ok "an argument where none is taken refused"
 run 1 "$conf_open" -y commit; ok "commit without an image refused"
