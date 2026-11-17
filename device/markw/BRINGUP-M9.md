@@ -185,6 +185,17 @@ owner's explicit go for each step.
   different index than in this document.
 - **Rollback:** none needed (reads only). **Risk:** low.
 
+**Result (2026-11-17, `7.1.3-msm8953-oma19`): passed.** Set
+`install-backup/20261117T003912Z` (off-repo): `boot` 64 MiB, `recovery` 64
+MiB, `aboot`, `abootbak`, `devinfo` 1 MiB each, `splash` 20 MiB, both GPT
+copies (`EFI PART` signature) and the 49-row partition listing. Phone and
+laptop SHA-256 files agree on all eight. `boot.img` is MIUI's own (Android
+header v0, page 2048, a 20.1 MB kernel, Qualcomm `androidboot.*` cmdline,
+no lk2nd string), `aboot` and `abootbak` are identical, and all 49 eMMC
+partitions still read `ro=1` afterwards. Over Git Bash the shared SSH
+connection (`OMAMOBILE_SSH_SHARE=1`) fails to pass its descriptors and
+every stream comes back empty: run P0 with a connection per stream.
+
 ### P1. No-write rehearsal of the way back
 
 - **Run:** Volume Down + Power; `fastboot boot install-backup/<UTC>/boot.img`
