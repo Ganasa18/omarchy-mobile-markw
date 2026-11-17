@@ -426,3 +426,20 @@ to 100).
 | --- | --- | --- | --- | --- | --- |
 | R1 | After the overnight sleep on oma18, and the owner's go: modules to the phone, `./DEBUGING_RUN.sh --restart --probe out/markw/probe-oma19/boot.img` | oma19, the usual checks (modem, ModemManager, Wi-Fi, sound, eMMC `ro=1`); `CHGR_CFG` (0x10ff on the SMBCHG regmap) reads bit 0 set | no SSH in 3 min, Oops | Power held about 30 s (MIUI), then the oma18 probe | low |
 | R2 | Read-only log every 15 s, the cable in at full for 30 min (laptop, then wall) | after `Full`, no return to `Charging` until the battery is near 4.18 V; the LED stays green | battery past 40 degC | unplug; the oma18 probe | low |
+
+#### Results R (2026-11-17, `7.1.3-msm8953-oma19`)
+
+- R1 pass. Modules installed (`depmod`), then the oma18 boot restarted
+  into `out/markw/probe-oma19/boot.img`: SSH back, oma19, taint 512 (the
+  boot WARNINGs, as oma18), no Oops. Modem, ADSP and WCNSS `running`,
+  ModemManager sees the modem, Wi-Fi connected, the speaker sink there.
+  The eMMC (`mmcblk1` on this boot: the SD card came up as `mmcblk0`)
+  is `ro=1` with all 49 partitions `ro=1`; only the SD root is mounted.
+  `/battery/re-charge-voltage-microvolt` reads 4180000, and `CHGR_CFG`
+  (0x10ff on the PMI8950 regmap `0-02`, one register read) is 0x09: bit 0
+  set, the 200 mV threshold.
+- After the reboot the gauge read 68 % charging at 3.97 V; it had shown
+  85 % on oma18 before the reboot. The counter-based percentage restarts
+  from a voltage estimate at boot, so it isn't a drain.
+- R2 runs detached (`r2-charge.service`): a line a minute until `Full`,
+  then 30 min at 15 s, counting Full -> Charging.
