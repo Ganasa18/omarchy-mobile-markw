@@ -3,6 +3,23 @@
 
 Findings from real hardware, newest first. Plan: [ENGINEERING-PLAN.md](ENGINEERING-PLAN.md); first-light runbook: [BRINGUP-M1.md](BRINGUP-M1.md).
 
+## 2026-11-17: the hotspot shares mobile data (7.1.3-msm8953-oma19, shell 0.2.43, device-markw 0.1.26)
+
+- Owner test from the Hotspot page: the access point came up (WPA2, PMF
+  off as `omamobile-hotspot` sets it for wcn36xx), the dispatcher opened
+  DHCP, DNS and forwarding on `wlan0`, and a phone joined by the QR code
+  and got an address from dnsmasq.
+- First try without internet: mobile data was off. wcn36xx has one radio,
+  so the hotspot can't relay the phone's own Wi-Fi client link; it shares
+  mobile data only (the page's footnote says so). Second try with data on:
+  the joined phone browsed, about 3 MB through `FORWARD` and out of
+  `qmapmux0.0`, NAT by NetworkManager's `nm-shared-wlan0` nftables table.
+- The 20 min dead-man (`nmcli connection down Hotspot`) ended the first
+  try on time and Wi-Fi client mode came back by itself, the dispatcher
+  removing its four rules.
+- Shell log: a QML binding loop on a `Text` width in `HotspotPanel.qml`
+  (line 213), harmless; to fix in the next shell version.
+
 ## 2026-11-14: Power-only display wake works on the phone (7.1.3-msm8953-oma11)
 
 - First live attempt (phone locked) stopped: the shell restart reported the
