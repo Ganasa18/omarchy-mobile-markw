@@ -18,8 +18,8 @@ import subprocess
 import tempfile
 
 init = Path('device/markw/initramfs/init').read_text()
-guard = init.split('ROOT_UUID=""\n', 1)[1].split('\nstorage_guard || exit 1', 1)[0]
-guard = 'ROOT_UUID=""\n' + guard
+guard = init.split('ROOT_UUID="" ROOT_ON=""\n', 1)[1].split('\nstorage_guard || exit 1', 1)[0]
+guard = 'ROOT_UUID="" ROOT_ON=""\n' + guard
 # Exercise the real first-call failure path, before the background watcher,
 # modules or USB start. Sleeping here would leave no recovery service.
 first_pass = init.split(guard, 1)[1].split('\n(', 1)[0]
@@ -36,6 +36,7 @@ with tempfile.TemporaryDirectory() as work:
     body = guard.replace('/sys/class/block/', str(sys) + '/')
     body = body.replace('/run/omamobile-rw', str(rw))
     body = body.replace('/etc/omamobile-sd-root', str(etc / 'sd-root'))
+    body = body.replace('/etc/omamobile-emmc-root', str(etc / 'emmc-root'))
     body = body.replace('/proc/cmdline', str(root / 'cmdline'))
     body = body.replace('"/dev/', '"' + str(dev) + '/').replace('[ -b ', '[ -f ')
     (root / 'guard.sh').write_text('say() { echo "$*" >&2; }\n' + body
@@ -56,7 +57,12 @@ with tempfile.TemporaryDirectory() as work:
     env = dict(os.environ, PATH=str(bin) + ':' + os.environ['PATH'],
                SYS=str(sys), CALLS=str(root / 'calls'))
 
-    def device(name, ro='0', type=None, uuid=None):
+    # The root the guard would boot: the same root_ok() boot_arch() uses.
+    (root / 'pick.sh').write_text(
+        'say() { echo "$*" >&2; }\n' + body + '\nstorage_guard || exit 1\n'
+        'for f in ' + str(rw) + '/*p*; do [ -e "$f" ] && root_ok "${f##*/}" && echo "${f##*/}"; done\n')
+
+    def device(name, ro='0', type=None, uuid=None, part=None):
         d = sys / name
         d.mkdir()
         (d / 'ro').write_text(ro + '\n')
@@ -66,6 +72,12 @@ with tempfile.TemporaryDirectory() as work:
             (d / 'device' / 'type').write_text(type + '\n')
         else:
             (d / 'partition').write_text('1\n')
+            # As in sysfs, a partition is also a folder inside its disk's.
+            parent = sys / name.rsplit('p', 1)[0]
+            if parent.is_dir():
+                (parent / name).symlink_to('../' + name)
+        if part:
+            (d / 'uevent').write_text('PARTNAME=' + part + '\n')
         if uuid:
             (d / 'uuid').write_text(uuid + '\n')
 
@@ -82,7 +94,7 @@ with tempfile.TemporaryDirectory() as work:
     def reset():
         for d in list(sys.iterdir()) + list(dev.iterdir()) + list(rw.iterdir()):
             subprocess.run(['rm', '-rf', str(d)], check=True)
-        for f in (root / 'calls', etc / 'sd-root'):
+        for f in (root / 'calls', etc / 'sd-root', etc / 'emmc-root'):
             f.unlink(missing_ok=True)
 
     def layout():
@@ -154,6 +166,89 @@ with tempfile.TemporaryDirectory() as work:
     print('ok - omamobile.initramfs keeps every disk read-only')
     (root / 'cmdline').write_text('console=tty0\n')
 
+    # M9: the eMMC root. The eMMC as mmcblk1 this time (it swaps with the card).
+    def emmc_layout(userdata_uuid=UUID):
+        device('mmcblk0', type='SD')
+        device('mmcblk0p1', uuid=UUID, part='userdata')   # a card cannot be the root
+        device('mmcblk1', type='MMC')
+        device('mmcblk1p21', part='boot')
+        device('mmcblk1p26', part='persist')
+        device('mmcblk1p25', uuid=UUID, part='cache')     # the UUID, but not userdata
+        device('mmcblk1p49', uuid=userdata_uuid, part='userdata')
+        device('mmcblk1boot0', type='MMC')
+        device('mmcblk1boot1', type='MMC')
+        device('sda', type='SCSI')
+
+    def writable():
+        return {n.name for n in sys.iterdir() if ro(n.name) == '0'}
+
+    reset()
+    (etc / 'emmc-root').write_text(UUID + '\n')
+    emmc_layout()
+    result = run()
+    assert result.returncode == 0, result
+    assert writable() == {'mmcblk1', 'mmcblk1p49', 'mmcblk0', 'mmcblk0p1'}, writable()
+    assert not (dev / 'mmcblk1').exists()
+    assert (dev / 'mmcblk0').exists()
+    assert result.stdout == '', result.stdout
+    print('ok - eMMC root: only userdata with the UUID (and its disk, node removed) on the eMMC, the card as storage')
+    print('ok - eMMC root: boot0, boot1, boot, persist and a non-userdata partition with the UUID stay read-only')
+    pick = subprocess.run(['sh', str(root / 'pick.sh')], env=env, capture_output=True, text=True)
+    assert pick.stdout.split() == ['mmcblk1p49'], pick
+    print('ok - eMMC root: the root is the eMMC userdata, never a card partition named userdata')
+
+    reset()
+    (etc / 'emmc-root').write_text(UUID + '\n')
+    emmc_layout(userdata_uuid='11111111-2222-3333-4444-555555555555')
+    assert run().returncode == 0
+    assert all(ro(n.name) == '1' for n in sys.iterdir() if n.name.startswith('mmcblk1')), writable()
+    pick = subprocess.run(['sh', str(root / 'pick.sh')], env=env, capture_output=True, text=True)
+    assert pick.stdout == '', pick
+    print('ok - eMMC root: a userdata with another UUID leaves the whole eMMC read-only and boots nothing')
+
+    reset()
+    (etc / 'emmc-root').write_text(UUID + '\n')
+    (etc / 'sd-root').write_text(UUID + '\n')
+    emmc_layout()
+    assert run().returncode == 0
+    assert all_ro()
+    print('ok - both root files packed: every disk read-only')
+
+    reset()
+    (etc / 'emmc-root').write_text(UUID + '\n')
+    (root / 'cmdline').write_text('console=tty0 omamobile.initramfs\n')
+    emmc_layout()
+    assert run().returncode == 0
+    assert all_ro()
+    print('ok - omamobile.initramfs keeps the eMMC root read-only too')
+    (root / 'cmdline').write_text('console=tty0\n')
+
+    reset()
+    (etc / 'sd-root').write_text(UUID + '\n')
+    emmc_layout()
+    assert run().returncode == 0
+    assert writable() == {'mmcblk0', 'mmcblk0p1'}, writable()
+    print('ok - SD root unchanged: the card partition with the UUID, the eMMC read-only')
+
+    # The eMMC root's boot-loop guard: three tries, then stay.
+    newroot, run_dir = root / 'newroot', root / 'runarch'
+    newroot.mkdir(); run_dir.mkdir()
+    (root / 'tries.sh').write_text('say() { :; }\n' + body + '\nboot_tries "$1" "$2"\n')
+    def tries():
+        return subprocess.run(['sh', str(root / 'tries.sh'), str(newroot), str(run_dir)],
+                              env=env, capture_output=True, text=True).returncode
+    count = newroot / 'var/lib/omamobile/boot-tries'
+    assert [tries() for _ in range(4)] == [0, 0, 0, 1]
+    assert count.read_text().strip() == '3'
+    unit = run_dir / 'systemd/system/omamobile-boot-ok.service'
+    assert 'ExecStart=/usr/bin/rm -f /var/lib/omamobile/boot-tries' in unit.read_text()
+    assert (run_dir / 'systemd/system/graphical.target.wants/omamobile-boot-ok.service').is_symlink()
+    count.unlink()
+    assert tries() == 0 and count.read_text().strip() == '1'
+    count.write_text('garbage\n')
+    assert tries() == 1
+    print('ok - eMMC root: three boots that never clear the count, then the initramfs stays; a bad count stays too')
+
     reset()
     device('mmcblk0', type='MMC')
     for mode in ('fail', 'lie'):
@@ -190,8 +285,14 @@ for uuid in not-a-uuid 0F1E2D3C-4B5A-6978-8796-A5B4C3D2E1F0 '0f1e2d3c-4b5a-6978-
     echo "not ok - accepts --root-uuid $uuid" >&2; exit 1
   fi
 done
+if build "$t/key.pub" --root-on emmc; then
+  echo 'not ok - accepts --root-on emmc without a root UUID' >&2; exit 1
+fi
+if build "$t/key.pub" --root-uuid 0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0 --root-on system; then
+  echo 'not ok - accepts --root-on system' >&2; exit 1
+fi
 [[ ! -e $t/calls ]] || { echo 'not ok - builder started a container on bad input' >&2; exit 1; }
-echo 'ok - builder refuses missing modules, private keys and malformed root UUIDs before Docker'
+echo 'ok - builder refuses missing modules, private keys, malformed root UUIDs and bad --root-on before Docker'
 
 # build-markw-sd: only a checked markw root image, before any container.
 mkdir -p "$t/sd"

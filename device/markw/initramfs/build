@@ -56,15 +56,19 @@ stage=/tmp/rootfs
 mkdir -p "$stage"
 apk --root "$stage" --initdb --no-cache \
     --repositories-file /etc/apk/repositories --keys-dir /etc/apk/keys add \
-    alpine-baselayout busybox dropbear iproute2 util-linux busybox-extras e2fsprogs e2fsprogs-extra
+    alpine-baselayout busybox dropbear iproute2 util-linux busybox-extras e2fsprogs e2fsprogs-extra rsync
 install -m755 /src/device/markw/initramfs/init "$stage/init"
 mkdir -p "$stage/root/.ssh" "$stage/proc" "$stage/sys" "$stage/dev" "$stage/run"
 cp /input/key.pub "$stage/root/.ssh/authorized_keys"
 chmod 700 "$stage/root/.ssh"
 chmod 600 "$stage/root/.ssh/authorized_keys"
-# The Arch root on the microSD card (tools/build-markw-sd); none means M1.
+# The Arch root (none means M1): on the microSD card (tools/build-markw-sd),
+# or with ROOT_ON=emmc on the eMMC's userdata (device/markw/BRINGUP-M9.md).
 if [ -n "${ROOT_UUID:-}" ]; then
-    echo "$ROOT_UUID" > "$stage/etc/omamobile-sd-root"
+    case ${ROOT_ON:-sd} in
+        emmc) echo "$ROOT_UUID" > "$stage/etc/omamobile-emmc-root" ;;
+        *) echo "$ROOT_UUID" > "$stage/etc/omamobile-sd-root" ;;
+    esac
 fi
 gcc -Os -static -o "$stage/sbin/reboot-to" \
     /src/packages/omamobile-device-cheetah/src/reboot-to.c
@@ -177,4 +181,6 @@ size=$(stat -c %s /out/boot.img)
 cp "$stage/etc/omamobile-modules" /out/modules.list
 echo "$release" > /out/kernel.release
 echo "${ROOT_UUID:-none}" > /out/root-uuid
+# tools/markw-install commits only an image whose root is on the eMMC.
+if [ -n "${ROOT_UUID:-}" ]; then echo "${ROOT_ON:-sd}"; else echo none; fi > /out/root-on
 (cd /out && sha256sum boot.img markw.dtb initramfs.cpio.gz > SHA256SUMS)

@@ -5,7 +5,7 @@
 # Usage: tools/build-markw-probe --kernel Image.gz \
 #          --dtb msm8953-xiaomi-markw.dtb --modules lib/modules/RELEASE \
 #          --ssh-key ~/.ssh/id_ed25519.pub --mkbootimg /path/to/mkbootimg.py \
-#          --out /path/to/output [--root-uuid UUID] [--usb-role otg] [--adsp] [--modem]
+#          --out /path/to/output [--root-uuid UUID [--root-on emmc]] [--usb-role otg] [--adsp] [--modem]
 #
 # --usb-role otg keeps the kernel's USB role switch, so an OTG adapter
 # turns the port into a host (the charger supplies VBUS); the default,
@@ -16,16 +16,19 @@
 # Without --root-uuid the probe keeps every disk read-only and stops at SSH
 # (M1). With it, the initramfs switches to the Arch root on the microSD
 # partition whose ext4 file system has that UUID (tools/build-markw-sd).
+# --root-on emmc packs it for the eMMC partition named userdata instead (the
+# persistent install, device/markw/BRINGUP-M9.md): the card is then storage.
 # The kernel must have eMMC/SD, USB DWC3 and QUSB2, configfs and devtmpfs
 # built in (the MSM8953 postmarketOS kernel does). From --modules only the
 # NCM/ACM gadget functions and qcom-pon, with their dependencies, are copied.
 # Supply the kernel's own msm8953-xiaomi-markw.dtb and its matching modules.
 # mkbootimg.py and its gki/ helpers come from AOSP system/tools/mkbootimg.
 # Docker runs an aarch64 Alpine builder; x86 hosts need a binfmt handler.
-# Boot this image from a RAM-loaded lk2nd's fastboot, never flash it.
+# Boot this image from a RAM-loaded lk2nd's fastboot, never flash it; only
+# an --root-on emmc image goes into boot, through tools/markw-install.
 set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-kernel="" dtb="" modules="" key="" mkbootimg="" out="" root_uuid="" usb_role=peripheral adsp=0 mpss=0
+kernel="" dtb="" modules="" key="" mkbootimg="" out="" root_uuid="" root_on=sd usb_role=peripheral adsp=0 mpss=0
 die() { echo "error: $*" >&2; exit 1; }
 while (($#)); do
   case $1 in
@@ -36,10 +39,11 @@ while (($#)); do
     --mkbootimg) mkbootimg=${2:?}; shift ;;
     --out) out=${2:?}; shift ;;
     --root-uuid) root_uuid=${2:?}; shift ;;
+    --root-on) root_on=${2:?}; shift ;;
     --usb-role) usb_role=${2:?}; shift ;;
     --adsp) adsp=1 ;;
     --modem) mpss=1 ;;
-    -h|--help) sed -n '3,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '3,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
   shift
@@ -53,6 +57,8 @@ done
 [[ -n $out ]] || die 'supply --out DIR'
 [[ -z $root_uuid || $root_uuid =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] \
   || die '--root-uuid must be a lower-case file system UUID'
+[[ $root_on == sd || $root_on == emmc ]] || die '--root-on must be sd or emmc'
+[[ $root_on == sd || -n $root_uuid ]] || die '--root-on emmc needs --root-uuid'
 [[ $usb_role == peripheral || $usb_role == otg ]] || die '--usb-role must be peripheral or otg'
 
 # Normalize paths portably (macOS readlink lacks -f on older releases), so
@@ -88,6 +94,6 @@ docker run --rm --platform linux/arm64 \
   --mount "type=bind,source=$key,target=/input/key.pub,readonly" \
   --mount "type=bind,source=$(dirname "$mkbootimg"),target=/mkbootimg,readonly" \
   --mount "type=bind,source=$out,target=/out" \
-  -e ROOT_UUID="$root_uuid" -e USB_ROLE="$usb_role" -e ADSP="$adsp" -e MPSS="$mpss" \
+  -e ROOT_UUID="$root_uuid" -e ROOT_ON="$root_on" -e USB_ROLE="$usb_role" -e ADSP="$adsp" -e MPSS="$mpss" \
   alpine:3.22 sh /src/device/markw/initramfs/build
-echo "Built $out/boot.img (lk2nd RAM-loaded image${root_uuid:+, root UUID $root_uuid}; no phone was accessed)"
+echo "Built $out/boot.img (lk2nd RAM-loaded image${root_uuid:+, root UUID $root_uuid on $root_on}; no phone was accessed)"
