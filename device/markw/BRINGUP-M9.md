@@ -66,17 +66,45 @@ Xiaomi aboot (stock, unlocked; never written)
   -> switch_root to Arch Linux ARM; modules from /usr/lib/modules on userdata
 ```
 
-- **[A] lk2nd keeps itself and boots the image after it.** lk2nd's
-  documented install path writes lk2nd to `boot`; its own fastboot then
-  writes a `fastboot flash boot` image after its 512 KiB, and at boot it
-  loads the Android boot image it finds there. Check this in the pinned
-  source (tag commit `24d3f25`, `lk2nd/` partition handling) before P3, and
-  note the exact offset and the image size limit (64 MiB minus 512 KiB; the
-  oma19 image is 15.6 MiB).
-- **[A] Stopping autoboot.** lk2nd stays in its fastboot menu when a volume
-  key is held at power-on. Which key, and that it works from a cold boot
-  with the Linux image present, is checked at P1 (RAM-booted lk2nd shows the
-  same menu) and again after P3.
+Read in the pinned source (tag `23.1`, tag object `24d3f25`, commit
+`e9c8b217`; checkout outside the repository):
+
+- **[V, source] lk2nd keeps itself and boots the image after it.**
+  `lk2nd/project/lk2nd.mk` sets `LK2ND_PARTITION_BASE=boot`,
+  `LK2ND_PARTITION_SIZE=512*1024`, and `lk2nd/device/2nd/partition.c`
+  splits `boot` in lk2nd's own partition table into a virtual `lk2nd` (the
+  first 512 KiB) and a `boot` that starts at 512 KiB. So lk2nd's `fastboot
+  flash boot` writes from 512 KiB on, and its Android boot reads from there.
+  This holds for a RAM-booted lk2nd too (the split happens at init, whatever
+  loaded it), which gives the rollback in §5 a fixed path. The image limit
+  is 64 MiB minus 512 KiB (oma19's is 15.6 MiB). lk2nd 23.1 is 368 KiB.
+- **[V, source] Boot order: extlinux first, on any disk.** Unless a key or
+  reboot reason asks for fastboot or recovery, `lk2nd_boot()`
+  (`lk2nd/boot/boot.c`) tries every leaf partition of at least 16 MiB on
+  every block device, the microSD included, mounts it with LK's ext2 driver
+  and boots `/extlinux/extlinux.conf` if it finds one; only then does it
+  fall back to the Android image at 512 KiB. Two consequences:
+  - a card or partition with `/extlinux/extlinux.conf` takes the boot ahead
+    of the installed image. That is a recovery route (a prepared microSD
+    boots without a laptop) and a threat (§7): neither the eMMC root nor the
+    microSD root may carry an `/extlinux/` directory;
+  - LK's ext2 driver logs the superblock's incompatible features but does
+    not refuse them (`lib/fs/ext2/ext2.c`), so it will try to read the ext4
+    `userdata` root (and today's ext4 microSD root) with extents it does not
+    understand. It should simply find no config, but that is untested
+    (open question 1).
+- **[V, source] Keys and reboot reasons, in lk2nd** (`app/aboot/aboot.c`,
+  as in Qualcomm's aboot): Volume Down gives fastboot, Volume Up gives
+  recovery (it skips `lk2nd_boot()` and boots the `recovery` partition,
+  which stays MIUI's recovery), both together reboot to the emergency
+  download mode. A `bootloader` reboot reason gives fastboot, and an lk2nd
+  panic reboots in fastboot mode (`PANIC_REBOOT_MODE=FASTBOOT_MODE`).
+- **[A] Stock aboot reads the same keys first.** Volume Down + Power from
+  off lands in *stock* fastboot, before lk2nd runs. Whether a key pressed
+  later (after the stock splash) reaches lk2nd's menu is checked after P3.
+  It is not needed for recovery: from stock fastboot, `fastboot boot
+  lk2nd-msm8953.img` always gives a RAM-loaded lk2nd with the same split,
+  and that is the path §5 relies on.
 - **[V] Recovery buttons.** Volume Down + Power reaches stock fastboot
   ([BRINGUP-M1](BRINGUP-M1.md) §1) whatever `boot` holds, because aboot is
   never written. That is the floor every failure in §5 lands on.
@@ -160,7 +188,7 @@ The transaction (`tools/markw-install update`, future):
 | Failure | What the owner sees | Way back |
 | --- | --- | --- |
 | trial boot (step 3) fails | a hang, or a reboot into the current image | nothing was written: Power hold; lk2nd boots the current image |
-| flashed image fails | lk2nd starts, Linux doesn't | hold the lk2nd key at power-on, `fastboot flash boot previous.img` |
+| flashed image fails | lk2nd starts, Linux doesn't | Volume Down + Power (stock fastboot), `fastboot boot lk2nd-msm8953.img` (RAM), then `fastboot flash boot previous.img`, which the RAM lk2nd writes from 512 KiB |
 | write interrupted at step 4 | lk2nd intact, image damaged | same as above |
 | lk2nd itself damaged | no lk2nd menu | Volume Down + Power (stock fastboot), `fastboot flash boot lk2nd.img`, then the image |
 | `userdata` root damaged | initramfs stops at root | RAM-boot the probe with the microSD root (today's path), `fsck`/restore from the laptop |
@@ -201,7 +229,13 @@ every stream comes back empty: run P0 with a connection per stream.
 - **Run:** Volume Down + Power; `fastboot boot install-backup/<UTC>/boot.img`
   (the original MIUI boot image, in RAM only).
 - **Expect:** MIUI boots normally. Then a fresh NV backup (MIUI ran).
-- **Also:** RAM-boot lk2nd and note which key holds its menu (§3).
+- **Also (open question 1):** from stock fastboot, `fastboot boot
+  lk2nd-msm8953.img`, then `fastboot continue`: lk2nd's autoboot scans the
+  ext4 microSD root and the eMMC partitions (reads only: `lib/fs/ext2/ext2.c`
+  has no write code), finds no extlinux and no image at
+  512 KiB, and should return to its fastboot. `fastboot oem log` and
+  `fastboot get_staged` keep its log. **Stop:** no fastboot answer within
+  60 s (Power hold, MIUI boots).
 - **Stop:** MIUI does not boot from the backup image: the backup is not good,
   and no write may happen.
 - **Rollback:** power hold; MIUI boots from flash anyway. **Risk:** low.
@@ -264,6 +298,8 @@ every stream comes back empty: run P0 with a connection per stream.
 | Low battery or power loss mid-write | refuse under 50 %, cable required for P3-P6 | battery 40 %; no charger |
 | Mounted or busy target | refuse if `userdata` is mounted or in use | a mounted fake target |
 | A silent partial run | `set -euo pipefail`, every step logs to `logs/`, a write step re-reads and verifies | a fake fastboot that fails half way: tool stops, nothing after it runs |
+| A stray `/extlinux/extlinux.conf` (a microSD, or the root itself) takes the boot ahead of the installed image (§3) | the rootfs build and the installer refuse a root with `/extlinux/`; the installed image is the only boot entry | a root image with `/extlinux/extlinux.conf`; a second card offered as the install source |
+| A write through lk2nd's fastboot to a partition other than `boot` (lk2nd's fastboot writes any partition, as Qualcomm's aboot does) | the tool's only lk2nd write is `fastboot flash boot`; no raw `fastboot` passthrough | the grep test above also covers the update path |
 | Identifiers leaking into the repo | logs gitignored; serial and the eMMC CID never printed into tracked files | `tools/pr-check` over the test output |
 
 Every guard fails closed: an unknown value, a missing tool or an unexpected
@@ -271,14 +307,18 @@ answer is a refusal, not a warning.
 
 ## 8. Open questions before M10
 
-1. lk2nd's exact image offset and its fastboot `flash boot` behavior in the
-   pinned source (§3).
-2. The key that holds lk2nd's menu from a cold boot (P1).
+1. **LK's ext2 driver on ext4 partitions.** lk2nd's autoboot mounts every
+   partition of 16 MiB or more as ext2 (§3), ext4 ones included. Checked
+   without a write at P1 (`fastboot continue` on a RAM-loaded lk2nd, then
+   its log): it must skip them all and fall through, not hang.
+2. **Whether a late key reaches lk2nd's menu** after stock aboot (§3).
+   Convenience only; the stock-fastboot route always works.
 3. Whether MIUI's `userdata` is encrypted (FDE); it does not change the plan
    (P4 reformats it) but `fastboot erase` vs `format` in §4.2 depends on what
    MIUI's first boot accepts.
-4. A watchdog/pstore story for an installed boot with no laptop attached:
-   today a crash falls back to MIUI through aboot; after P3 it falls back to
-   lk2nd, which then boots Linux again. A boot loop must end at lk2nd's menu,
-   not loop forever (count boots in `userdata`, or rely on the owner's key
-   hold).
+4. **A boot loop with no laptop.** After P3, a Linux crash and watchdog
+   reset boots Linux again through lk2nd, forever. Options: the initramfs
+   counts failed boots on `userdata` and, after three, reboots with the
+   `bootloader` reason, which lk2nd turns into its fastboot (§3; stock aboot
+   may take that reason first, [A]); or rely on the owner's key hold.
+   Decide before P6.
