@@ -443,3 +443,12 @@ to 100).
   from a voltage estimate at boot, so it isn't a drain.
 - R2 runs detached (`r2-charge.service`): a line a minute until `Full`,
   then 30 min at 15 s, counting Full -> Charging.
+- **R2 pass.** From 68 % at 07:04 to `Full` at 09:02 (about 2 h, cable
+  in, 29-30 degC). Then 30 min at full with 120 samples: **0 Full ->
+  Charging changes**, the battery current at -0.5 to -0.8 mA (the charger
+  carries the load, the battery neither charges nor drains), the voltage
+  drifting between 4.277 and 4.298 V, well above the 4.18 V recharge
+  threshold, 30.2 degC throughout. Before, the status flipped
+  between `Full` and `Charging` every sample or two (H4, seen since oma6);
+  the 200 mV threshold (0026/0027) ends that. Laptop port only; the LED
+  colour and a wall charger were not checked in this run.
