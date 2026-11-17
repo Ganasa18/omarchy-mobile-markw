@@ -21,7 +21,7 @@ Nothing in §6 past step P2 runs until all of these hold:
 | Port at least 90 % (owner's gate) | about 86 % |
 | M3-M8 evidence | display, GPU, touch, Wi-Fi, BT, audio, mobile data, charger, sensors in the BRINGUP docs. Still open: auto-suspend enabled at boot after a day's soak, a data-on sleep (AA), charger R2, 20 boot cycles on the current kernel |
 | Approved amendment to the non-A/B safety policy (§2) | not yet: needs the owner's explicit approval of §2 |
-| Restore rehearsal (§6 P1, then P7) | not yet |
+| Restore rehearsal (§6 P1, then P7) | P1 (no write) passed 2026-11-17; P7 after the install |
 | No open critical risk | open: a hang in a long sleep is not yet ruled out (BRINGUP-SUSPEND) |
 
 ## 2. Writable-partition allowlist (policy amendment)
@@ -243,6 +243,33 @@ every stream comes back empty: run P0 with a connection per stream.
   and no write may happen.
 - **Rollback:** power hold; MIUI boots from flash anyway. **Risk:** low.
 
+**Result (2026-11-17): passed.** No write anywhere; the eMMC read `ro=1`
+on all 49 partitions after the return to Linux.
+
+- Stock fastboot reached from Linux with `tools/markw-debug fastboot`
+  (`product: markw`, no `lk2nd` partition: the stock bootloader).
+- lk2nd 23.1 (SHA-256 checked) RAM-booted; on the phone it reports
+  `partition-size:lk2nd` 0x80000 and `partition-size:boot` 0x3f80000:
+  **[V, phone]** the 512 KiB split of §3.
+- `fastboot continue`: the USB link went away and did not come back, and
+  the screen stayed on lk2nd with its menu answering the volume keys, so
+  the autoboot scan of the ext4 microSD root and the eMMC partitions did
+  not hang (open question 1). In the source, `cmd_continue()` stops
+  fastboot before `lk2nd_boot()`, and when no image is found the
+  `continue` path does not restart it, so a failed `continue` always looks
+  like this; its log is lost with the USB. The menu's **Bootloader** entry
+  took the phone to stock fastboot.
+- `fastboot boot install-backup/20261117T003912Z/boot.img` (SHA-256
+  matching both sums files): MIUI booted to `sys.boot_completed=1`
+  (MIUI V10.2.2.0, its 3.18 kernel). **The way back works with this
+  image.**
+- Back to oma19 with `DEBUGING_RUN.sh --probe out/markw/probe-oma19/boot.img`.
+  NV backup `20261117T030058Z-after-miui`, all six sums matching on both
+  sides: `modemst1`, `modemst2`, `fsg`, `fsc` and `sec` identical to the
+  2026-11-15 set, `persist` changed (MIUI writes it at boot).
+- The eMMC was `mmcblk1` at P0 and `mmcblk0` after this boot: the
+  renumbering in §7 happens between consecutive boots.
+
 ### P2. Installer, offline
 
 - **Run:** `tools/markw-install` with its tests (§7) in WSL; `--dry-run`
@@ -311,9 +338,11 @@ answer is a refusal, not a warning.
 ## 8. Open questions before M10
 
 1. **LK's ext2 driver on ext4 partitions.** lk2nd's autoboot mounts every
-   partition of 16 MiB or more as ext2 (§3), ext4 ones included. Checked
-   without a write at P1 (`fastboot continue` on a RAM-loaded lk2nd, then
-   its log): it must skip them all and fall through, not hang.
+   partition of 16 MiB or more as ext2 (§3), ext4 ones included. P1 showed
+   the scan does not hang (the menu still answered), but not what it read:
+   its log went with the USB. The full answer comes after P3, when the
+   autoboot runs for real with ext4 on `userdata` and the image at 512 KiB
+   (`fastboot oem log` from the menu's fastboot afterwards).
 2. **Whether a late key reaches lk2nd's menu** after stock aboot (§3).
    Convenience only; the stock-fastboot route always works.
 3. Whether MIUI's `userdata` is encrypted (FDE). Low priority: the owner
