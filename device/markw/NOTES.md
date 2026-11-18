@@ -3,6 +3,28 @@
 
 Findings from real hardware, newest first. Plan: [ENGINEERING-PLAN.md](ENGINEERING-PLAN.md); first-light runbook: [BRINGUP-M1.md](BRINGUP-M1.md).
 
+## 2026-11-18: first auto-suspend soak, one 19 h sleep without vmin (7.1.3-msm8953-oma19, device-markw 0.1.26)
+
+- `omamobile-autosuspend` started by hand for the boot (still disabled at
+  boot). Cable out about 13:15; it suspended at 13:17 and slept until the
+  owner's Power press at 08:37 the next morning: one suspend, 69630 s,
+  success 1, fail 0, no stray wake, no Oops. Unlock, touch, Wi-Fi and USB
+  came back; ModemManager restarted and mobile data reconnected by itself.
+- But RPM `vlow` and `vmin` stayed 0, although APSS, MPSS, PRONTO and LPASS
+  each voted XO off for the whole sleep. The gauge fell 100 -> 89 % (a rough
+  23 mA; no counter reading at the unplug), against about 11.6 mA in vmin.
+- Cause: ModemManager (`--test-quick-suspend-resume`) aborted on "system is
+  about to suspend", `mm_iface_modem_count_bearers: assertion failed: (max
+  >= ctx.count)`, two minutes after the hotspot test's disconnect and
+  reconnect. Its `qmapmux0.0` stayed behind, down, and the sleep hook took
+  any link on `rmnet_ipa0` as a data link (`rmnet_ipa0 stays up: qmapmux0.0
+  carries data`), so the IPA clock held XO through the sleep.
+- device-markw 0.1.27: the hook counts a data link only when it is itself
+  up. ModemManager's crash stays open: it is the third in two days
+  (SIGSEGV 2026-11-16 19:41 and 2026-11-17 11:29, this SIGABRT), and mobile
+  data was off for the whole sleep, so test AA (data across sleeps) is not
+  answered yet.
+
 ## 2026-11-17: the hotspot shares mobile data (7.1.3-msm8953-oma19, shell 0.2.43, device-markw 0.1.26)
 
 - Owner test from the Hotspot page: the access point came up (WPA2, PMF
