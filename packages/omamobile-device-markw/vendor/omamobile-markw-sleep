@@ -13,6 +13,9 @@
 # across suspend, so RPM never shuts XO down and the phone sleeps at about
 # 30-50 mA instead of about 11 mA (device/markw/BRINGUP-SUSPEND.md, U and
 # V). ModemManager brings it up again on the next connect.
+# Only a data link that is itself up counts: when ModemManager dies (it
+# aborted once on "about to suspend"), qmapmux0.0 stays behind, down, and
+# keeping rmnet_ipa0 up for it held the phone out of vmin for a 19 h sleep.
 # post: nothing.
 #
 # Never call into user.slice from here: systemd has frozen it.
@@ -31,10 +34,12 @@ index=$(cat "$net/$dev/ifindex")
 # A data link on it names it in its iflink (qmapmux0.0@rmnet_ipa0).
 for link in "$net"/*; do
   [[ ${link##*/} == "$dev" ]] && continue
-  if [[ $(cat "$link/iflink" 2>/dev/null) == "$index" ]]; then
+  [[ $(cat "$link/iflink" 2>/dev/null) == "$index" ]] || continue
+  if (( $(cat "$link/flags" 2>/dev/null || echo 0) & 1 )); then
     log "$dev stays up: ${link##*/} carries data"
     exit 0
   fi
+  log "${link##*/} is down: not a data link"
 done
 "$ip" link set "$dev" down && log "$dev down: no data link, so the IPA clock can go off"
 exit 0
