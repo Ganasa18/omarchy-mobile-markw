@@ -41,4 +41,4 @@ contains the fix.
 
 ## Status
 
-Built for aarch64 on the laptop (tools/build-packages, 16 min under qemu-user): the same 156 + 83 files and dependencies as Arch Linux ARM's 1.24.2-2. Installed on markw 2026-11-18 (7.1.3-msm8953-oma19): `ModemManager (version 1.24.2-2.1)`, data reconnected; the suspend test is next.
+Built for aarch64 on the laptop (tools/build-packages, 16 min under qemu-user): the same 156 + 83 files and dependencies as Arch Linux ARM's 1.24.2-2. Installed on markw 2026-11-18 (7.1.3-msm8953-oma19): `ModemManager (version 1.24.2-2.1)`, data reconnected. A `systemctl suspend` with data up then passed: no abort, same PID across the sleep, resume sync done, vmin reached (device/markw/BRINGUP-SUSPEND.md, CC). Arch's build also aborts on a stop with data up, so a restart or shutdown leaves a core dump without this fix.

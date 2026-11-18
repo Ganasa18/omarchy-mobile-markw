@@ -2227,5 +2227,17 @@ six suspend and resume cycles.
   45 ms. Auto-suspend being off, the phone then stayed awake overnight:
   100 % to 85 %.
 
+- **CC: a `systemctl suspend` with mobile data up, patched ModemManager
+  (2026-11-18, oma19, device-markw 0.1.27, modemmanager 1.24.2-2.1).**
+  Cable in, detached, under the 300 s watchdog feeder (`qcom_wdt` loaded
+  by hand: it is blacklisted at boot), RTC alarm +60 s. ModemManager
+  logged "ready to sleep; dropping inhibitor" instead of aborting, kept
+  its PID across the sleep, and finished "resume synchronization state
+  (5/5)"; the bearer was connected again at the wake. The hook took
+  `rmnet_ipa0` down, `vmin` 0 -> 43 (+49.8 s of about 61 s, charger in),
+  success 1 -> 2, fail 0, taint 0, no Oops. Arch's 1.24.2-2 hits the same
+  assertion when it is stopped with data up: the restart that installed
+  the fix left one more SIGABRT core of the old binary.
+
 Not yet tested: a sleep of hours on oma18, pairing a device across a
 sleep, and auto-suspend at boot.
