@@ -202,6 +202,24 @@ Results go here and in NOTES.md, with the date and `uname -r`.
   out 15 s after "off" before "on", and keeps the profile's autoconnect
   with the tile, so NetworkManager reconnects by itself if it crashes
   anyway. Later the same afternoon, with a better signal: ping 30 ms.
+- **ModemManager aborts when the phone suspends with data connected**
+  (2026-11-17 13:17, oma19, found 2026-11-18): `Bail out!
+  mm-iface-modem.c:6779:mm_iface_modem_count_bearers: assertion failed:
+  (max >= ctx.count)`, right after "system is about to suspend". On the
+  suspend path `mm_base_manager_cleanup()` counts ACTIVE bearers only to
+  lengthen its timeout. In 1.24.2 the maximum for that count is
+  `MaxActiveBearers` alone, and on an IPA setup that is 0 (only
+  multiplexed bearers: `MaxActiveMultiplexedBearers` is 254 on the
+  phone), so one connected `qmapmux0.0` bearer fails the assertion.
+  Upstream fixed it in `0edcb916ad2b` ("base-manager: fix cleanup of
+  multiplexed bearers", 2025-10-03), in 1.25.x but not on `mm-1-24`.
+  Until then every sleep with mobile data up costs a core dump; systemd
+  restarts ModemManager on resume and NetworkManager reconnects. The
+  dead ModemManager left `qmapmux0.0` behind, down, and the sleep hook
+  kept `rmnet_ipa0` up for it (no vmin for 19 h); device-markw 0.1.27
+  ignores a down link. Fix options: carry the upstream patch in a
+  ModemManager package of ours, or `--test-no-suspend-resume` (no
+  reaction to sleep at all; resume sync lost, to be tested).
 - The USB link dropped once, 50 s after the first crash (usb0 "Lost
   carrier", no role change, no kernel error) and came back on a replug;
   not shown to be related.
