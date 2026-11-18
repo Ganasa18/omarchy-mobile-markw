@@ -11,7 +11,7 @@
 #    MaxActiveBearers alone, which is 0 on IPA (only multiplexed bearers),
 #    so suspending with mobile data up aborts ModemManager
 #    (device/markw/BRINGUP-MODEM.md). Drop it once Arch ships 1.26.
-#  - pkgrel 2.1, so it sorts above Arch's 1.24.2-2; [omamobile] comes first
+#  - pkgrel 2.x, so it sorts above Arch's 1.24.2-2; [omamobile] comes first
 #    in pacman.conf, so pacman takes this build either way.
 #  - arch=(aarch64); no gtk-doc and no modemmanager-docs package (an hour of
 #    doc build on the phone for files nobody reads there).
@@ -20,6 +20,16 @@
 #    keyring; the tree is the same.
 #  - meson compile takes its job count from MAKEFLAGS (default 4), as the
 #    hyprland package does, so the phone doesn't run out of memory.
+#  - 0002-netlink-fix-use-after-free-calling-completion_fn-on-transaction-completion.patch
+#    (2.3): upstream 9317cbc4702c (Dan Williams, 2026-10-04), on main, in
+#    no release yet. transaction_complete() frees the transaction through
+#    the hash table and then calls its completion_fn. On markw that is the
+#    SIGSEGV right after "net link qmapmux0.0 created" on a quick
+#    reconnect and on every resume with data up (BRINGUP-MODEM.md): pc
+#    0x30 from mm-netlink.c:242, the read of tr->completion_fn.
+#  - options=(debug) (2.2): a modemmanager-debug package with the symbols,
+#    so systemd-coredump names the functions in a crash. -g leaves the
+#    code unchanged (.text of 2.1 and 2.2 is identical).
 #
 # Maintainer of the original: Jan Alexander Steffens (heftig); contributor
 # Ionut Biru.
@@ -30,7 +40,7 @@ pkgname=(
   libmm-glib
 )
 pkgver=1.24.2
-pkgrel=2.1
+pkgrel=2.3
 pkgdesc="Mobile broadband modem management service (Omarchy Mobile: IPA suspend fix)"
 url="https://www.freedesktop.org/wiki/Software/ModemManager/"
 arch=(aarch64)
@@ -53,8 +63,10 @@ depends=(
   ppp
   systemd-libs
 )
+options=(debug)
 makedepends=(
   bash-completion
+  debugedit
   git
   glib2-devel
   gobject-introspection
@@ -65,9 +77,11 @@ makedepends=(
 source=(
   "git+https://gitlab.freedesktop.org/mobile-broadband/ModemManager.git#tag=${pkgver/[a-z]/-&}"
   0001-base-manager-fix-cleanup-of-multiplexed-bearers.patch
+  0002-netlink-fix-use-after-free-calling-completion_fn-on-transaction-completion.patch
 )
 b2sums=('fbf202dc30af2201ba2a675183bdf8b12d0f8665e4a73454c7d7bca8cc7acf4ee93c42c291f9ddfa84c696b7c05a1b68e4211f7e75707aea0000f77bff6cc72b'
-        'cad28a0df7458b477a8a449e83c252814953a3fc565ab74851bfbcfd9fcb8e5b14dbd3c559c5cd3c39aa89f2de20b9a8832d2d0462cdb583a68d628b0250febc')
+        'cad28a0df7458b477a8a449e83c252814953a3fc565ab74851bfbcfd9fcb8e5b14dbd3c559c5cd3c39aa89f2de20b9a8832d2d0462cdb583a68d628b0250febc'
+        'e16877ca742d1845f2706341f57a38cd8bb0c21f44cf45250e27c6d5ffaba49178084c9578a37b0dde838a2d77fa649e9fcbc8dba9fa3dd63e6daf63d37c0eb4')
 
 prepare() {
   cd ModemManager
@@ -78,6 +92,9 @@ prepare() {
 
   # Omarchy Mobile: suspend with a multiplexed bearer up (upstream 0edcb916ad2b)
   git apply "$srcdir/0001-base-manager-fix-cleanup-of-multiplexed-bearers.patch"
+
+  # Omarchy Mobile: netlink use-after-free on reconnect (upstream 9317cbc4702c)
+  git apply "$srcdir/0002-netlink-fix-use-after-free-calling-completion_fn-on-transaction-completion.patch"
 }
 
 build() {
