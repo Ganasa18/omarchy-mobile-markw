@@ -199,3 +199,29 @@ separate step.
   through TrustZone; not checked further. The node stays `disabled`
   (patch 0004 unchanged) and step 5 (systemd petting it) is moot; the
   soft and hard lockup detectors with `panic=10` remain the hang net.
+
+## oma19: ten warm reboots (2026-11-18)
+
+Owner's go, cable in, attended. Each cycle: `./DEBUGING_RUN.sh --restart
+--probe out/markw/probe-oma19/boot.img` (Arch `systemctl reboot
+--reboot-argument=bootloader`, stock fastboot, lk2nd and the probe in RAM),
+SSH, 45 s to settle, then a read-only check. Stop conditions: an `Oops:`,
+`Internal error`, panic, `BUG:`, ext4 or MMC error, any eMMC partition
+not `ro=1`, a failed unit, the wrong kernel, or a WARNING other than the
+accepted `pclk0_clk_src` one.
+
+- **10 of 10 passed** on `7.1.3-msm8953-oma19`: 102-107 s from the reboot
+  command to SSH, SSH at about 72 s of uptime, `is-system-running`
+  `running`, no failed unit, ModemManager active, every eMMC partition
+  `ro=1`, no Oops, panic or storage error.
+- The `pclk0_clk_src: rcg didn't update its configuration` pair (taint
+  512) came on 4 of the 10 boots (cycles 3, 4, 8, 10) and on none of the
+  others: it is intermittent, the panel came up either way. No other
+  WARNING.
+- Two false stops on the way, both from the check, not the phone: a
+  case-insensitive "oops" matched `ramoops` (cycle 1), and the pclk0
+  pair was not yet allowed (cycle 3).
+- Wi-Fi read `unavailable` throughout: NetworkManager's Wi-Fi switch was
+  off (rfkill soft block, kept across reboots), set before the test.
+- Still to do: ten attended cold boots (power off, Power key), which need
+  the owner's hands.
