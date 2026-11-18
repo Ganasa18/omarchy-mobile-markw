@@ -16,13 +16,13 @@ phone or in pinned source, **[A]** assumption still to check.
 
 Nothing in §6 past step P2 runs until all of these hold:
 
-| Prerequisite | State (2026-11-17) |
+| Prerequisite | State (2026-11-18) |
 | --- | --- |
 | Port at least 90 % (owner's gate) | about 86 % |
-| M3-M8 evidence | display, GPU, touch, Wi-Fi, BT, audio, mobile data, charger, sensors in the BRINGUP docs. Still open: auto-suspend enabled at boot after a day's soak, a data-on sleep (AA), charger R2, 20 boot cycles on the current kernel |
+| M3-M8 evidence | display, GPU, touch, Wi-Fi, BT, audio, mobile data, charger (R2 passed 2026-11-17), sensors in the BRINGUP docs. Still open: auto-suspend enabled at boot after a day's soak with data up (one 19 h sleep passed 2026-11-18, but without vmin and with ModemManager aborting; fixed, soak again), an overnight data-on sleep (AA; a 60 s one passed with modemmanager 1.24.2-2.1, BRINGUP-SUSPEND CC), ten cold boots and ten warm reboots on the current kernel |
 | Approved amendment to the non-A/B safety policy (§2) | not yet: needs the owner's explicit approval of §2 |
 | Restore rehearsal (§6 P1, then P7) | P1 (no write) passed 2026-11-17; P7 after the install |
-| No open critical risk | open: a hang in a long sleep is not yet ruled out (BRINGUP-SUSPEND) |
+| No open critical risk | a hang in a long sleep: one 19 h auto-suspend woke cleanly on Power (2026-11-18); one more long sleep on the fixed stack to close it |
 
 ## 2. Writable-partition allowlist (policy amendment)
 
