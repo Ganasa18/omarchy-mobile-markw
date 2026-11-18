@@ -213,6 +213,12 @@ Results go here and in NOTES.md, with the date and `uname -r`.
   which reads `tr->completion_fn` after `g_hash_table_remove()` has freed
   `tr`. Fixed upstream in `9317cbc4702c` (on `main`, in no release yet);
   packages/modemmanager 1.24.2-2.3 carries it as 0002.
+  **2.3 passes the reconnect test (2026-11-18, 7.1.3-msm8953-oma19).**
+  Installed with `modemmanager-debug`; the restart with data up left no
+  core and data was back in 7 s. Then the gsm profile went down and up
+  1 s apart and 5 s apart, the gaps that crashed every time before: both
+  reconnected (`qmapmux0.0` created twice), the PID stayed the same, no
+  core dump, and ping went out through `qmapmux0.0`.
 - **ModemManager aborts when the phone suspends with data connected**
   (2026-11-17 13:17, oma19, found 2026-11-18): `Bail out!
   mm-iface-modem.c:6779:mm_iface_modem_count_bearers: assertion failed:
