@@ -3,6 +3,40 @@
 
 Findings from real hardware, newest first. Plan: [ENGINEERING-PLAN.md](ENGINEERING-PLAN.md); first-light runbook: [BRINGUP-M1.md](BRINGUP-M1.md).
 
+## 2026-11-18: second soak, vmin 97 % of the sleep, ModemManager segfaults on resume (7.1.3-msm8953-oma19, device-markw 0.1.27, modemmanager 1.24.2-2.1)
+
+- `omamobile-autosuspend` started by hand again, mobile data up on LTE.
+  Cable out at 13:58; it suspended at 13:59:03 and slept until the
+  owner's Power press at 16:40:00 (`pm_wakeup_irq` 69, `pm8941_pwrkey`),
+  the cable back in a minute later: one suspend, 9657 s, success 1,
+  fail 0, no stray wake, no Oops, no new kernel warning.
+- The 0.1.27 hook did its job: ModemManager disconnected the bearer on
+  "about to suspend" (the patched cleanup, no abort), the hook logged
+  `rmnet_ipa0 down: no data link`, and RPM `vmin` counted 9353 s, 97 % of
+  the sleep. UPower read 100 % before the sleep and 99 % at the wake, so
+  roughly 13 mA or less. The minute logger wrote nothing from 13:24 to
+  16:44 for a reason not found yet, so there is no counter reading for
+  the sleep; the next soak's logger reads each value under `timeout`.
+- On resume ModemManager reconnected and died with SIGSEGV right after
+  "net link qmapmux0.0 created (mux id 1)": a call through a NULL
+  function pointer (pc 0x30, from `ModemManager+0x188b0c`). systemd
+  restarted it and data came back on LTE. It is the quick-reconnect crash
+  of BRINGUP-MODEM.md: CLOCK_MONOTONIC stops in suspend, so to
+  ModemManager the reconnect came about a second after the pre-suspend
+  disconnect, inside the 1-5 s window that crashed there.
+- Cause, from a 1.24.2-2.2 build with `modemmanager-debug` (its `.text`
+  is byte for byte 2.1's, so the 2.1 core maps onto it): a use-after-free
+  in `transaction_complete()` (`src/mm-netlink.c:242`, inlined into
+  `netlink_messages_cb`). `g_hash_table_remove()` frees the transaction,
+  then `tr->completion_fn` is read from it: `blr` through `[x25+32]`, the
+  field at offset 32. Upstream fixed it in `9317cbc4702c` ("netlink: fix
+  use-after-free calling completion_fn on transaction completion",
+  2026-10-04), on `main` and in no release yet. modemmanager 1.24.2-2.3
+  carries it as 0002. Until 2.3 is installed and survives resumes, every
+  resume with data on risks a crash, and auto-suspend stays off at boot.
+- Minor: the autosuspend loop's screen check opens a `runuser` session
+  every 5 s, 495 pairs of PAM lines in the journal by 16:46.
+
 ## 2026-11-18: first auto-suspend soak, one 19 h sleep without vmin (7.1.3-msm8953-oma19, device-markw 0.1.26)
 
 - `omamobile-autosuspend` started by hand for the boot (still disabled at

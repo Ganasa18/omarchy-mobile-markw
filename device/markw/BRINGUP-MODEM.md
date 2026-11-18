@@ -202,6 +202,17 @@ Results go here and in NOTES.md, with the date and `uname -r`.
   out 15 s after "off" before "on", and keeps the profile's autoconnect
   with the tile, so NetworkManager reconnects by itself if it crashes
   anyway. Later the same afternoon, with a better signal: ping 30 ms.
+  **A resume hits the same window (2026-11-18, modemmanager 1.24.2-2.1).**
+  The patched ModemManager disconnects the bearer on "about to suspend"
+  and reconnects it on resume. CLOCK_MONOTONIC stops in suspend, so to
+  ModemManager the two are about a second apart, whatever the sleep
+  length: after a 2 h 41 min sleep it segfaulted right after "net link
+  qmapmux0.0 created (mux id 1)" (pc 0x30, from `ModemManager+0x188b0c`),
+  and systemd restarted it. **Cause:** with a debug build (same `.text`)
+  the core lands in `transaction_complete()` (`src/mm-netlink.c:242`),
+  which reads `tr->completion_fn` after `g_hash_table_remove()` has freed
+  `tr`. Fixed upstream in `9317cbc4702c` (on `main`, in no release yet);
+  packages/modemmanager 1.24.2-2.3 carries it as 0002.
 - **ModemManager aborts when the phone suspends with data connected**
   (2026-11-17 13:17, oma19, found 2026-11-18): `Bail out!
   mm-iface-modem.c:6779:mm_iface_modem_count_bearers: assertion failed:
