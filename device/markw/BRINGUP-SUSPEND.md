@@ -2238,6 +2238,16 @@ six suspend and resume cycles.
   success 1 -> 2, fail 0, taint 0, no Oops. Arch's 1.24.2-2 hits the same
   assertion when it is stopped with data up: the restart that installed
   the fix left one more SIGABRT core of the old binary.
+- **CD: the same suspend with modemmanager 1.24.2-2.3 (2026-11-18,
+  oma19, device-markw 0.1.27).** Same guard: cable in, detached, 300 s
+  feeder (disarmed by magic close afterwards), RTC +60 s. 2.1 had
+  segfaulted on the reconnect after a resume (NOTES.md, second soak);
+  2.3 adds the netlink use-after-free fix. ModemManager disconnected on
+  "about to suspend", resynced on resume, recreated `qmapmux0.0` and was
+  connected again, with the same PID and no new core dump. `vmin`
+  7725 -> 7770 (+48 s), success 1 -> 2, fail 0, no Oops, taint unchanged
+  (512, the known pclk0 warning at boot). Ping went out through
+  `qmapmux0.0` afterwards, 0 % loss.
 
 Not yet tested: a sleep of hours on oma18, pairing a device across a
 sleep, and auto-suspend at boot.
