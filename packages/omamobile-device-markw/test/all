@@ -372,6 +372,12 @@ bash test/autosuspend.sh || fail "auto-suspend decisions"
 grep -q '^SCREEN_OFF_CPUS=4-7$' "$tmp/root/usr/share/omamobile/device.conf" \
   || fail "the descriptor names the CPUs to take offline with the screen off"
 bash test/screen-power.sh || fail "screen-off power saver"
+sd=$tmp/root/usr/lib/systemd/system/omamobile-markw-sd-storage.service
+[[ -f $sd && -x $tmp/root/usr/lib/omamobile/omamobile-markw-sd-storage &&
+   -L $tmp/root/usr/lib/systemd/system/multi-user.target.wants/omamobile-markw-sd-storage.service ]] \
+  || fail "install stages and enables the microSD storage mount"
+bash -n vendor/omamobile-markw-sd-storage || fail "the microSD storage script parses"
+bash test/sd-storage.sh || fail "microSD storage decisions"
 [[ ! -e $tmp/root/usr/bin/omamobile-display-touch ]] || fail "global touch disable hook must stay absent"
 grep -qx 'POWER_KEY_WAKE_ONLY=1' "$tmp/root/usr/share/omamobile/device.conf" || fail "Power-only wake policy staged"
 ucm=$tmp/root/usr/share/alsa/ucm2
