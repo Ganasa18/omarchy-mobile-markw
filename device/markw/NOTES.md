@@ -23,20 +23,26 @@ Taken on a cold-booted phone, 48 min up, cable in, screen off.
    `do-change-link[6]: failure 22` every 30 s while data is up (99 times
    in 48 min). The bearer reports MTU 1500, but `qmapmux0.0` is 1496: its
    parent `rmnet_ipa0` is 1500 and QMAP takes 4 bytes. `rmnet_ipa0`
-   allows up to 2012, so a 1504 parent would let the mux link take the
-   bearer's 1500.
+   allows up to 2012. Fixed in device-markw 0.1.29 with a udev rule that
+   sets `rmnet_ipa0` to 1504. Tried by hand first: the mux link took 1500,
+   no warning in the next 40 s, and a 1500-byte don't-fragment ping went
+   through.
 2. quickshell used 1.95 s of CPU a minute with the panel off
    (`dpmsStatus: 0`), the largest user by far (1 min 39 s since boot).
    It matters while the phone is awake with the screen off (cable in,
    audio, stay-awake), and probably while the screen is on as well.
 3. The Wi-Fi regulatory domain is world (`00`): `set-wireless-regdom`
    exits 1 at boot because `/etc/conf.d/wireless-regdom` names no
-   country. Setting it is a per-phone setting and stays out of the repo.
+   country. Setting it is a per-phone setting and stays out of the repo;
+   it was set on this phone by hand (the owner's go).
 4. feedbackd 0.8.9's udev rule runs `/usr/libexec/fbd-ledctrl`, but the
    package installs `/usr/lib/fbd-ledctrl`, so three LED lines fail at
    each boot. Our own LED rules don't use it.
-5. `plocate-updatedb.timer` and `man-db.timer` run daily: the first
-   rescans the whole microSD for `locate`, which the phone doesn't use.
+5. `plocate-updatedb.timer` and `man-db.timer` run daily, but both
+   services already carry `ConditionACPower=true` (man-db upstream,
+   plocate through Omarchy's `ac-only.conf`), so they never run on
+   battery. Not an issue. device-markw 0.1.29 added the same condition
+   again before this was seen; 0.1.30 drops it.
 6. udev's coldplug sits idle from about 7.4 s to 13.1 s: module
    autoloads (camss, rtc, qrtr, the compass) only begin at 13.4 s. Not
    chased, since the whole boot is 22.5 s.

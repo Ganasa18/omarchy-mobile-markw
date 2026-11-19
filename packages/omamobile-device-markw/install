@@ -19,11 +19,6 @@ install -Dm644 vendor/udev/rules.d/80-omamobile-markw-proximity.rules \
 # rmnet_ipa0 at 1504, so the QMAP mux link can take the bearer's 1500.
 install -Dm644 vendor/udev/rules.d/80-omamobile-markw-ipa-mtu.rules \
   "$destination/usr/lib/udev/rules.d/80-omamobile-markw-ipa-mtu.rules"
-# The daily locate and man page indexes run only while the phone charges.
-install -Dm644 vendor/systemd/system/plocate-updatedb.service.d/10-omamobile-markw.conf \
-  "$destination/usr/lib/systemd/system/plocate-updatedb.service.d/10-omamobile-markw.conf"
-install -Dm644 vendor/systemd/system/man-db.service.d/10-omamobile-markw.conf \
-  "$destination/usr/lib/systemd/system/man-db.service.d/10-omamobile-markw.conf"
 install -Dm644 vendor/systemd/network/20-usb-gadget.network \
   "$destination/usr/lib/systemd/network/20-usb-gadget.network"
 install -Dm644 vendor/systemd/logind.conf.d/10-omamobile-power-key.conf \

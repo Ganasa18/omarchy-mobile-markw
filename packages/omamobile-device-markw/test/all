@@ -422,12 +422,6 @@ mtu=$tmp/root/usr/lib/udev/rules.d/80-omamobile-markw-ipa-mtu.rules
 grep -q 'KERNEL=="rmnet_ipa0", ATTR{mtu}="1504"' "$mtu" || fail "the IPA MTU rule sets rmnet_ipa0 to 1504"
 [[ $(grep -v '^#' "$mtu" | grep -c .) == 1 ]] || fail "the IPA MTU rule is one line"
 pass "the IPA MTU rule: rmnet_ipa0 at 1504, so the mux link carries 1500"
-for svc in plocate-updatedb man-db; do
-  d=$tmp/root/usr/lib/systemd/system/$svc.service.d/10-omamobile-markw.conf
-  [[ -f $d ]] || fail "install stages the $svc drop-in"
-  grep -q '^ConditionACPower=true$' "$d" || fail "$svc runs only on AC power"
-done
-pass "the locate and man page indexes run only while charging"
 for absent in usr/bin/omamobile-boot-success usr/bin/omamobile-bootctl \
               usr/lib/systemd/system/omamobile-boot-success.service \
               usr/bin/omamobile-wifi-start usr/bin/omamobile-charge-guard \
