@@ -437,7 +437,14 @@ found a valid Android image where it looks for Linux.
 
 So on this markw, lk2nd 23.1 does not come up when stock aboot loads it
 from `boot`, whatever follows it, while the same file loaded by `fastboot
-boot` always does. Being worked on next (offline): why aboot's flash path
+boot` always does.
+
+Afterwards: MIUI's `boot.img` written back (both sums checked), Omarchy up
+through the laptop, `boot` hashes as the backup, all eMMC partitions
+`ro=1`. Against the 2026-11-17 NV set, MIUI's run changed `modemst1`,
+`modemst2` and `persist` (`fsg`, `fsc`, `sec` unchanged), so a fresh
+read-only set was taken: `20261119T141617Z-after-miui`, phone and laptop
+sums agreeing on all six. Being worked on next (offline): why aboot's flash path
 differs from its RAM path for this image (the separate QCDT, `dt_size`
 8192, is the one header difference from MIUI's), and other boot routes
 (an image aboot accepts from flash that chains to lk2nd, or the kernel
