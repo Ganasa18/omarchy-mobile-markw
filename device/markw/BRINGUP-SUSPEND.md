@@ -2263,6 +2263,16 @@ six suspend and resume cycles.
     then lost nothing.
   - No Oops, no kernel error, taint unchanged (512, the pclk0 warning at
     boot).
+- **Enabled at boot: device-markw 0.1.28 (2026-11-19).** Installed with
+  the cable in; `omamobile-autosuspend` is `WantedBy=multi-user.target`
+  through the package's own `multi-user.target.wants` link, as
+  ModemManager is (`systemctl is-enabled` says "disabled" for both,
+  since it only reads `/etc`). Its screen check now runs `hyprctl`
+  through `setpriv` rather than `runuser`, so it no longer writes a PAM
+  session open/close pair to the journal every 5 s. After the restart:
+  no `runuser` lines, `--check` "awake: USB cable in a computer", and
+  `setpriv` -> `hyprctl monitors` read `dpmsStatus: 0`. The first boot
+  with it enabled is still to come.
 
 Not yet tested: a sleep of hours on oma18, pairing a device across a
 sleep, and auto-suspend at boot.
