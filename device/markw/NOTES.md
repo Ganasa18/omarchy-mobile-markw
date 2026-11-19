@@ -3,6 +3,38 @@
 
 Findings from real hardware, newest first. Plan: [ENGINEERING-PLAN.md](ENGINEERING-PLAN.md); first-light runbook: [BRINGUP-M1.md](BRINGUP-M1.md).
 
+## 2026-11-19: the idle shell ran a 60 Hz animation timer (7.1.3-msm8953-oma19, omamobile-shell 0.2.44 to 0.2.45)
+
+With nothing on screen to animate, quickshell's main thread woke about 75
+times a second and used about 2 s of CPU a minute: on the lock screen, at
+home, behind a full-screen app and with the panel off (`bl_power` 4) alike.
+Hyprland woke 3-4 times a second, so the shell was sending no frames.
+
+How it was found, read-only (no strace or gdb on the phone):
+
+- Wakeups per thread from `/proc/<pid>/task/*/status` context switches over
+  10 s: only the main thread, 67-75 a second in every state.
+- The main thread's `ppoll` timeout, read from `/proc/<pid>/syscall` and the
+  timespec in `/proc/<pid>/mem`: 13-16 ms in almost every sample, the tick of
+  Qt's animation driver.
+- `eu-stack -1` samples taken outside `ppoll`:
+  `QAnimationDriver::advanceAnimation` -> `QSequentialAnimationGroupJob` ->
+  `QQuickItem::setScale`, and a written QML property whose binding emits
+  `rotationChanged`.
+
+That pair is the incoming-call card: its caller ring pulses in `scale` and
+its answer handle wiggles through a `phase` property that `rotation` binds
+to, both while `ringing`. `Call.qml` keeps the card built inside the hidden
+call window and passes it mode `"incoming"` whenever there is no call in
+progress, so `ringing` was true all the time and both loops ran behind a
+hidden window.
+
+Fix (omamobile-shell 0.2.45): `CallCard.ringing` also requires the card to be
+visible. After a shell restart, unlocked at home: quickshell 2.1 wakeups a
+second (from 74.5), 3 CPU ticks in 10 s (from 29), and the `ppoll` timeout
+back to about 1 s (the clock timers). A ringing card is visible, so the
+offscreen call render test still draws it.
+
 ## 2026-11-19: systemd audit (7.1.3-msm8953-oma19, device-markw 0.1.28, read-only)
 
 Taken on a cold-booted phone, 48 min up, cable in, screen off.
