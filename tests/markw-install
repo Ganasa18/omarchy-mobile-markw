@@ -129,6 +129,8 @@ mv "$W/lk2nd.keep" "$W/lk2nd.img"
 run 1 "$conf_open" -y lk2nd; says "battery-checked"; ok "unknown battery refused without --battery-checked"
 FB_BATTERY=3600mV run 1 "$conf_open" -y lk2nd; says "3600 mV"; ok "low battery refused"
 FB_BATTERY=4100mV run 0 "$conf_open" -y lk2nd; ok "battery voltage from fastboot accepted"
+FB_BATTERY=3500000 run 1 "$conf_open" -y lk2nd; says "3500 mV"; ok "low battery in microvolts refused"
+FB_BATTERY=4050000 run 0 "$conf_open" -y lk2nd; ok "battery in microvolts accepted"
 
 # --- Backups ---
 mv "$IB/boot.img" "$W/boot.keep"

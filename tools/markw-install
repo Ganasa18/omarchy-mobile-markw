@@ -172,6 +172,9 @@ need() { [[ $FB == "$1" ]] || die "$cmd needs $1 fastboot; this is $FB fastboot"
 charged() {
   local mv
   mv=$(getvar battery-voltage); mv=${mv%mV}
+  # Stock markw fastboot reports microvolts (4050000, BRINGUP-M9 P3); some
+  # bootloaders report millivolts, with or without "mV".
+  if [[ $mv =~ ^[0-9]+$ ]] && ((mv >= 100000)); then mv=$((mv / 1000)); fi
   if [[ $mv =~ ^[0-9]+$ ]]; then
     ((mv >= 3800)) || die "battery at $mv mV; charge it first"
   else
