@@ -361,6 +361,36 @@ before it is read-only or on the laptop.
 | P3.7 first lk2nd boot | phone | `fastboot reboot` | lk2nd's menu within 30 s; `fastboot getvar partition-size:lk2nd` `0x80000`; `fastboot oem log` saved to `logs/` (the ext4 scan, §8 question 1) | no lk2nd in 30 s: Volume Down + Power (stock fastboot), §4.2 steps 1-2 | medium |
 | P3.8 back to Linux, verify | lk2nd fastboot, then Linux | `fastboot boot out/markw/probe-oma19/boot.img` (RAM, microSD root as today); then read-only: the first 368656 bytes of `boot` (by `PARTNAME`) hash to the lk2nd pin; all 49 eMMC partitions still `ro=1` | Omarchy from the microSD; the hash matches | a mismatch: stock fastboot, flash lk2nd again (P3.6) or §4.2 | low |
 
+**Result (2026-11-19, `7.1.3-msm8953-oma19`): failed at P3.7, rolled
+back.** P3.0-P3.5 passed (gate opened in device-markw 0.1.32; backups and
+the lk2nd pin checked; stock fastboot; the dry run printed the one write).
+P3.6 wrote lk2nd 23.1 into `boot` (`Sending` and `Writing` OKAY). Then:
+
+- `fastboot reboot`, and a cold boot on Power alone: the Mi logo stayed,
+  and the fastboot that answered was stock aboot's (`kernel: lk`, no
+  `partition-size:lk2nd`, `oem log` an unknown command), drawn without its
+  fastboot screen. lk2nd never reached its menu.
+- With lk2nd in `boot`, a RAM boot of the same lk2nd also failed, twice:
+  `Booting FAILED (Status read failed (Too many links))`, a black screen
+  and no USB device for over a minute. The same RAM path had worked at P1
+  and at every cold boot before P3.
+- Rollback: stock fastboot (Volume Down + Power), `fastboot flash boot
+  install-backup/20261117T003912Z/boot.img` (both sums checked first; only
+  `boot` written, `userdata` kept). The RAM path then worked at once and
+  Omarchy came up from the microSD; `boot` hashes as the backup, all 49
+  eMMC partitions `ro=1`. MIUI was not booted, so the NV set is unchanged.
+- Bootloader: `Device unlocked: true`, `critical unlocked: true`.
+
+So lk2nd fails, wherever it is loaded from, while `boot` starts with lk2nd.
+Not yet known why: the bytes from 512 KiB on (where lk2nd looks for the
+Linux image) are the same before and after P3, leftover MIUI kernel with
+no Android header; only the first 368 KiB changed. Before another P3: read
+lk2nd 23.1's start-up handling of `boot` in the source, and consider
+writing `boot` so lk2nd never meets MIUI's leftovers (the remainder
+cleared, or lk2nd and the Linux image in one write). Also found: fastboot
+reports `battery-voltage` in µV (4050000), so `charged()` in
+`tools/markw-install`, which reads mV, passes at any charge.
+
 **Rollback at any point:** Volume Down + Power gives stock fastboot whatever
 `boot` holds; `fastboot flash boot install-backup/20261117T003912Z/boot.img`
 puts MIUI's boot image back (§4.2 step 2), and MIUI boots, its `userdata`

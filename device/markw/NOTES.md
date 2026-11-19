@@ -3,6 +3,17 @@
 
 Findings from real hardware, newest first. Plan: [ENGINEERING-PLAN.md](ENGINEERING-PLAN.md); first-light runbook: [BRINGUP-M1.md](BRINGUP-M1.md).
 
+## 2026-11-19: M9 P3 fails, lk2nd in `boot` does not start; rolled back (7.1.3-msm8953-oma19)
+
+lk2nd 23.1 written into `boot` by `tools/markw-install lk2nd` (OKAY). After
+a reboot and a Power-only cold boot the Mi logo stayed and stock aboot's
+fastboot answered (no lk2nd variables, `oem log` unknown). While `boot`
+held lk2nd, a RAM boot of the same lk2nd failed too (black screen, no USB).
+MIUI's backed-up `boot.img` written back from stock fastboot, `userdata`
+kept: the RAM path works again, `boot` hashes as the backup, the eMMC is
+`ro=1`, MIUI not booted. Cause unknown; details and next steps in
+[BRINGUP-M9.md](BRINGUP-M9.md) P3.
+
 ## 2026-11-19: the idle shell ran a 60 Hz animation timer (7.1.3-msm8953-oma19, omamobile-shell 0.2.44 to 0.2.45)
 
 With nothing on screen to animate, quickshell's main thread woke about 75
