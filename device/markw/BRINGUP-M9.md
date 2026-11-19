@@ -339,6 +339,33 @@ they need the initramfs's `EMMC_RW` first, and refuse by not existing.
 - **Stop:** no lk2nd within 30 s. **Rollback:** §4.2 steps 1-2.
   **Risk:** medium.
 
+**What changes for the owner after P3, until P6:** MIUI no longer boots, and
+the phone has no Linux image in `boot` yet, so a power-on without the
+laptop stops in lk2nd's menu (it finds no `/extlinux` and no image). Every
+boot until P6 is the laptop's `fastboot boot` of the microSD probe, as
+today; stock fastboot (Volume Down + Power) is unchanged. So P3 to P6 are
+best run in one sitting.
+
+Runbook (prepared 2026-11-19, not run). One write, at P3.6; everything
+before it is read-only or on the laptop.
+
+| Step | Where | Run | Expect / Pass | Stop | Risk |
+| --- | --- | --- | --- | --- | --- |
+| P3.0 open the gate | laptop | `BOOT_METHOD=lk2nd-emmc` in `device/markw/device.conf` and the package's copy (device-markw 0.1.32); `tests/boot-method` expects markw refused by `install-phone`, `images`, `flash`, `push` as `unsupported BOOT_METHOD=lk2nd-emmc`; run `tests/markw-install`, `tests/boot-method`, the package tests; commit | all pass; only `tools/markw-install` writes | any test fails | none (no phone) |
+| P3.1 phone state | Linux (microSD root) | battery (`upower`), `ro` of all 49 eMMC partitions, no `/extlinux` on the card, NV sums (done 2026-11-19, §1) | battery 50 % or more on the cable; all `ro=1`; no `/extlinux` | any one fails | low (reads) |
+| P3.2 backups and pin | laptop | `tools/markw-install check` (no phone in fastboot) | `backups: 20261117T003912Z (boot), 20261117T030058Z-after-miui (NV)`, `check passed` | any refusal | none |
+| P3.3 stock fastboot | phone | `tools/markw-debug fastboot` from Linux, or Volume Down + Power from off (**the screen shows fastboot**) | `fastboot getvar product`: `markw`; `partition-size:lk2nd` empty (stock) | no fastboot in 60 s: Power hold, boot the probe as usual | low |
+| P3.4 check with the phone | laptop | `tools/markw-install check` | `phone: markw, stock fastboot`, `check passed` | any refusal | none |
+| P3.5 dry run | laptop | `tools/markw-install --dry-run lk2nd` | prints exactly one line, `DRY: fastboot flash boot …/lk2nd-msm8953.img` | anything else printed | none |
+| **P3.6 the write** | laptop | `tools/markw-install lk2nd` (`--battery-checked` if fastboot can't read the voltage); the owner types `markw` | fastboot `OKAY` for `boot`, `done: 'fastboot reboot' shows lk2nd's menu` | an error from fastboot: **do not reboot**; stay in stock fastboot and run §4.2 step 2 (MIUI's `boot.img` back) | **medium** |
+| P3.7 first lk2nd boot | phone | `fastboot reboot` | lk2nd's menu within 30 s; `fastboot getvar partition-size:lk2nd` `0x80000`; `fastboot oem log` saved to `logs/` (the ext4 scan, §8 question 1) | no lk2nd in 30 s: Volume Down + Power (stock fastboot), §4.2 steps 1-2 | medium |
+| P3.8 back to Linux, verify | lk2nd fastboot, then Linux | `fastboot boot out/markw/probe-oma19/boot.img` (RAM, microSD root as today); then read-only: the first 368656 bytes of `boot` (by `PARTNAME`) hash to the lk2nd pin; all 49 eMMC partitions still `ro=1` | Omarchy from the microSD; the hash matches | a mismatch: stock fastboot, flash lk2nd again (P3.6) or §4.2 | low |
+
+**Rollback at any point:** Volume Down + Power gives stock fastboot whatever
+`boot` holds; `fastboot flash boot install-backup/20261117T003912Z/boot.img`
+puts MIUI's boot image back (§4.2 step 2), and MIUI boots, its `userdata`
+untouched until P4.
+
 ### P4. Format `userdata` (M10, write, MIUI data lost)
 
 - **Run:** stock fastboot, `tools/markw-install format` (`fastboot
@@ -376,7 +403,11 @@ they need the initramfs's `EMMC_RW` first, and refuse by not existing.
 
 - **Run:** the §5 transaction steps 3-5 with the image built for the new UUID.
 - **Expect:** cold boot to Omarchy from eMMC with no laptop; `phone-smoke`
-  passes; all eMMC partitions but `userdata` still `ro=1`.
+  passes; all eMMC partitions but `userdata` still `ro=1`; the microSD
+  card mounted read-write at `/mnt/sd` with `/mnt/sd/data` owned by the
+  owner (`omamobile-markw-sd-storage`, device-markw 0.1.31: it mounts the
+  card's ext4 partition only when the root is not on the card, and leaves
+  the old microSD root on it as the §5 way back).
 - **Rollback:** §5 table. **Risk:** medium.
 
 ### P7. Restore rehearsal (M10, write)
