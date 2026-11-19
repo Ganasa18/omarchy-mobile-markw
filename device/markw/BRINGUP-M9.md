@@ -389,7 +389,33 @@ lk2nd 23.1's start-up handling of `boot` in the source, and consider
 writing `boot` so lk2nd never meets MIUI's leftovers (the remainder
 cleared, or lk2nd and the Linux image in one write). Also found: fastboot
 reports `battery-voltage` in µV (4050000), so `charged()` in
-`tools/markw-install`, which reads mV, passes at any charge.
+`tools/markw-install`, which reads mV, passes at any charge (fixed in
+device-markw 0.1.33, which also closed the gate again).
+
+Analysis (offline, the same day). The evidence doesn't separate two
+causes:
+
+- **H1, aboot or lk2nd fails on the flashed image.** Against it:
+  postmarketOS's markw page installs exactly this way (`fastboot flash boot
+  lk2nd.img`), and the markw dts is in lk2nd 23.1 (`devices.md`). The only
+  header difference from MIUI's image is a separate QCDT (`dt_size` 8192
+  against 0); magic, addresses and page size match.
+- **H2, a stale `bootloader` reboot reason.** P3.3 reached stock fastboot
+  through `systemctl reboot --reboot-argument=bootloader`. After P3.6,
+  `fastboot reboot` was answered by stock fastboot again within about 2 s,
+  too fast for any image to have run, and a Power-only cold boot also
+  stayed in fastboot, behind the Mi logo. lk2nd's LK scrubs the reason
+  when it reads it (`platform/msm_shared/reboot.c`), but Xiaomi's aboot is
+  closed, and the postmarketOS markw page warns that `adb reboot {target}`
+  with lk2nd installed loops. The RAM failures are confounded: they came
+  before the owner's accidental Mi Recovery boot (a kernel that would reset
+  the reason), and the RAM path worked after it, so the rollback may not
+  have been what fixed it.
+
+A retry that tests H2 without changing anything else: reach stock fastboot
+by keys only (Volume Down + Power from a power-off, no reboot argument from
+Linux), write lk2nd, and leave fastboot with `fastboot continue` or a power
+hold. It needs the owner's go and reopening the gate.
 
 **Rollback at any point:** Volume Down + Power gives stock fastboot whatever
 `boot` holds; `fastboot flash boot install-backup/20261117T003912Z/boot.img`
