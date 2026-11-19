@@ -24,6 +24,15 @@ Nothing in §6 past step P2 runs until all of these hold:
 | Restore rehearsal (§6 P1, then P7) | P1 (no write) passed 2026-11-17; P7 after the install |
 | No open critical risk | a hang in a long sleep: closed 2026-11-19. A 19 h auto-suspend (2026-11-18) and an 11 h 50 min one on the fixed stack (device-markw 0.1.27, modemmanager 1.24.2-2.3) both woke cleanly on Power |
 
+Checks before P3 (2026-11-19, read-only):
+
+- MIUI's data: the owner keeps none of it (apps or files), and Linux could
+  not read it anyway (FDE, §8 question 3).
+- The NV backup is current: the sha256 of `modemst1`, `modemst2`, `fsg`,
+  `fsc`, `sec` and `persist`, read by `PARTNAME` with all six `ro=1`, match
+  the newest set (taken after the P1 MIUI boot, 2026-11-17) in both its
+  phone and laptop sums, so no MIUI boot has changed them since.
+
 ## 2. Writable-partition allowlist (policy amendment)
 
 **Approved by the owner on 2026-11-19**, for markw only and as written
