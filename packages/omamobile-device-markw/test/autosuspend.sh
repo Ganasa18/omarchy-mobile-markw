@@ -16,9 +16,14 @@ python3 -c 'import socket,sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' 
 echo 0 >"$r/sys/class/net/usb0/carrier"
 echo 'closed' >"$r/proc/asound/card0/pcm0p/sub0/status"
 
+cat >"$t/bin/setpriv" <<'EOF'
+#!/bin/bash
+[[ $1 == --reuid=[0-9]* && $2 == --regid=* && $3 == --init-groups ]] || exit 1
+while [[ $1 != -- ]]; do shift; done; shift; exec "$@"
+EOF
 cat >"$t/bin/runuser" <<'EOF'
 #!/bin/bash
-while [[ $1 != -- ]]; do shift; done; shift; exec "$@"
+echo "runuser opens a PAM session at every poll" >&2; exit 99
 EOF
 cat >"$t/bin/timeout" <<'EOF'
 #!/bin/bash

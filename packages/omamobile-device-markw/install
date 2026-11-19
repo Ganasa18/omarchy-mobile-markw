@@ -88,10 +88,14 @@ install -Dm644 vendor/udev/rules.d/80-omamobile-markw-usb-role.rules   "$destina
 # (feedbackd's own rules already know the PMI8950 haptics, spmi_haptics.)
 install -Dm755 vendor/omamobile-markw-charge-led "$destination/usr/lib/omamobile/omamobile-markw-charge-led"
 install -Dm644 vendor/udev/rules.d/81-omamobile-markw-charge-led.rules   "$destination/usr/lib/udev/rules.d/81-omamobile-markw-charge-led.rules"
-# Suspend when the screen has been off a while: installed, not enabled.
+# Suspend when the screen has been off a while: enabled from 0.1.28, after
+# the overnight data-on soak (device/markw/BRINGUP-SUSPEND.md, CE).
+# `systemctl mask omamobile-autosuspend` turns it off.
 install -Dm755 vendor/omamobile-autosuspend "$destination/usr/lib/omamobile/omamobile-autosuspend"
 install -Dm644 vendor/systemd/system/omamobile-autosuspend.service \
   "$destination/usr/lib/systemd/system/omamobile-autosuspend.service"
+ln -sf ../omamobile-autosuspend.service \
+  "$destination/usr/lib/systemd/system/multi-user.target.wants/omamobile-autosuspend.service"
 # Fewer CPUs and a lower clock while the screen is off: installed, not
 # enabled (CPU hotplug is unproven on markw).
 install -Dm755 vendor/omamobile-markw-screen-power "$destination/usr/lib/omamobile/omamobile-markw-screen-power"

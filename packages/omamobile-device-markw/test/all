@@ -360,8 +360,10 @@ grep -q '^AUTO_SUSPEND_DELAY=10$' "$tmp/root/usr/share/omamobile/device.conf" \
   || fail "the descriptor sets the auto-suspend delay"
 [[ -x $tmp/root/usr/lib/omamobile/omamobile-autosuspend && -f $tmp/root/usr/lib/systemd/system/omamobile-autosuspend.service ]] \
   || fail "install stages auto-suspend"
-! find "$tmp/root" -lname '*omamobile-autosuspend.service' | grep -c . >/dev/null \
-  || fail "auto-suspend ships disabled until it is proven"
+[[ $(readlink "$tmp/root/usr/lib/systemd/system/multi-user.target.wants/omamobile-autosuspend.service") == ../omamobile-autosuspend.service ]] \
+  || fail "auto-suspend is enabled at boot"
+! grep -c 'runuser -u' "$tmp/root/usr/lib/omamobile/omamobile-autosuspend" >/dev/null \
+  || fail "auto-suspend polls without a PAM session (no runuser)"
 bash test/autosuspend.sh || fail "auto-suspend decisions"
 [[ -x $tmp/root/usr/lib/omamobile/omamobile-markw-screen-power && -f $tmp/root/usr/lib/systemd/system/omamobile-markw-screen-power.service ]] \
   || fail "install stages the screen-off power saver"

@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: MIT
 # Suspend to idle once the screen has been off for AUTO_SUSPEND_DELAY
-# seconds (device.conf). Shipped disabled until device/markw/BRINGUP-SUSPEND.md
-# steps 8-10 pass; then: systemctl enable --now omamobile-autosuspend
+# seconds (device.conf). Enabled by the package from 0.1.28, after the
+# overnight data-on soak (device/markw/BRINGUP-SUSPEND.md, CE).
+# To turn it off: systemctl mask --now omamobile-autosuspend
 [Unit]
 Description=Omarchy Mobile: suspend when the screen has been off for a while
 After=systemd-logind.service

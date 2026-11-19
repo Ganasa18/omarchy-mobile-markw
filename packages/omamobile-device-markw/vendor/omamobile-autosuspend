@@ -36,7 +36,10 @@ screens_off() {
     sig=$(basename -- "$dir")
     uid=$(stat -c %u -- "$dir")
     user=$(id -nu "$uid" 2>/dev/null) || return 1
-    out=$(runuser -u "$user" -- env XDG_RUNTIME_DIR="/run/user/$uid" HYPRLAND_INSTANCE_SIGNATURE="$sig" \
+    # setpriv, not runuser: runuser opens a PAM session, which logged two
+    # journal lines at every poll (about 35000 a day).
+    out=$(setpriv --reuid="$uid" --regid="$(id -g -- "$user")" --init-groups -- \
+      env XDG_RUNTIME_DIR="/run/user/$uid" HYPRLAND_INSTANCE_SIGNATURE="$sig" \
       timeout 3 hyprctl monitors 2>/dev/null) || return 1
     grep -c 'dpmsStatus: 0' <<<"$out" >/dev/null || return 1
     grep -c 'dpmsStatus: 1' <<<"$out" >/dev/null && return 1
