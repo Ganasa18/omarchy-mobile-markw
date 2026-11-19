@@ -260,3 +260,24 @@ to SSH about 75-105 s.
 Rollback: none needed; Volume Down + Power reaches fastboot from any
 state, and Power alone still boots MIUI (then back up the NV).
 Logs: `logs/markw-coldboots-1119/` (summary, cycle logs, dmesg per boot).
+
+### Results (2026-11-19): 4 of 4 passed; the owner cut the run to 4
+
+The owner decided 4 cold boots are enough next to the ten warm reboots,
+so the run stopped after cycle 4 (the plan's ten is reduced by the
+owner's decision, not by a failure).
+
+- **4 of 4 passed** on `7.1.3-msm8953-oma19`, device-markw 0.1.28,
+  modemmanager 1.24.2-2.3: SSH at about 71 s of uptime, `running`, no
+  failed unit, ModemManager active, every eMMC partition `ro=1`, no
+  Oops, panic or storage error. `omamobile-autosuspend` was active at
+  every boot, the first proof that 0.1.28 enables it.
+- `systemctl poweroff` works on markw: each time SSH was gone within
+  seconds, and the previous boot's journal ends in `Reached target System
+  Power Off`, `systemd-shutdown` syncing and sending SIGTERM. No charger
+  mode and no MIUI boot, so the modem NV was not touched.
+- The pclk0 pair came on 3 of the 4 boots (cycles 1, 3, 4); no other
+  WARNING.
+- Two waits ran out (cycle 2, 15 min each) before the phone reached
+  fastboot by hand. Those were the timeout for the owner's step, not the
+  phone; cycle 2 then passed once it was in fastboot.

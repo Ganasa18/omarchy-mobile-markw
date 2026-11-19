@@ -19,7 +19,7 @@ Nothing in §6 past step P2 runs until all of these hold:
 | Prerequisite | State (2026-11-19) |
 | --- | --- |
 | Port at least 90 % (owner's gate) | about 86 % |
-| M3-M8 evidence | display, GPU, touch, Wi-Fi, BT, audio, mobile data, charger (R2 passed 2026-11-17), sensors in the BRINGUP docs. The overnight data-on sleep (AA) passed 2026-11-19 with modemmanager 1.24.2-2.3: 11 h 50 min, vmin 97 %, about 12 mA, no crash (BRINGUP-SUSPEND CE). Auto-suspend is enabled at boot from device-markw 0.1.28 (installed 2026-11-19; not booted with it yet). Still open: ten cold boots on the current kernel (ten warm reboots passed 2026-11-18, BRINGUP-KERNEL) |
+| M3-M8 evidence | display, GPU, touch, Wi-Fi, BT, audio, mobile data, charger (R2 passed 2026-11-17), sensors in the BRINGUP docs. The overnight data-on sleep (AA) passed 2026-11-19 with modemmanager 1.24.2-2.3: 11 h 50 min, vmin 97 %, about 12 mA, no crash (BRINGUP-SUSPEND CE). Auto-suspend is enabled at boot from device-markw 0.1.28 (installed 2026-11-19; not booted with it yet). Cold boots: 4 of 4 passed 2026-11-19 (the owner cut the plan's ten to four, next to ten warm reboots passed 2026-11-18; BRINGUP-KERNEL), with auto-suspend active at every boot |
 | Approved amendment to the non-A/B safety policy (§2) | not yet: needs the owner's explicit approval of §2 |
 | Restore rehearsal (§6 P1, then P7) | P1 (no write) passed 2026-11-17; P7 after the install |
 | No open critical risk | a hang in a long sleep: closed 2026-11-19. A 19 h auto-suspend (2026-11-18) and an 11 h 50 min one on the fixed stack (device-markw 0.1.27, modemmanager 1.24.2-2.3) both woke cleanly on Power |
