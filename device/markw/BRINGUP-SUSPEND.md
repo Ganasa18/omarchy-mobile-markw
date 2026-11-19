@@ -2248,6 +2248,21 @@ six suspend and resume cycles.
   7725 -> 7770 (+48 s), success 1 -> 2, fail 0, no Oops, taint unchanged
   (512, the known pclk0 warning at boot). Ping went out through
   `qmapmux0.0` afterwards, 0 % loss.
+- **CE: an overnight auto-suspend with data up (2026-11-18/19, oma19,
+  device-markw 0.1.27, modemmanager 1.24.2-2.3).** Answers AA.
+  `omamobile-autosuspend` was started by hand for the boot, mobile data
+  on LTE. The cable came out at 19:52:45, the phone suspended at 19:52:48
+  and slept until the owner's Power press at 07:42:40 (`pm_wakeup_irq`
+  69, `pm8941_pwrkey`): one suspend, 42592 s, success 2 -> 3, fail 0.
+  - `vmin` +41123 s, 97 % of the sleep.
+  - The charge counter fell 3585951 -> 3441934 µAh over 42653 s between
+    the logger's last plugged and first replugged samples: 144 mAh, a
+    mean of about 12.2 mA, 100 -> 97 %.
+  - ModemManager disconnected before the sleep and reconnected after it
+    with the same PID (37714), no core dump. Ping through `qmapmux0.0`
+    then lost nothing.
+  - No Oops, no kernel error, taint unchanged (512, the pclk0 warning at
+    boot).
 
 Not yet tested: a sleep of hours on oma18, pairing a device across a
 sleep, and auto-suspend at boot.

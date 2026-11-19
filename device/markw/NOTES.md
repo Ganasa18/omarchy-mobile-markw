@@ -3,6 +3,21 @@
 
 Findings from real hardware, newest first. Plan: [ENGINEERING-PLAN.md](ENGINEERING-PLAN.md); first-light runbook: [BRINGUP-M1.md](BRINGUP-M1.md).
 
+## 2026-11-19: overnight soak with data up passes (7.1.3-msm8953-oma19, device-markw 0.1.27, modemmanager 1.24.2-2.3)
+
+- ModemManager 2.3 (netlink use-after-free fixed) passed the 1 s and 5 s
+  reconnects that crashed 2.1, and a guarded 60 s data-on suspend
+  (BRINGUP-SUSPEND CD).
+- Then an overnight auto-suspend with data on LTE (BRINGUP-SUSPEND CE):
+  - 11 h 50 min asleep, woken by Power, `vmin` for 97 % of it;
+  - about 12.2 mA by the charge counter (144 mAh, 100 -> 97 %);
+  - ModemManager kept its PID through the sleep and the reconnect, no
+    core dump, no kernel error.
+- The timeout-guarded logger recorded every sample this time.
+- This closes AA and the long-sleep risk in BRINGUP-M9 §1.
+- Auto-suspend is still started by hand. Enabling it at boot is next,
+  with the owner's go.
+
 ## 2026-11-18: second soak, vmin 97 % of the sleep, ModemManager segfaults on resume (7.1.3-msm8953-oma19, device-markw 0.1.27, modemmanager 1.24.2-2.1)
 
 - `omamobile-autosuspend` started by hand again, mobile data up on LTE.
