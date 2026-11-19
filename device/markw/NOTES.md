@@ -14,6 +14,13 @@ kept: the RAM path works again, `boot` hashes as the backup, the eMMC is
 `ro=1`, MIUI not booted. Cause unknown; details and next steps in
 [BRINGUP-M9.md](BRINGUP-M9.md) P3.
 
+Retry the same day: `boot` written with lk2nd followed by the oma19 probe
+at 512 KiB (no MIUI leftovers where lk2nd looks), then a boot with no
+reboot reason at all (cable out, Power only): the Mi logo again. lk2nd
+loaded from `boot` by stock aboot does not come up on this phone; loaded
+by `fastboot boot` it always does. MIUI ran once in between (a poweroff
+with the cable in powered it on), so the NV set needs a check.
+
 ## 2026-11-19: the idle shell ran a 60 Hz animation timer (7.1.3-msm8953-oma19, omamobile-shell 0.2.44 to 0.2.45)
 
 With nothing on screen to animate, quickshell's main thread woke about 75

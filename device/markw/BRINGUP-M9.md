@@ -417,6 +417,33 @@ by keys only (Volume Down + Power from a power-off, no reboot argument from
 Linux), write lk2nd, and leave fastboot with `fastboot continue` or a power
 hold. It needs the owner's go and reopening the gate.
 
+**Retry (2026-11-19, owner's go): fails the same way; H1 holds.** To rule
+out MIUI's leftovers as well, `boot` got one image: lk2nd 23.1 (pinned
+hash), zeros to 512 KiB, then the oma19 microSD probe (its `SHA256SUMS`
+hash), 16873472 bytes, written once from stock fastboot by hand (the
+installer has no such command; the gate stayed `ram-only`). lk2nd thus
+found a valid Android image where it looks for Linux.
+
+- A `systemctl poweroff` with the cable in powered the phone straight
+  back on into MIUI (`boot` still held MIUI's image), so MIUI ran once:
+  check the NV set against the backup before more modem work.
+- Stock fastboot reached by `adb reboot bootloader`; the image written
+  (OKAY); `fastboot continue` (OKAY): the FASTBOOT screen stayed, the USB
+  device went away, and no SSH within 5 minutes.
+- Power held, then a Power-only boot: stock fastboot again after 136 s
+  (`oem log` unknown, no `partition-size:lk2nd`).
+- **The decisive one, no reboot reason at all:** cable out, Power held
+  until off, Power alone: the Mi logo stayed. H2 is out.
+
+So on this markw, lk2nd 23.1 does not come up when stock aboot loads it
+from `boot`, whatever follows it, while the same file loaded by `fastboot
+boot` always does. Being worked on next (offline): why aboot's flash path
+differs from its RAM path for this image (the separate QCDT, `dt_size`
+8192, is the one header difference from MIUI's), and other boot routes
+(an image aboot accepts from flash that chains to lk2nd, or the kernel
+without lk2nd). Until then `boot` goes back to MIUI's image and the phone
+boots Omarchy through the laptop as before.
+
 **Rollback at any point:** Volume Down + Power gives stock fastboot whatever
 `boot` holds; `fastboot flash boot install-backup/20261117T003912Z/boot.img`
 puts MIUI's boot image back (§4.2 step 2), and MIUI boots, its `userdata`
