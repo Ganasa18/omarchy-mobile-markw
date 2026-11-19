@@ -3,6 +3,46 @@
 
 Findings from real hardware, newest first. Plan: [ENGINEERING-PLAN.md](ENGINEERING-PLAN.md); first-light runbook: [BRINGUP-M1.md](BRINGUP-M1.md).
 
+## 2026-11-19: systemd audit (7.1.3-msm8953-oma19, device-markw 0.1.28, read-only)
+
+Taken on a cold-booted phone, 48 min up, cable in, screen off.
+
+**Healthy:**
+- Boot is 22.5 s (kernel 4.3 s, userspace 18.2 s), with no failed unit,
+  system or user.
+- PID 1 used 20 ms of CPU a minute, and the whole phone was 1.7 % busy
+  over 20 s.
+- Memory: 1.1 GiB available of 2.8 GiB, zram swap unused. quickshell
+  holds 520 MiB RSS and Hyprland 184 MiB.
+- No surplus system services: each running one has a job on the phone
+  (tqftpserv and rmtfs for the modem, networkd for `usb0`, udisks2 for
+  OTG drives).
+
+**Findings, worst first:**
+1. NetworkManager logs `device (qrtr0): mtu: failure to set MTU` and
+   `do-change-link[6]: failure 22` every 30 s while data is up (99 times
+   in 48 min). The bearer reports MTU 1500, but `qmapmux0.0` is 1496: its
+   parent `rmnet_ipa0` is 1500 and QMAP takes 4 bytes. `rmnet_ipa0`
+   allows up to 2012, so a 1504 parent would let the mux link take the
+   bearer's 1500.
+2. quickshell used 1.95 s of CPU a minute with the panel off
+   (`dpmsStatus: 0`), the largest user by far (1 min 39 s since boot).
+   It matters while the phone is awake with the screen off (cable in,
+   audio, stay-awake), and probably while the screen is on as well.
+3. The Wi-Fi regulatory domain is world (`00`): `set-wireless-regdom`
+   exits 1 at boot because `/etc/conf.d/wireless-regdom` names no
+   country. Setting it is a per-phone setting and stays out of the repo.
+4. feedbackd 0.8.9's udev rule runs `/usr/libexec/fbd-ledctrl`, but the
+   package installs `/usr/lib/fbd-ledctrl`, so three LED lines fail at
+   each boot. Our own LED rules don't use it.
+5. `plocate-updatedb.timer` and `man-db.timer` run daily: the first
+   rescans the whole microSD for `locate`, which the phone doesn't use.
+6. udev's coldplug sits idle from about 7.4 s to 13.1 s: module
+   autoloads (camss, rtc, qrtr, the compass) only begin at 13.4 s. Not
+   chased, since the whole boot is 22.5 s.
+7. systemd-homed, userdbd and nsresourced run with no home areas. They
+   stay, since `pam_systemd_home` is in the login stack.
+
 ## 2026-11-19: overnight soak with data up passes (7.1.3-msm8953-oma19, device-markw 0.1.27, modemmanager 1.24.2-2.3)
 
 - ModemManager 2.3 (netlink use-after-free fixed) passed the 1 s and 5 s
