@@ -408,9 +408,14 @@ answer is a refusal, not a warning.
    (`fastboot oem log` from the menu's fastboot afterwards).
 2. **Whether a late key reaches lk2nd's menu** after stock aboot (§3).
    Convenience only; the stock-fastboot route always works.
-3. Whether MIUI's `userdata` is encrypted (FDE). Low priority: the owner
-   does not keep MIUI's data, P4 reformats it, and a restore that MIUI
-   rejects after `fastboot erase` is retried with `fastboot format`.
+3. ~~Whether MIUI's `userdata` is encrypted (FDE).~~ Answered 2026-11-19,
+   read-only from Linux: yes. `blkid -p` finds no filesystem, there is no
+   ext4 magic at byte 1080, and the last 16 KiB hold Android's crypto
+   footer (magic 0xD0B5B1C4, version 1.3). Its key is bound to the
+   keymaster and the owner's PIN, so Linux cannot read MIUI's files; a copy
+   of them would have to come from a MIUI boot (then a fresh modem backup,
+   §4.1). P4 reformats it; a restore that MIUI rejects after `fastboot
+   erase` is retried with `fastboot format`.
 4. ~~A boot loop with no laptop.~~ Decided: the initramfs's three-try
    count (§3). Still [A]: whether stock aboot honours the `bootloader`
    reason from Linux (it did for `tools/markw-debug fastboot` on 2026-11-17,
