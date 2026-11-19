@@ -18,13 +18,17 @@ Nothing in §6 past step P2 runs until all of these hold:
 
 | Prerequisite | State (2026-11-19) |
 | --- | --- |
-| Port at least 90 % (owner's gate) | about 90 % (2026-11-19; was 89 %, then 86 %). The last point is the systemd audit closed: all four findings fixed or ruled out, the last the idle shell's 60 Hz call-card animation (omamobile-shell 0.2.45, NOTES). The weights are estimates, so this is at the gate, not past it. Still open: earpiece, headphone and volume limits; the ESP32 upload; the §2 approval below |
+| Port at least 90 % (owner's gate) | about 90 % (2026-11-19; was 89 %, then 86 %). The last point is the systemd audit closed: all four findings fixed or ruled out, the last the idle shell's 60 Hz call-card animation (omamobile-shell 0.2.45, NOTES). The weights are estimates, so this is at the gate, not past it. Still open: earpiece, headphone and volume limits; the ESP32 upload |
 | M3-M8 evidence | display, GPU, touch, Wi-Fi, BT, audio, mobile data, charger (R2 passed 2026-11-17), sensors in the BRINGUP docs. The overnight data-on sleep (AA) passed 2026-11-19 with modemmanager 1.24.2-2.3: 11 h 50 min, vmin 97 %, about 12 mA, no crash (BRINGUP-SUSPEND CE). Auto-suspend is enabled at boot from device-markw 0.1.28 (installed 2026-11-19). Cold boots: 4 of 4 passed 2026-11-19 (the owner cut the plan's ten to four, next to ten warm reboots passed 2026-11-18; BRINGUP-KERNEL), with auto-suspend active at every boot |
-| Approved amendment to the non-A/B safety policy (§2) | not yet: needs the owner's explicit approval of §2 |
+| Approved amendment to the non-A/B safety policy (§2) | approved by the owner 2026-11-19, as written in §2: `boot` and `userdata` only, each write still gated step by step |
 | Restore rehearsal (§6 P1, then P7) | P1 (no write) passed 2026-11-17; P7 after the install |
 | No open critical risk | a hang in a long sleep: closed 2026-11-19. A 19 h auto-suspend (2026-11-18) and an 11 h 50 min one on the fixed stack (device-markw 0.1.27, modemmanager 1.24.2-2.3) both woke cleanly on Power |
 
 ## 2. Writable-partition allowlist (policy amendment)
+
+**Approved by the owner on 2026-11-19**, for markw only and as written
+below. The approval doesn't start the install: each step from P3 on still
+waits for the owner's go.
 
 The repository rule is "never an unsuffixed flash". markw has no A/B slots,
 so a persistent install cannot follow it. The proposed amendment for this
