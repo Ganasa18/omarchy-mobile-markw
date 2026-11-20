@@ -18,23 +18,39 @@ fail() { echo "not ok - $*" >&2; exit 1; }
 # constant on purpose, so the test edits a copy rather than the tool.
 head -c 368656 /dev/urandom > "$W/lk2nd.img"
 pin=$(sha256sum < "$W/lk2nd.img" | cut -d' ' -f1)
-sed "s/^LK2ND_SHA256=.*/LK2ND_SHA256=$pin/" tools/markw-install > "$W/markw-install"
+{ printf 'ANDROID!'; head -c 524280 /dev/zero; printf 'ANDROID!'; } > "$W/p3.img"
+p3pin=$(sha256sum < "$W/p3.img" | cut -d' ' -f1)
+sed -e "s/^LK2ND_SHA256=.*/LK2ND_SHA256=$pin/" \
+  -e "s/^P3_SHA256=.*/P3_SHA256=$p3pin/" \
+  -e "s|^REF=.*|REF=\"$W/ref\"|" tools/markw-install > "$W/markw-install"
 chmod +x "$W/markw-install"
 
 # --- Fake fastboot: answers from $FB_* and logs every call ---
 cat > "$W/fastboot" <<'EOF'
 #!/bin/bash
+targeted=0
+if [[ $1 == -s ]]; then
+  [[ $2 == X ]] || exit 2
+  targeted=1
+  shift 2
+fi
 echo "$*" >> "$CALLS"
 case $1 in
   devices) case ${FB_MODE:-stock} in none) ;; two) printf 'A\tfastboot\nB\tfastboot\n' ;; *) printf 'X\tfastboot\n' ;; esac ;;
   getvar)
     case $2 in
       product) echo "product: ${FB_PRODUCT-markw}" ;;
-      partition-size:lk2nd) case ${FB_MODE:-stock} in lk2nd) echo "partition-size:lk2nd: 0x80000" ;; odd) echo "partition-size:lk2nd: 0x100000" ;; *) echo "partition-size:lk2nd: " ;; esac ;;
+      lk2nd:compatible) echo "lk2nd:compatible: ${FB_COMPATIBLE-}" ;;
+      partition-size:lk2nd) case ${FB_MODE:-stock} in lk2nd) echo "partition-size:lk2nd: 0x80000" ;; odd) echo "partition-size:lk2nd: 0x100000" ;; error) exit 1 ;; malformed) ;; *) echo "partition-size:lk2nd: " ;; esac ;;
       battery-voltage) echo "battery-voltage: ${FB_BATTERY:-}" ;;
     esac
     echo "Finished. Total time: 0.001s" ;;
-  flash|erase|format|boot) echo "OKAY" ;;
+  flash)
+    if [[ -n ${FB_EXPECT_IMAGE:-} ]]; then
+      ((targeted)) && cmp -s "$3" "$FB_EXPECT_IMAGE" || exit 3
+    fi
+    echo "OKAY" ;;
+  erase|format|boot) echo "OKAY" ;;
 esac
 exit 0
 EOF
@@ -46,8 +62,17 @@ cat > "$W/ssh" <<'EOF'
 #!/bin/bash
 c="$*"
 [[ $c == "uname -r" ]] && { echo "${PHONE_RELEASE:-}"; exit 0; }
-[[ $c == *dmesg* ]] && { echo "${PHONE_OOPS:-0}"; exit 0; }
+if [[ $c == *dmesg* ]]; then
+  echo "${PHONE_OOPS:-0}"
+  [[ $c != *'grep -cE'* || ${PHONE_OOPS:-0} != 0 ]]
+  exit
+fi
 [[ $c == "cat /proc/1/comm" ]] && { echo "${PHONE_PID1-systemd}"; exit 0; }
+if [[ $c == *"MAJ:MIN"* ]]; then
+  [[ $c == *"findmnt -rn -o MAJ:MIN"* ]] || exit 1
+  echo "${PHONE_ROOT_UUID-$TRIAL_UUID}"
+  exit 0
+fi
 [[ $c == "test -s /etc/omamobile-emmc-root" ]] && { [[ -n ${PHONE_EMMC_INITRAMFS:-} ]]; exit; }
 c=${c//\/sys\/class\/block/$FSYS}; c=${c//\/dev\//$FDEV/}
 bash -c "$c"
@@ -64,7 +89,7 @@ mkblk() { # NAME TYPE PARTNAME [FILE]
 
 # --- Synthetic backups ---
 sums() { (cd "$1" && for f in "${@:2}"; do echo "$(sha256sum < "$f" | cut -d' ' -f1)  $f"; done) > "$1/phone-sums.txt"; cp "$1/phone-sums.txt" "$1/laptop-sums.txt"; }
-IB=$W/ib/20261117T003912Z; NV=$W/nv/20261117T030058Z-after-miui
+IB=$W/ref/install-backup/20261117T003912Z; NV=$W/nv/20261117T030058Z-after-miui
 mkdir -p "$IB" "$NV"
 { printf 'ANDROID!'; head -c 1000 /dev/urandom | tr -d 'k'; } > "$IB/boot.img"
 truncate -s 67108864 "$IB/boot.img"
@@ -79,6 +104,12 @@ P=$W/probe; mkdir -p "$P"
 echo "$(sha256sum < "$P/boot.img" | cut -d' ' -f1)  boot.img" > "$P/SHA256SUMS"
 echo "7.1.3-msm8953-oma99" > "$P/kernel.release"
 echo emmc > "$P/root-on"
+TRIAL_UUID=5f744131-7dac-429b-8b38-9148cf07210b
+printf '%s\n' "$TRIAL_UUID" > "$P/root-uuid"
+export TRIAL_UUID
+printf '#!/bin/sh\nexit 0\n' > "$W/sleep"
+chmod +x "$W/sleep"
+export PATH=$W:$PATH
 
 conf_open=$W/open.conf; conf_shut=$W/shut.conf
 echo BOOT_METHOD=lk2nd-emmc > "$conf_open"; echo BOOT_METHOD=ram-only > "$conf_shut"
@@ -92,8 +123,9 @@ run() { # EXPECT(0|1) CONF ARGS...: runs with fresh call log
   local want=$1 conf=$2; shift 2
   : > "$CALLS"
   set +e
-  MARKW_DEVICE_CONF=$conf "$W/markw-install" "$@" > "$W/out" 2>&1 < "${STDIN:-/dev/null}"
-  local rc=$?
+  # Drain the installer's tee process before the next test reuses the output file.
+  MARKW_DEVICE_CONF=$conf "$W/markw-install" "$@" 2>&1 < "${STDIN:-/dev/null}" | cat > "$W/out"
+  local rc=${PIPESTATUS[0]}
   set -e
   if [[ $want == 0 ]]; then
     [[ $rc == 0 ]] || { cat "$W/out" >&2; fail "expected success: $*"; }
@@ -110,6 +142,37 @@ run 1 "$conf_shut" -y --battery-checked restore; ok "ram-only descriptor refuses
 run 1 "$conf_shut" -y --battery-checked commit "$P/boot.img"; ok "ram-only descriptor refuses commit"
 run 0 "$conf_shut" -y --battery-checked --dry-run lk2nd
 says "DRY: .*flash boot"; [[ $(writes) == 0 ]] || fail "dry run wrote"; ok "dry run prints the write and writes nothing"
+
+# --- Combined P3 microSD trial and boot-only rollback ---
+run 1 "$conf_shut" -y --battery-checked p3-test "$W/p3.img"; says "writes need lk2nd-emmc"
+run 1 "$conf_shut" -y --battery-checked restore-boot; says "writes need lk2nd-emmc"
+run 0 "$conf_shut" -y --dry-run --battery-checked p3-test "$W/p3.img"
+says "DRY: .*flash boot $W/p3.img"; [[ $(writes) == 0 ]] || fail "P3 dry run wrote"
+run 0 "$conf_shut" -y --dry-run --battery-checked restore-boot
+says "DRY: .*flash boot $IB/boot.img"; [[ $(writes) == 0 ]] || fail "rollback dry run wrote"
+ok "P3 and its rollback obey the write gate and dry-run mode"
+FB_MODE=lk2nd run 1 "$conf_open" -y --battery-checked p3-test "$W/p3.img"; says "needs stock fastboot"
+FB_MODE=lk2nd run 1 "$conf_open" -y --battery-checked restore-boot; says "needs stock fastboot"
+FB_MODE=error run 1 "$conf_open" -y --battery-checked p3-test "$W/p3.img"; says "cannot verify stock fastboot"
+FB_MODE=malformed run 1 "$conf_open" -y --battery-checked restore-boot; says "cannot verify stock fastboot"
+FB_PRODUCT=flame run 1 "$conf_open" -y --battery-checked p3-test "$W/p3.img"; says "not a markw"
+FB_BATTERY=3500000 run 1 "$conf_open" -y p3-test "$W/p3.img"; says "3500 mV"
+printf 'flame\n' > "$W/typed"
+STDIN=$W/typed run 1 "$conf_open" --battery-checked p3-test "$W/p3.img"; says "nothing was written"
+cp "$W/p3.img" "$W/tampered.img"; printf x >> "$W/tampered.img"
+run 1 "$conf_open" -y --battery-checked p3-test "$W/tampered.img"; says "not the pinned P3 image"
+ok "P3 refuses a changed image, wrong target, low battery or missing confirmation"
+run 1 "$conf_open" -y --battery-checked p3-test "$W/p3.img"; says "type the codename"
+printf 'markw\n' > "$W/typed"
+STDIN=$W/typed FB_EXPECT_IMAGE=$W/p3.img run 0 "$conf_open" --battery-checked p3-test "$W/p3.img"
+[[ $(tail -n1 "$CALLS") == 'flash boot '* ]] || fail "P3 did not end with its boot write"
+[[ $(writes) == 1 ]] || fail "P3 issued more than one write"
+STDIN=$W/typed FB_EXPECT_IMAGE=$IB/boot.img run 0 "$conf_open" --battery-checked restore-boot
+[[ $(tail -n1 "$CALLS") == 'flash boot '* ]] || fail "P3 rollback did not end with its boot write"
+[[ $(writes) == 1 ]] || fail "P3 rollback touched more than boot"
+ok "P3 and boot-only rollback each issue exactly one stock flash boot"
+MARKW_INSTALL_BACKUP=$W/other-set run 0 "$conf_shut" -y --dry-run --battery-checked restore-boot
+says "DRY: .*flash boot $IB/boot.img"; ok "P3 rollback always uses the canonical P0 backup"
 
 # --- lk2nd (P3) ---
 run 0 "$conf_open" -y --battery-checked lk2nd
@@ -136,7 +199,7 @@ FB_BATTERY=4050000 run 0 "$conf_open" -y lk2nd; ok "battery in microvolts accept
 mv "$IB/boot.img" "$W/boot.keep"
 run 1 "$conf_open" -y --battery-checked lk2nd; says "boot.img missing"; ok "missing MIUI boot.img refused"
 mv "$W/boot.keep" "$IB/boot.img"
-cp "$IB/laptop-sums.txt" "$W/sums.keep"; sed -i '1s/^./0/' "$IB/laptop-sums.txt"
+cp "$IB/laptop-sums.txt" "$W/sums.keep"; sed -i '1s/^./z/' "$IB/laptop-sums.txt"
 run 1 "$conf_open" -y --battery-checked lk2nd; says "differ"; ok "phone and laptop sums that disagree refused"
 cp "$W/sums.keep" "$IB/laptop-sums.txt"
 cp "$IB/boot.img" "$W/boot.keep"; printf 'lk2nd' | dd of="$IB/boot.img" bs=1 seek=4096 conv=notrunc status=none
@@ -155,6 +218,12 @@ echo markw > "$W/typed"
 STDIN=$W/typed run 0 "$conf_open" --battery-checked lk2nd; ok "the typed codename accepted"
 
 # --- trial and commit (P6, updates) ---
+FB_MODE=lk2nd FB_PRODUCT=lk2nd-msm8953 FB_COMPATIBLE=xiaomi,markw run 0 "$conf_shut" --dry-run trial "$P/boot.img"
+says "DRY: .*boot"; ok "trial accepts lk2nd's product after verifying the Markw board"
+FB_MODE=lk2nd FB_PRODUCT=lk2nd-msm8953 FB_COMPATIBLE=other,board run 1 "$conf_shut" --dry-run trial "$P/boot.img"
+says "not a markw"; ok "lk2nd on another MSM8953 board is refused"
+FB_MODE=lk2nd PHONE_RELEASE=7.1.3-msm8953-oma99 PHONE_ROOT_UUID=other run 1 "$conf_shut" trial "$P/boot.img"
+says "root is not the expected eMMC userdata"; ok "a trial on the wrong root never records a pass"
 FB_MODE=lk2nd run 1 "$conf_open" -y --battery-checked commit "$P/boot.img"; says "no passed trial"; ok "commit without a trial refused"
 run 1 "$conf_shut" -y trial "$P/boot.img"; says "needs lk2nd fastboot"; ok "trial refused from stock fastboot"
 FB_MODE=lk2nd PHONE_RELEASE=7.1.3-msm8953-oma19 run 1 "$conf_shut" -y trial "$P/boot.img"
@@ -236,7 +305,7 @@ run 0 "$conf_shut" -y --dry-run copy; says "DRY: copy"; ok "copy dry run only pr
 mkdir -p "$W/ci/etc"; echo "$U2" > "$W/ci/etc/omamobile-emmc-root"
 script=$(sed -n "/^COPY_SCRIPT='/,/^echo \"copied; a second pass finds nothing to copy\"'/p" tools/markw-install | sed "1s/^COPY_SCRIPT='//; \$s/'\$//")
 script=${script//\/etc\/omamobile-emmc-root/$W/ci/etc/omamobile-emmc-root}
-script=${script//\/usr\/lib\/systemd\/systemd/$W/ci/no-systemd}
+script=${script/\/usr\/lib\/systemd\/systemd/$W/ci/no-systemd}
 script=${script//\/sys\/class\/block/$W/sys}
 script=${script//\/dev\//$W/dev/}
 echo 1 > "$W/sys/mmcblk1p49/ro"
@@ -246,10 +315,40 @@ echo 0 > "$W/sys/mmcblk1p49/ro"; echo "11111111-2222-3333-4444-555555555555" > "
 set +e; bash -c "$script" >/dev/null 2>&1; rc=$?; set -e
 [[ $rc == 4 ]] || fail "copy script: another UUID gave $rc, not 4"; ok "copy refuses a userdata with another UUID"
 
+# Check that selecting a source never repairs the card or replays its journal.
+echo "$U2" > "$W/sys/mmcblk1p49/uuid"
+printf 'ext4\n' > "$W/sys/mmcblk0p2/fstype"
+mkdir -p "$W/ci/mnt/old/usr/lib/systemd"
+printf '#!/bin/sh\n' > "$W/ci/mnt/old/usr/lib/systemd/systemd"
+chmod +x "$W/ci/mnt/old/usr/lib/systemd/systemd"
+script=${script//\/mnt\//$W/ci/mnt/}
+cat > "$W/e2fsck" <<'EOF'
+#!/bin/bash
+printf 'fsck %s\n' "$1" >> "$CALLS"
+exit "${FSCK_STATUS:-0}"
+EOF
+cat > "$W/mount" <<'EOF'
+#!/bin/bash
+printf 'mount %s\n' "$*" >> "$CALLS"
+[[ $1 == -o ]] && exit 0
+exit 1
+EOF
+printf '#!/bin/sh\nexit 0\n' > "$W/umount"
+chmod +x "$W/e2fsck" "$W/mount" "$W/umount"
+: > "$CALLS"
+set +e; FSCK_STATUS=4 bash -c "$script" >/dev/null 2>&1; rc=$?; set -e
+[[ $rc == 5 ]] || fail "copy mounted a source whose fsck failed"
+[[ $(cat "$CALLS") == 'fsck -fn' ]] || fail "copy did not stop after a read-only source check"
+: > "$CALLS"
+set +e; bash -c "$script" >/dev/null 2>&1; rc=$?; set -e
+[[ $rc == 4 ]] || fail "copy test did not reach the stubbed destination mount failure"
+grep -q '^mount -o ro,noload ' "$CALLS" || fail "microSD mount did not disable journal replay"
+ok "copy checks and mounts the microSD without modifying the filesystem"
+
 # --- The tool's own text ---
-n=$(grep -cE '"\$FASTBOOT" (flash|erase|format)' tools/markw-install)
+n=$(grep -cE '"\$FASTBOOT" ("\$\{FB_TARGET\[@\]\}" )?(flash|erase|format)' tools/markw-install)
 [[ $n == 3 ]] || fail "expected three fastboot writes in the tool, found $n"
-grep -qE '"\$FASTBOOT" flash boot "\$1"$' tools/markw-install || fail "flash target is not the constant boot"
+grep -qE '"\$FASTBOOT" "\$\{FB_TARGET\[@\]\}" flash boot "\$1"$' tools/markw-install || fail "flash target is not the constant boot"
 grep -qE '"\$FASTBOOT" erase userdata$' tools/markw-install || fail "erase target is not the constant userdata"
 grep -qE '"\$FASTBOOT" format:ext4 userdata$' tools/markw-install || fail "format target is not the constant userdata"
 ! grep -nE 'DRY: .*(flash|erase|format:ext4) [a-z_]*\$' tools/markw-install || fail "a dry-run line takes a partition from a variable"

@@ -1,13 +1,15 @@
 # markw M9: persistent-install design
 
-**Status (2026-11-17):** design only. **No persistent write happens in this
-milestone** ([ENGINEERING-PLAN](ENGINEERING-PLAN.md) §9.4, §21 M9). The phone
-still boots RAM-only (`BOOT_METHOD=ram-only`, lk2nd and the probe both loaded
-by `fastboot boot`), and every eMMC partition stays `ro=1`. This document
-gives the M9 deliverables: the exact writable-partition allowlist, the boot
-chain, the way back to MIUI, the kernel-update transaction and rollback, and
-the installer's threat model and negative tests. It also gives a gated
-runbook, whose write steps belong to M10 and need the owner's go.
+**Status (2026-11-19): M10 P5 passed.** The last verified session reached
+`graphical.target` on ext4 eMMC `userdata` with the oma19 probe loaded
+into RAM. Installed `boot` still contains P3, whose normal boot uses
+the microSD root. P6 (permanent eMMC-root boot) and P7 (restore rehearsal)
+are pending. The tracked descriptor remains `BOOT_METHOD=ram-only`.
+
+M9 established the writable-partition allowlist, the boot chain and
+rollback, and the installer's negative tests ([ENGINEERING-PLAN](ENGINEERING-PLAN.md)
+§9.4, §21 M9). Hardware writes belong to the gated M10 runbook and
+require the owner's go for each step.
 
 Evidence tags as in [BRINGUP-M1](BRINGUP-M1.md): **[V]** verified on this
 phone or in pinned source, **[A]** assumption still to check.
@@ -444,24 +446,181 @@ through the laptop, `boot` hashes as the backup, all eMMC partitions
 `ro=1`. Against the 2026-11-17 NV set, MIUI's run changed `modemst1`,
 `modemst2` and `persist` (`fsg`, `fsc`, `sec` unchanged), so a fresh
 read-only set was taken: `20261119T141617Z-after-miui`, phone and laptop
-sums agreeing on all six. Being worked on next (offline): why aboot's flash path
-differs from its RAM path for this image (the separate QCDT, `dt_size`
-8192, is the one header difference from MIUI's), and other boot routes
-(an image aboot accepts from flash that chains to lk2nd, or the kernel
-without lk2nd). Until then `boot` goes back to MIUI's image and the phone
-boots Omarchy through the laptop as before.
+sums agreeing on all six. The laptop RAM boot remains the working route.
 
 **Rollback at any point:** Volume Down + Power gives stock fastboot whatever
 `boot` holds; `fastboot flash boot install-backup/20261117T003912Z/boot.img`
 puts MIUI's boot image back (§4.2 step 2), and MIUI boots, its `userdata`
 untouched until P4.
 
+#### P3 diagnosis (2026-11-19, offline)
+
+- **[V, capture]** In the P0 stock `aboot.img`, the eMMC loader enters its
+  QCDT branch at `0x8f62aa1c` when `dt_size` is nonzero. It calls the
+  table validator (`0x8f61933c`) and selector (`0x8f619408`), then returns
+  an error at `0x8f62ae08` if selection fails. Normal boot can then fall
+  back to stock fastboot (`0x8f62efac`). The RAM loader calls the same
+  validator and selector through `0x8f62c35c`, then tries the appended-DTB
+  scanner at `0x8f62c8c4` on failure. The eMMC loader reaches that scanner
+  at `0x8f62a9d4` when `dt_size` is zero.
+- **[V, image]** Pinned lk2nd 23.1 has a QCDT v2 at image offset `0x58000`
+  with nine entries within the table bounds. Its MSM8953 entries have
+  variant low bytes `0x44`, `0x45` or `0x46`. The stock selector compares
+  that byte against the hardware variant. The Markw pair is `0x1000b/1`
+  on MSM8953 (`293`), as in [BRINGUP-M1](BRINGUP-M1.md). That pair is in
+  the contiguous appended list at kernel offset `0x52484`. The stock
+  scanner reads the list start (`0x4cff4`) at kernel offset `0x2c`.
+  MIUI's backed-up image uses appended DTBs (`dt_size = 0`).
+- **[A]** This makes QCDT selection failure the leading explanation for
+  P3. No live aboot trace confirms which error occurred. A stale Mi or
+  fastboot splash can outlast a USB state change. Check USB enumeration
+  and fastboot variables to identify the loader, then SSH and PID 1 to
+  confirm Linux reached the installed root.
+
+**Test candidate.** Set `dt_size` to zero, remove the 8192-byte QCDT at
+`0x58000`, and retain the `SEANDROIDENFORCE` footer. Recompute the legacy
+SHA-1 image ID from the kernel, ramdisk and empty second stage, each
+followed by its four-byte little-endian size. The ARM payload, appended
+DTBs, ramdisk and load addresses are byte-identical. The offline build is
+`out/markw/probe-lk2nd-appended-dtb/lk2nd-msm8953.img`, 360464 bytes,
+SHA-256 `4084b1818b54c63014c44c6ccf68e2844c9efab3b35579b1bfb20588a51fa1b8`.
+
+| Step | Run | Pass / stop | Rollback | Risk |
+| --- | --- | --- | --- | --- |
+| Identify the stage, read-only | `fastboot devices`; for one device, `fastboot getvar product` and `fastboot getvar partition-size:lk2nd`. If USB NCM is up, `tools/phone-ssh --fresh 'uname -r; cat /proc/1/comm'` | Stock `markw` is the candidate's starting point. Stop on no USB response, a different product or multiple devices. `systemd` confirms the real root | None | Low |
+| Candidate RAM trial, after the owner's go | From stock fastboot, `fastboot boot out/markw/probe-lk2nd-appended-dtb/lk2nd-msm8953.img`. Once lk2nd is confirmed, separately approve `fastboot boot out/markw/probe-oma19/boot.img` | lk2nd enumerates, then `7.1.3-msm8953-oma19` reaches `systemd` from microSD. Stop at the first missing transition or if it stays in initramfs | Return to the pinned original RAM boot after approval | Low |
+| Candidate eMMC trial, still gated | Follow the stock-fastboot preflight and P3 commands below | Cold boot reaches lk2nd, then Omarchy from microSD. Stop before P4 if the installer or rollback is unavailable, or if any transition fails | Use the approved `restore-boot` command and verify the restored image | Medium |
+
+The installer still pins the original image and the descriptor is
+`ram-only`. Direct stock-aboot boot of mainline is a separate option. The
+oma19 image already uses the appended Markw DTB layout, but the handoff
+and recovery without lk2nd would need separate validation.
+
+**RAM trial, first stage (2026-11-19, owner's go).** From a running
+`7.1.3-msm8953-oma19` system, one reboot reached stock fastboot
+(`product: markw`, no `partition-size:lk2nd`). Stock fastboot accepted the
+candidate (`Sending` and `Booting` OKAY). It then enumerated as
+`lk2nd-msm8953` with `partition-size:lk2nd = 0x80000` and
+`partition-size:boot = 0x3f80000`. This confirms stock aboot's RAM path
+can load the repacked image with `dt_size = 0`.
+
+**RAM trial, Linux handoff (2026-11-19, owner's separate go).** The
+SHA-256-checked oma19 probe booted from lk2nd's fastboot (`Sending` and
+`Booting` OKAY). A fresh USB SSH session confirmed `7.1.3-msm8953-oma19`,
+PID 1 `systemd`, active `graphical.target`, and an ext4 root on an SD
+device. All 49 eMMC partitions were read-only. The two-stage RAM trial
+passed.
+
+**Cold boot candidate (laptop only).**
+`out/markw/probe-lk2nd-appended-dtb/boot-p3-microsd.img` is 16873472 bytes,
+SHA-256 `4449558c89092b78df4fe67769d6766c8c05517c31669e921f39773045ba948d`.
+Checked byte for byte: RAM-tested lk2nd at offset 0, zero padding to
+512 KiB, then the same `probe-oma19/boot.img` with the microSD root.
+The P0 rollback `boot.img` matches both recorded checksum lists.
+
+**P3 write and rollback, gated.** `tools/markw-install p3-test IMG` accepts
+only the SHA-256 above. `restore-boot` restores the checked P0 `boot.img`
+without an erase. Both require stock Markw fastboot, verified backup
+sets, the battery check and the typed codename. Both use the canonical
+P0 backup set `20261117T003912Z`. Each verifies a temporary local copy of
+the image before issuing one `flash boot` to the checked USB device. They
+return with the phone still in fastboot.
+
+1. Confirm the microSD root has no `/extlinux`, battery is at least 50%
+   on the cable, eMMC partitions are read-only, and installer `check`
+   passes. With the owner's go, enter stock fastboot. Stop if the
+   product or loader changes or the link drops. **Risk:** low.
+2. With the checked-in descriptor, run `tools/markw-install --dry-run
+   p3-test out/markw/probe-lk2nd-appended-dtb/boot-p3-microsd.img`
+   and `tools/markw-install --dry-run restore-boot`. Each must print
+   exactly one `flash boot` targeting the intended image, with P0's
+   `20261117T003912Z/boot.img` as the rollback. If battery
+   voltage is unavailable, add `--battery-checked` after the owner
+   confirms charge. **Risk:** none.
+3. After approval for this write, create a temporary descriptor with the
+   line `BOOT_METHOD=lk2nd-emmc` and pass it as `MARKW_DEVICE_CONF` only
+   for each separately approved `p3-test` or `restore-boot` invocation.
+   Keep the checked-in descriptor `ram-only`.
+   The owner types `markw`. Expect fastboot `OKAY`; on any write error,
+   stay in stock fastboot and get approval for `restore-boot` with the
+   same temporary descriptor. **Risk:** medium.
+4. With separate approval, power off from stock fastboot, then use Power
+   only with the cable disconnected. Reconnect USB for evidence. Expect
+   oma19 with `systemd`, `graphical.target` and ext4 root on SD. Resolve
+   `boot` by `PARTNAME=boot` on the MMC disk and verify the SHA-256 of
+   its first 16873472 bytes against the pin above. Stop if the image or
+   runtime differs, the Mi logo persists, or stock fastboot comes back.
+   Rollback: enter stock fastboot and use `restore-boot` with the temporary
+   descriptor after approval. To verify without starting MIUI, load the
+   pinned original lk2nd and the microSD probe in RAM after separate
+   approvals. Hash the full read-only MMC `boot` and compare it to P0.
+   **Risk:** medium. A pass here is required before P4.
+
+**Live preflight (2026-11-19, owner's go).** oma19 was running with
+`systemd`, no `/extlinux` on the microSD root, battery at 100%, and the
+read-only eMMC `boot` matching P0. One reboot reached stock `markw`
+fastboot. Both installer dry runs passed with the tracked `ram-only`
+descriptor. Each printed one `flash boot`, for the pinned P3 image and
+the canonical P0 rollback image respectively. The phone stayed in stock
+fastboot until the owner approved the write.
+
+**P3 write (2026-11-19, owner confirmed `markw`).** The gated `p3-test`
+invocation checked the pinned image and P0 backup, then sent and wrote
+`boot` once (`Sending` and `Writing` OKAY). Stock fastboot still reported
+`product: markw` afterwards. The host fastboot printed an AVB footer
+copy warning because the stock partition-size query supplied no value.
+No host reboot command was issued.
+
+**P3 cold boot passed (2026-11-19, `7.1.3-msm8953-oma19`).** After the
+owner booted the phone with the combined image installed, a fresh USB
+SSH session reached `systemd` and active `graphical.target` on
+`xiaomi,markw`. Root was ext4 on microSD and all 49 eMMC partitions were
+read-only. The SHA-256 of the first 16873472 bytes of eMMC `boot`, found
+by `PARTNAME` and device type, matched the P3 image. The host sent no
+RAM boot image after the P3 write. This verifies the `aboot` → installed
+lk2nd → installed oma19 chain with the repacked image. P4–P7 have yet
+to run.
+
 ### P4. Format `userdata` (M10, write, MIUI data lost)
 
-- **Run:** stock fastboot, `tools/markw-install format` (`fastboot
-  format:ext4 userdata`); then RAM-boot today's microSD probe and
-  `tools/markw-install uuid`, which reads the new file system's UUID
-  read-only (by `PARTNAME` and type) into `logs/markw-install/userdata-uuid`.
+- **Preflight (2026-11-19, `7.1.3-msm8953-oma19`):** P3 image still
+  matches eMMC `boot`. The SD root uses 20177637376 bytes and has no
+  `/extlinux`. `userdata` was identified by `PARTNAME` on eMMC, is
+  26301931008 bytes, and has no mounts. All 49 eMMC partitions are
+  read-only. Charge was 87%, charging. Installer `check` passed for the
+  original lk2nd pin and both backup sets. No P4 write has run.
+- **Check before writing:** with approval, enter stock fastboot and
+  verify product `markw`, the stock loader, and the `userdata` size.
+  Run `tools/markw-install --dry-run format`. Expect a single
+  `format:ext4 userdata` operation. Stop on a missing or unexpected
+  answer. **Risk:** low (reboot and reads).
+- **Dry run result (2026-11-19, owner's go):** one reboot from oma19
+  reached stock fastboot; battery was 88%. Fastboot reported `userdata`
+  as ext4 and 26301931008 bytes, matching Linux. The closed-gate dry run
+  printed exactly one `format:ext4 userdata`. The host SDK's `mke2fs`
+  also generated a sparse ext4 test file offline at that logical size
+  rounded down to a 4 KiB boundary. No phone storage was changed.
+- **Run after explicit approval to erase MIUI data:** from stock
+  fastboot, `tools/markw-install format` (`fastboot format:ext4 userdata`),
+  with the temporary descriptor and the owner typing `markw`. Expect
+  successful formatting. Stop on any error; keep the known-good P3
+  `boot` image available for recovery. **Risk:** medium (data loss).
+- **Format result (2026-11-19, owner confirmed `markw`):** the installer
+  issued one `format:ext4 userdata` against the confirmed stock Markw
+  target. `mke2fs` built the ext4 image with 6421369 4 KiB blocks;
+  fastboot reported `Sending` and `Writing` OKAY. The device stayed in
+  stock fastboot until the owner approved a reboot.
+- **Verify:** with separate boot approval, start the installed P3
+  microSD probe. `tools/markw-install uuid` reads the new ext4 UUID by
+  `PARTNAME` and device type into `logs/markw-install/userdata-uuid`.
+  Stop if the running OS or partition check differs from the plan.
+- **Readback passed (2026-11-19, `7.1.3-msm8953-oma19`):** one approved
+  stock-fastboot reboot reached `systemd` and active `graphical.target`
+  from the installed P3 image. On the MMC `PARTNAME=userdata`, `blkid -p`
+  reported ext4 and the same UUID as `mke2fs`. The UUID was kept in
+  `logs/markw-install/userdata-uuid`. `userdata` was unmounted, all 49
+  eMMC partitions were read-only, and the eMMC `boot` prefix still
+  matched P3. The live root remains on microSD.
 - **Then:** build the eMMC image, `tools/build-markw-probe … --root-uuid
   <that UUID> --root-on emmc`.
 - **[A]** Stock aboot supports `format` (it answers `partition-type` and
@@ -471,22 +630,84 @@ untouched until P4.
 
 ### P5. Root filesystem copy (M10)
 
+- **Prepared on the laptop (2026-11-19):**
+  `out/markw/probe-oma19-emmc/boot.img`, 17571840 bytes, SHA-256
+  `9a7b4dd319ec4324abdf30349d99e179433344fb53add7cc7c5605cc35b1634f`.
+  Its kernel and appended DTB are byte-identical to P3. The new
+  initramfs contains the verified P4 eMMC UUID, current storage guard
+  and AArch64 `rsync`. No microSD-root UUID is embedded. Installer and
+  storage-guard tests passed on offline fixtures.
 - **Run:** from lk2nd's fastboot, `fastboot boot` the eMMC image: with an
   empty `userdata` its initramfs finds no systemd and stays, SSH up, with
-  `userdata` writable. Then `tools/markw-install copy`: on the phone it
-  mounts the microSD root read-only (the card's ext4 partition with
-  systemd), refuses an `/extlinux` there (§3), refuses a `userdata` that is
-  not empty or would be more than 90 % full, runs `rsync -aHAX
-  --numeric-ids` and a second dry pass that must find nothing. The root has
-  no `fstab` entries (the initramfs mounts it), so nothing in it names the
-  card.
+  `userdata` writable. Obtain approval for each boot and verify the
+  expected kernel, initramfs PID 1, matching UUID and read-only flags on
+  the other eMMC partitions. Stop if any check fails. **Risk:** low.
+- **Entering lk2nd fastboot with P3 installed (2026-11-19):** stock
+  fastboot accepted the repacked lk2nd in RAM, then Omarchy oma19 came
+  back with `systemd` and active `graphical.target`. No lk2nd USB fastboot
+  interface appeared and the P5 image was never sent. This is consistent
+  with lk2nd's normal autoboot finding the valid P3 image. To interrupt
+  it, use a normal restart and hold Volume Down only after the first
+  splash or vibration, per the [lk2nd 23.1 usage guide][lk2nd-23-usage].
+  Require the lk2nd product and 512 KiB split before sending the probe.
+- **Software-only fallback (2026-11-19):** the late key attempt still
+  reached P3 on this phone. On the laptop, build the pinned lk2nd 23.1
+  source (`e9c8b21735c13dd7ace808b1e35451638f0a0c6d`) with
+  `LK2ND_FORCE_FASTBOOT=1`, then repack it with `dt_size = 0` as above.
+  `out/markw/probe-lk2nd-force-fastboot/lk2nd-msm8953.img` has SHA-256
+  `534f80a2f85e16f87a4678e06b62320adddfc25a6775ec1ce00e6597b7968f37`.
+  The appended Markw DTB and compiled fastboot flag were checked
+  offline. This is for `fastboot boot` from stock Markw fastboot. Stop
+  if it does not enumerate as Markw in lk2nd fastboot. The installed P3
+  image stays in `boot` throughout this RAM test.
+- **RAM preflight passed (2026-11-19, `7.1.3-msm8953-oma19`, owner's
+  go):** one software reboot reached stock Markw fastboot. RAM-loaded
+  force-fastboot lk2nd reported Markw and the 512 KiB split. It then
+  loaded the P5 probe, which stayed at PID 1 `init` with USB SSH and
+  `rsync`. The configured UUID matched the unmounted ext4 `userdata`.
+  Of the 49 eMMC partitions, only `userdata` was writable. Both eMMC
+  hardware boot areas were read-only and the whole-disk node was absent.
+  The running probe is ready for the separately approved copy.
+- **Copy after separate approval:** `tools/markw-install copy` checks the
+  microSD source with `e2fsck -fn` and mounts it `ro,noload` (no journal
+  replay). It refuses a source with `/extlinux` (§3), a destination that
+  contains files, or a copy that would consume more than 90% of the
+  available destination space. It runs `rsync -aHAX --numeric-ids` and a
+  second dry pass that must succeed and find nothing, then syncs and
+  unmounts both. The root has no `fstab` entries naming the card. Stop on
+  a dirty source, failed copy, failed verification or failed unmount.
+  **Risk:** low (writes to the prepared `userdata`).
+- **Copy passed (2026-11-19, `7.1.3-msm8953-oma19`, owner's go):**
+  `rsync` copied the 19704668 KiB microSD root. The source stayed mounted
+  read-only, a second dry pass found nothing to copy, and both filesystems
+  were synced and unmounted. Readback found a clean ext4 on `userdata`,
+  the expected UUID, a matching SHA-256 for `/usr/lib/systemd/systemd`,
+  and 4.6 GiB free excluding reserved blocks. The other eMMC partitions
+  stayed read-only. The boot trial from this copied root is pending.
+
+[lk2nd-23-usage]: https://github.com/msm8916-mainline/lk2nd/tree/23.1#usage
 - **Size:** the microSD root holds 19 GB on 2026-11-17, 9.5 GB of it the
   owner's Arduino and PlatformIO toolchains; `userdata` is 24.5 GiB, so about
   5 GiB stay free. Moving those toolchains to the card before P5 is the
   owner's call.
 - **Expect:** `copy done`; then `tools/markw-install trial IMG` reaches
-  systemd as PID 1 (an initramfs answering with the same kernel release
-  fails the trial).
+  systemd as PID 1 and verifies that `/` is the eMMC `userdata` with
+  the UUID recorded in the image. The installer accepts the generic
+  `lk2nd-msm8953` product only with the Markw board identity and the
+  expected split. A boot that never leaves the initramfs or uses the
+  microSD root cannot record a passing trial.
+- **Trial passed (2026-11-19, `7.1.3-msm8953-oma19`, owner's go):** a
+  software reboot from the P5 initramfs reached stock fastboot. The
+  force-fastboot lk2nd and the pinned P5 probe were loaded into RAM.
+  The first installer readback failed because formatted `findmnt` output
+  padded `MAJ:MIN`; raw output fixed the parser. Reading the same
+  running boot confirmed PID 1 `systemd`, active `graphical.target`,
+  ext4 root on MMC `userdata` with the P4 UUID, and no Oops, BUG or
+  kernel panic lines. The boot-try marker cleared. The other eMMC
+  partitions and both hardware boot areas remained read-only, and the
+  installed `boot` prefix still matched P3. The local trial receipt
+  records the verified RAM image after matching the fastboot log to
+  the live readback. No flash was issued during P5.
 - **Rollback:** format again (P4). **Risk:** low.
 
 ### P6. Linux image into `boot` (M10, write)

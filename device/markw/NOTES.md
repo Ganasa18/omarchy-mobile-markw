@@ -3,6 +3,27 @@
 
 Findings from real hardware, newest first. Plan: [ENGINEERING-PLAN.md](ENGINEERING-PLAN.md); first-light runbook: [BRINGUP-M1.md](BRINGUP-M1.md).
 
+## 2026-11-19: M10 P5 RAM trial reaches Omarchy on eMMC `userdata` (7.1.3-msm8953-oma19)
+
+The microSD root was copied read-only to the new ext4 `userdata` and
+the second rsync pass found no differences. With both boot images loaded
+through RAM, Omarchy reached `systemd` and `graphical.target` on the
+expected eMMC UUID. The boot-try marker cleared and all other eMMC
+partitions stayed read-only. Installed `boot` still hashes as P3. See
+[BRINGUP-M9.md](BRINGUP-M9.md) P5 for the image and trial receipt.
+
+## 2026-11-19: M9 P3 boots Omarchy with lk2nd and oma19 installed in eMMC `boot` (7.1.3-msm8953-oma19)
+
+The repacked lk2nd 23.1 uses the appended Markw DTB (`dt_size = 0`).
+After the RAM trial passed, the installer wrote lk2nd at offset 0 and
+the same oma19 microSD probe at 512 KiB in one approved stock-fastboot
+write. The owner then booted the phone. USB SSH confirmed `systemd`,
+active `graphical.target`, an ext4 microSD root, and all 49 eMMC
+partitions read-only. The eMMC `boot` prefix matched the installed P3
+image by SHA-256. See [BRINGUP-M9.md](BRINGUP-M9.md) P3 for the diagnosis,
+image pin and boot-only rollback. P3 still selects the microSD root on a
+normal boot, and the later P5 trial above verifies the eMMC root.
+
 ## 2026-11-19: M9 P3 fails, lk2nd in `boot` does not start; rolled back (7.1.3-msm8953-oma19)
 
 lk2nd 23.1 written into `boot` by `tools/markw-install lk2nd` (OKAY). After
