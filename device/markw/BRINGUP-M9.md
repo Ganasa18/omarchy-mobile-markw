@@ -760,6 +760,35 @@ a known-good `boot`.
 | 6. Cold boot (owner's go) | `fastboot reboot`. If the Mi logo stays more than 60 s: cable out, Power held about 10 s, then Power only | Boot animation, then Omarchy; USB NCM and SSH within 2 min | Bootloop or a hang: Volume Down + Power, stock fastboot, then `p3-test` or `restore-boot` after approval | Medium |
 | 7. Verify, read-only | `tools/markw-install verify out/markw/probe-oma19-emmc/boot.img`; `tools/phone-smoke`; `findmnt /`, `/mnt/sd`, eMMC `ro` flags | `verify passed`, root on `userdata` with the P4 UUID, smoke passes, only `userdata` writable. A second cold boot with the cable out reaches Omarchy too | As step 6 | None |
 
+**Steps 1-5 (2026-11-20, owner's go, owner confirmed `markw`).** `check`
+passed; Linux read 100 %, charging, before the reboot. One
+`systemctl reboot --reboot-argument=bootloader` reached stock `markw`
+fastboot in about 10 s. The force-fastboot lk2nd (`534f80a2…`) booted
+from RAM as `lk2nd-msm8953`, `xiaomi,markw`, split `0x80000`,
+`partition-size:boot` `0x3f80000`. lk2nd reports no battery voltage, so
+the dry run and write used `--battery-checked`. The dry run printed one
+`flash boot` of the P6 image (and showed that a dry-run commit recorded
+the image as committed; fixed, the false record removed). The write:
+`Sending 'boot'` and `Writing 'boot'` OKAY, the phone still in lk2nd
+fastboot. Steps 6-7 pending.
+
+**Steps 6-7 (2026-11-20, `7.1.3-msm8953-oma19`, owner's go).** After
+`fastboot reboot` from lk2nd's fastboot, SSH answered within about 15 s
+with PID 1 `systemd`, booted from flash with no image sent. `/` is ext4
+on MMC `userdata` with the P4 UUID. This boot numbered the eMMC
+`mmcblk1` and the card `mmcblk0`, so every check resolves disks by
+`device/type` and `PARTNAME`, never by index. On the eMMC only
+`userdata` is writable, the whole-disk node is absent, and the hardware
+boot areas are read-only. The card is mounted at `/mnt/sd`, and
+`/mnt/sd/data` belongs to the owner. `verify` passed: `boot` holds the
+installed lk2nd and the P6 image at 512 KiB. `tools/phone-smoke` passed
+every required check: root on `userdata`, no Oops or BUG, no failed
+unit, USB gadget, Hyprland and the shell, display, GPU, touch, Wi-Fi,
+Bluetooth, sound and sensors. Battery read 70 %, charging. The copied root
+still carries device-markw 0.1.31 from the card. `tools/phone-smoke` has
+CRLF line endings in a Windows checkout and only runs from an LF copy.
+The second cold boot with the cable out is pending.
+
 Only after step 7 passes, and a second cold boot does, does the tracked
 descriptor move to `lk2nd-emmc` (a device-markw version bump). Then P7.
 
