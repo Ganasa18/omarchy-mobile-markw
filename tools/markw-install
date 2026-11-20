@@ -402,7 +402,7 @@ case $cmd in
     backups; phone; need lk2nd; charged
     typed "$RELEASE goes into boot after lk2nd's 512 KiB."
     write_boot "$img"
-    echo "$IMG_SHA $RELEASE" >> "$STATE/committed"
+    ((dry)) || echo "$IMG_SHA $RELEASE" >> "$STATE/committed"
     say "done: cold boot it, then 'verify $img'" ;;
 
   verify)
