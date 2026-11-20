@@ -21,7 +21,7 @@ pin=$(sha256sum < "$W/lk2nd.img" | cut -d' ' -f1)
 { printf 'ANDROID!'; head -c 524280 /dev/zero; printf 'ANDROID!'; } > "$W/p3.img"
 p3pin=$(sha256sum < "$W/p3.img" | cut -d' ' -f1)
 sed -e "s/^LK2ND_SHA256=.*/LK2ND_SHA256=$pin/" \
-  -e "s/^P3_SHA256=.*/P3_SHA256=$p3pin/" \
+  -e "s/^P3_SHA256=.*/P3_SHA256=$p3pin/"   -e "s/^INSTALLED_LK2ND_SHA256=.*/INSTALLED_LK2ND_SHA256=$pin/"   -e "s/^INSTALLED_LK2ND_BYTES=.*/INSTALLED_LK2ND_BYTES=368656/" \
   -e "s|^REF=.*|REF=\"$W/ref\"|" tools/markw-install > "$W/markw-install"
 chmod +x "$W/markw-install"
 

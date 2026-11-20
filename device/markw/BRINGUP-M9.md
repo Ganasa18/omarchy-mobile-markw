@@ -721,6 +721,48 @@ to run.
   the old microSD root on it as the §5 way back).
 - **Rollback:** §5 table. **Risk:** medium.
 
+#### P6 runbook (2026-11-20)
+
+**Preflight, read-only (done 2026-11-20, `7.1.3-msm8953-oma19`).** The
+P5 RAM session is still up (since 2026-11-19 23:51 local), PID 1
+`systemd`, `/` on MMC `userdata` with the P4 UUID, `/mnt/sd` mounted, no
+failed unit, no Oops/BUG/panic. Only `userdata` is writable and
+`/dev/mmcblk0` is absent. The trial receipt for
+`probe-oma19-emmc/boot.img` (`9a7b4dd3…`) records
+`7.1.3-msm8953-oma19`. `verify` of that image against the live `boot`
+matches the installed lk2nd prefix and stops at 512 KiB, as expected
+while `boot` still holds P3.
+
+**Installer change.** `verify` used to compare the start of `boot` with
+the original lk2nd pin (`2170c90c…`, QCDT). From P3 on, `boot` starts with
+the repacked lk2nd (`dt_size` 0, 360464 bytes, `4084b181…`), so `verify`
+now checks that pin (`INSTALLED_LK2ND_SHA256`). `tests/markw-install`
+passes (67).
+
+**Bootloop analysis.** The kernel and DTB in the P6 image are
+byte-identical to P3, which booted from flash through the same
+aboot → lk2nd → `boot`+512 KiB path. Only the initramfs differs, and it
+already reached `graphical.target` on `userdata` in the P5 RAM trial. If
+the root cannot be mounted, the initramfs stays up with SSH instead of
+rebooting. A kernel panic would reboot after 10 s (`panic=10`) into the
+same image, which is a loop. aboot is never written, so Volume Down +
+Power always reaches stock fastboot, whatever `boot` holds. From there
+`restore-boot` (MIUI) or `p3-test` (the P3 image, microSD root) puts back
+a known-good `boot`.
+
+| Step | Run | Pass / stop | Rollback | Risk |
+| --- | --- | --- | --- | --- |
+| 1. Check, read-only | `tools/markw-install check`; battery at least 50 % | Backups and pins pass. Stop on any refusal | None | None |
+| 2. To stock fastboot (owner's go; screen goes off, phone reboots) | `tools/phone-ssh 'systemctl reboot --reboot-argument=bootloader'`, then `fastboot getvar product` | `markw`, no `partition-size:lk2nd`. Stop if no device or a different product | Power held, or `fastboot reboot`: lk2nd boots P3 from microSD | Low |
+| 3. lk2nd fastboot in RAM (owner's go) | `sha256sum out/markw/probe-lk2nd-force-fastboot/lk2nd-msm8953.img` (`534f80a2…`), then `fastboot boot` it | `product` `lk2nd-msm8953`, `partition-size:lk2nd` `0x80000`, Markw board. Stop otherwise | Power held; nothing written | Low |
+| 4. Dry run | `tools/markw-install --dry-run commit out/markw/probe-oma19-emmc/boot.img` | Exactly one `flash boot` for that image, through lk2nd. Stop on anything else | None | None |
+| 5. Write (owner's go, types `markw`) | Temporary descriptor with `BOOT_METHOD=lk2nd-emmc` as `MARKW_DEVICE_CONF`; `tools/markw-install commit out/markw/probe-oma19-emmc/boot.img` | `Sending` and `Writing` OKAY. On an error stay in lk2nd fastboot | Same lk2nd fastboot: `fastboot flash boot out/markw/probe-oma19/boot.img` (the P3 probe at 512 KiB) | Medium |
+| 6. Cold boot (owner's go) | `fastboot reboot`. If the Mi logo stays more than 60 s: cable out, Power held about 10 s, then Power only | Boot animation, then Omarchy; USB NCM and SSH within 2 min | Bootloop or a hang: Volume Down + Power, stock fastboot, then `p3-test` or `restore-boot` after approval | Medium |
+| 7. Verify, read-only | `tools/markw-install verify out/markw/probe-oma19-emmc/boot.img`; `tools/phone-smoke`; `findmnt /`, `/mnt/sd`, eMMC `ro` flags | `verify passed`, root on `userdata` with the P4 UUID, smoke passes, only `userdata` writable. A second cold boot with the cable out reaches Omarchy too | As step 6 | None |
+
+Only after step 7 passes, and a second cold boot does, does the tracked
+descriptor move to `lk2nd-emmc` (a device-markw version bump). Then P7.
+
 ### P7. Restore rehearsal (M10, write)
 
 - **Run:** §4.2 in full, MIUI boots, then reinstall (P3-P6).
