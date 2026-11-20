@@ -37,7 +37,7 @@ done
 # The shipped non-Android descriptors stay outside the generic persistent
 # paths: flame is RAM-only, and markw installs only through its own
 # tools/markw-install (lk2nd-emmc).
-for dev in flame:ram-only markw:ram-only; do
+for dev in flame:ram-only markw:lk2nd-emmc; do
   method=${dev#*:}; dev=${dev%%:*}
   grep -qx "BOOT_METHOD=$method" "device/$dev/device.conf" || { : > "$t/log"; fail "$dev is not $method"; }
   mkdir -p "$t/repo/device/$dev"
