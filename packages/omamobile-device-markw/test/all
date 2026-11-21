@@ -396,7 +396,9 @@ grep -qF "cset \"name='PRI_MI2S_RX Audio Mixer MultiMedia1' 1\"" "$hifi" || fail
 sed -n "s/.*Digital Volume' \([0-9]*\)\".*/\1/p" "$hifi" | awk '$1 >= 84 { bad = 1 } END { exit bad }' \
   || fail "a digital volume reaches 0 dB"
 grep -c 'PlaybackMixerElem\|PlaybackVolume' "$hifi" >/dev/null && fail "PipeWire must not own the hardware gain"
-pass "the UCM profile: speaker on the line output, gains below 0 dB"
+grep -qF "cset \"name='EAR_S' Switch\"" "$hifi" || fail "the earpiece plays through EAR_S"
+awk '/SectionDevice."Earpiece"/ { e = 1 } e && /PlaybackPriority/ { print $2; exit }' "$hifi"   | awk '$1 >= 100 { bad = 1 } END { exit bad }' || fail "the earpiece outranks the speaker"
+pass "the UCM profile: speaker on the line output, earpiece below it, gains below 0 dB"
 wp=$tmp/root/usr/share/wireplumber/wireplumber.conf.d/51-xiaomi-markw.conf
 [[ -f $wp ]] || fail "install stages the WirePlumber rule"
 grep -q 'audio.format = "S16LE"' "$wp" || fail "the WirePlumber rule pins S16LE"

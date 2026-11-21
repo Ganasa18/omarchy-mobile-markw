@@ -191,3 +191,24 @@ blacklist still in place (the DSP started by hand, as in step 3). Step 4
 Headphones and both microphones are checked after step 9, one at a time,
 with `arecord -D hw:0,1 -f S16_LE -r 48000 -d 3` and playing the file back.
 Any device that fails comes out of the profile until it's fixed.
+
+## Earpiece (2026-11-21, `7.1.3-msm8953-oma19`, device-markw 0.1.35)
+
+- **Path, from the driver.** In msm8916-wcd-analog's DAPM map, `EAR` comes
+  from the `EAR_S` switch on `EAR PA`, which needs both HPH DACs. HPHL's DAC
+  takes PDM RX1, and HPHR's takes `RDAC2 MUX`. So the earpiece is
+  `RX1 MIX1 INP1` RX1, `RDAC2 MUX` RX1 and `EAR_S` Switch, and it plays the
+  left channel. There is no `EAR PA Gain` control on this kernel.
+- **By ear: pass.** With the speaker path off (`LINEOUT`, `LINEOUT Ext`,
+  `RX3 MIX1 INP1` cleared), `RX1 Digital Volume` at 54 (-30 dB) and
+  `speaker-test -D hw:0,0 -c2 -F S16_LE -r 48000 -t sine -f 440 -s 1`,
+  the owner heard the tone from the earpiece, quiet and clean. The mixer
+  went back to the speaker profile afterwards.
+- **Profile.** device-markw 0.1.35 adds the `Earpiece` device to the HiFi
+  verb at that level, conflicting with Speaker and Headphones, at playback
+  priority 50 (the speaker stays the default at 100). `alsaucm` on the phone
+  lists Speaker, Earpiece, Headphones, Mic and Headset from the new file.
+- **Headphones: not tested.** The owner has no 3.5 mm headset. The codec
+  node carries the MBHC thresholds and `hphl-jack-type-normally-open`, and
+  the card has its `Headset Jack` input, both jacks reading off with
+  nothing plugged in. The Headphones device stays in the profile untested.
