@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MIT
+[Desktop Entry]
+Type=Application
+Name=Storage
+Comment=What fills each drive, clean up caches, uninstall apps
+Exec=omamobile-storage
+TryExec=omamobile-storage
+Icon=drive-harddisk
+Terminal=false
+Categories=System;Utility;
+Keywords=storage;disk;space;free;clean;cache;uninstall;apps;microSD;

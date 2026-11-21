@@ -1,0 +1,135 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Checks for omamobile-storage: syntax, the staged layout, and the helper's
+# answers and refusals against a fake home, pacman, package cache and
+# desktop entries: usage stays on one folder tree, clean-up only takes cache
+# files unused for 7 days and package files of versions not installed, apps
+# lock what another package or the system needs, remove-data stays inside
+# the app folders, and root refuses to run without root.
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
+fail() { echo "FAIL: $*" >&2; exit 1; }
+pass() { echo "ok - $*"; }
+
+python3 -c 'import ast, sys; ast.parse(open(sys.argv[1]).read())' bin/omamobile-storage || fail "syntax: helper"
+bash -n install || fail "syntax: install"
+t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
+./install "$t/stage"
+for f in usr/bin/omamobile-storage usr/share/omamobile-storage/shell.qml usr/share/applications/omamobile-storage.desktop \
+         usr/share/licenses/omamobile-storage/LICENSE usr/share/omamobile-storage/version; do
+  [[ -e $t/stage/$f ]] || fail "not staged: $f"
+done
+grep -cx 'Exec=omamobile-storage' share/omamobile-storage.desktop >/dev/null || fail "the launcher runs omamobile-storage"
+# The window drives the helper and pkexec only; nothing else runs from QML.
+grep -o 'command = \[[^]]*' app/shell.qml | grep -v '"omamobile-storage"' >/dev/null && fail "the window runs something besides the helper"
+grep -c 'pkexec omamobile-storage root' app/shell.qml >/dev/null || fail "system actions go through pkexec"
+# Qt takes whole pixels only: a fractional font.pixelSize fails the whole window.
+grep -nE 'pixelSize: [0-9]+\.[0-9]' app/shell.qml && fail "a fractional pixelSize"
+pass "staged; the window only calls the helper"
+
+h=$t/home; mkdir -p "$h"
+export HOME=$h
+S="python3 -I bin/omamobile-storage"
+
+# --- usage: sizes, sorted, files and folders
+mkdir -p "$t/tree/big" "$t/tree/small"
+head -c 300000 /dev/zero > "$t/tree/big/a"
+head -c 10000 /dev/zero > "$t/tree/small/b"
+head -c 50000 /dev/zero > "$t/tree/file"
+out=$($S usage "$t/tree")
+python3 - "$out" <<'EOF' || fail "usage"
+import json, sys
+d = json.loads(sys.argv[1])
+names = [i["name"] for i in d["items"]]
+assert names == ["big", "file", "small"], names
+assert d["items"][0]["dir"] and not d["items"][1]["dir"]
+assert d["total"] >= 360000, d["total"]
+EOF
+pass "usage lists folders and files by size"
+
+# --- clean-up: only cache files unused for 7 days
+mkdir -p "$h/.cache/app/old" "$h/.cache/app/new" "$h/.local/share/Trash/files"
+head -c 20000 /dev/zero > "$h/.cache/app/old/stale"
+head -c 20000 /dev/zero > "$h/.cache/app/new/fresh"
+touch -a -m -d '2026-01-01' "$h/.cache/app/old/stale"
+head -c 8000 /dev/zero > "$h/.local/share/Trash/files/gone"
+
+fb=$t/bin; mkdir -p "$fb" "$t/pkg" "$t/apps"
+cat > "$fb/pacman" <<'EOF'
+#!/bin/bash
+case $1 in
+  -Q) printf 'chromium 153.0-1\nneovim 0.12-1\nomarchy-nvim 1-1\nomamobile-shell 0.2-1\nfoo 2.0-1\n' ;;
+  -Qo) shift; [[ $1 == -- ]] && shift
+       for f; do case $f in
+         */chromium.desktop) echo "$f is owned by chromium 153.0-1" ;;
+         */nvim.desktop) echo "$f is owned by neovim 0.12-1" ;;
+         */shell.desktop) echo "$f is owned by omamobile-shell 0.2-1" ;;
+       esac; done ;;
+  -Qi) shift; [[ $1 == -- ]] && shift
+       for p; do
+         echo "Name            : $p"; echo "Version         : 1-1"
+         case $p in
+           chromium) echo "Installed Size  : 438.96 MiB"; echo "Required By     : None" ;;
+           neovim) echo "Installed Size  : 30.49 MiB"; echo "Required By     : omarchy-nvim" ;;
+           *) echo "Installed Size  : 2.30 MiB"; echo "Required By     : None" ;;
+         esac
+         echo
+       done ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "$fb/pacman"
+export OMAMOBILE_STORAGE_PACMAN=$fb/pacman OMAMOBILE_STORAGE_PKG_CACHE=$t/pkg OMAMOBILE_STORAGE_APPS=$t/apps
+
+for f in chromium-153.0-1-aarch64.pkg.tar.zst chromium-152.0-1-aarch64.pkg.tar.zst foo-1.0-1-any.pkg.tar.xz; do
+  head -c 4096 /dev/zero > "$t/pkg/$f"
+done
+head -c 512 /dev/zero > "$t/pkg/chromium-152.0-1-aarch64.pkg.tar.zst.sig"
+
+out=$($S clean-info)
+python3 - "$out" <<'EOF' || fail "clean-info"
+import json, sys
+items = {i["key"]: i for i in json.loads(sys.argv[1])}
+assert items["cache"]["files"] == 1, items["cache"]
+assert items["packages"]["files"] == 3, items["packages"]     # chromium 152 and its .sig, foo 1.0
+assert items["logs"]["root"] and not items["logs"]["exact"]
+assert items["trash"]["bytes"] > 0
+EOF
+pass "clean-info: one stale cache file, three stale package files, logs as an upper bound"
+
+$S clean cache trash >/dev/null
+[[ ! -e $h/.cache/app/old/stale && ! -e $h/.cache/app/old ]] || fail "the stale cache file stayed"
+[[ -e $h/.cache/app/new/fresh ]] || fail "clean removed a cache file in use"
+[[ -z $(ls -A "$h/.local/share/Trash/files") ]] || fail "the trash stayed"
+$S clean everything >/dev/null 2>&1 && fail "clean took an unknown item"
+pass "clean takes stale caches and the trash, keeps a fresh cache, refuses other items"
+
+# --- apps: sizes and locks
+printf '[Desktop Entry]\nType=Application\nName=Chromium\nIcon=chromium\nStartupWMClass=chromium\n' > "$t/apps/chromium.desktop"
+printf '[Desktop Entry]\nType=Application\nName=Neovim\nIcon=nvim\n' > "$t/apps/nvim.desktop"
+printf '[Desktop Entry]\nType=Application\nName=Agent\n' > "$t/apps/shell.desktop"
+printf '[Desktop Entry]\nType=Application\nName=Hidden\nNoDisplay=true\n' > "$t/apps/hidden.desktop"
+mkdir -p "$h/.config/chromium" "$h/.config/chromium-extra"; head -c 9000 /dev/zero > "$h/.config/chromium/Prefs"
+out=$($S apps)
+python3 - "$out" "$h" <<'EOF' || fail "apps"
+import json, sys
+apps = json.loads(sys.argv[1])
+by = {a["pkg"]: a for a in apps}
+assert [a["pkg"] for a in apps][0] == "chromium", apps
+assert by["chromium"]["locked"] == "" and by["chromium"]["bytes"] > 400 * 1024 * 1024
+assert [d["path"] for d in by["chromium"]["data"]] == [sys.argv[2] + "/.config/chromium"], by["chromium"]["data"]
+assert by["neovim"]["locked"].startswith("needed by omarchy-nvim")
+assert by["omamobile-shell"]["locked"] == "part of the system"
+assert len(apps) == 3
+EOF
+pass "apps: by size, needed and core packages locked, data folders matched by name only"
+
+# --- remove-data stays inside the app folders; root needs root
+$S remove-data "$h/Documents" >/dev/null 2>&1 && fail "remove-data took a folder outside the app folders"
+$S remove-data "$h/.config" >/dev/null 2>&1 && fail "remove-data took a whole base folder"
+$S remove-data "$h/.config/chromium" >/dev/null || fail "remove-data refused an app folder"
+[[ ! -e $h/.config/chromium && -e $h/.config/chromium-extra ]] || fail "remove-data removed the wrong folders"
+if [[ $(id -u) != 0 ]]; then
+  $S root clean-logs >/dev/null 2>&1 && fail "root ran without root"
+fi
+pass "remove-data only takes an app's own folder; root refuses without root"
