@@ -789,6 +789,16 @@ still carries device-markw 0.1.31 from the card. `tools/phone-smoke` has
 CRLF line endings in a Windows checkout and only runs from an LF copy.
 The second cold boot with the cable out is pending.
 
+**Second cold boot and package (2026-11-20/21).** The owner powered off
+from Omarchy, pulled the cable and pressed Power only. The phone came up
+with a new boot ID, `/` on `userdata` with the P4 UUID, no failed unit,
+no Oops, only `userdata` writable on the eMMC, and `/mnt/sd` mounted.
+`verify` passed again. The descriptor moved to `lk2nd-emmc`
+(device-markw 0.1.34). `tools/phone-install-package` built and installed
+0.1.34 on the phone from an LF clone, as a CRLF Windows checkout would
+ship broken scripts. The phone's `device.conf` reads `lk2nd-emmc` and
+the boot label `eMMC · lk2nd`. P6 is done; P7 remains.
+
 Only after step 7 passes, and a second cold boot does, does the tracked
 descriptor move to `lk2nd-emmc` (a device-markw version bump). Then P7.
 
