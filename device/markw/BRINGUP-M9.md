@@ -799,6 +799,26 @@ no Oops, only `userdata` writable on the eMMC, and `/mnt/sd` mounted.
 ship broken scripts. The phone's `device.conf` reads `lk2nd-emmc` and
 the boot label `eMMC · lk2nd`. P6 is done; P7 remains.
 
+**The microSD root is gone (2026-11-21, owner's decision).** The owner
+had the previous system on the card deleted to free it for data. Before
+that, read-only: an `rsync --update` dry run from the card's `/home` to
+the eMMC's found 36 files only on the card or newer there (34 old
+Chromium session and certificate files, a gvfs metadata log, an old
+device-markw build), and none of the owner's data. A full backup to the
+laptop did not fit. Guards checked again just before the delete: `/mnt/sd`
+was the SD card (`device/type` SD) and `/` the eMMC, there was nothing
+mounted inside, and no process had the card open. Every top-level entry
+went except `data/` and `lost+found` (`rm -rf --one-file-system`). The
+card now holds 36 KiB of its 29 GiB. Consequences:
+
+- The §5 rollback row "`userdata` root damaged: RAM-boot the probe with
+  the microSD root" no longer applies, and neither does booting the P3
+  image's microSD root. A damaged `userdata` now means a new card image
+  (`tools/build-markw-sd`, without the owner's data), copied in again as
+  in P5, or MIUI through `restore`.
+- P7 erases `userdata`, so it needs a root to reinstall from first: a
+  new card image, or a copy of the eMMC root made beforehand.
+
 Only after step 7 passes, and a second cold boot does, does the tracked
 descriptor move to `lk2nd-emmc` (a device-markw version bump). Then P7.
 
