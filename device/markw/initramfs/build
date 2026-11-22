@@ -56,15 +56,19 @@ stage=/tmp/rootfs
 mkdir -p "$stage"
 apk --root "$stage" --initdb --no-cache \
     --repositories-file /etc/apk/repositories --keys-dir /etc/apk/keys add \
-    alpine-baselayout busybox dropbear iproute2 util-linux busybox-extras e2fsprogs e2fsprogs-extra
+    alpine-baselayout busybox dropbear iproute2 util-linux busybox-extras e2fsprogs e2fsprogs-extra rsync
 install -m755 /src/device/markw/initramfs/init "$stage/init"
 mkdir -p "$stage/root/.ssh" "$stage/proc" "$stage/sys" "$stage/dev" "$stage/run"
 cp /input/key.pub "$stage/root/.ssh/authorized_keys"
 chmod 700 "$stage/root/.ssh"
 chmod 600 "$stage/root/.ssh/authorized_keys"
-# The Arch root on the microSD card (tools/build-markw-sd); none means M1.
+# The Arch root (none means M1): on the microSD card (tools/build-markw-sd),
+# or with ROOT_ON=emmc on the eMMC's userdata (device/markw/BRINGUP-M9.md).
 if [ -n "${ROOT_UUID:-}" ]; then
-    echo "$ROOT_UUID" > "$stage/etc/omamobile-sd-root"
+    case ${ROOT_ON:-sd} in
+        emmc) echo "$ROOT_UUID" > "$stage/etc/omamobile-emmc-root" ;;
+        *) echo "$ROOT_UUID" > "$stage/etc/omamobile-sd-root" ;;
+    esac
 fi
 gcc -Os -static -o "$stage/sbin/reboot-to" \
     /src/packages/omamobile-device-cheetah/src/reboot-to.c
@@ -160,11 +164,16 @@ cat /input/kernel /out/markw.dtb > /tmp/Image.gz-dtb
 # (ttyMSM0, unreachable here); omamobile-firstboot does that setup instead.
 # The first Arch boot on 2026-10-27 stopped there, after "Update is Completed".
 # plymouth.enable=0 keeps systemd's status lines on the panel during bring-up.
+# fw_devlink.sync_state=timeout: Venus (no matching firmware) never probes,
+# so without it the interconnects never got their sync_state and every bus
+# and the DDR stayed at their boot maximum (INT_MAX votes), screen off or
+# on; with it they get it at the deferred probe timeout (11.5 s). Unplugged,
+# screen off: 60 mA median before, 50 mA after (device/markw/NOTES.md).
 python3 /mkbootimg/mkbootimg.py --header_version 0 \
     --base 0x80000000 --kernel_offset 0x8000 --ramdisk_offset 0x1000000 \
     --tags_offset 0x100 --pagesize 2048 \
     --kernel /tmp/Image.gz-dtb --ramdisk /out/initramfs.cpio.gz \
-    --cmdline 'console=tty0 console=ttyMSM0,115200n8 rdinit=/init clk_ignore_unused pd_ignore_unused panic=10 printk.devkmsg=on systemd.firstboot=off plymouth.enable=0' \
+    --cmdline 'console=tty0 console=ttyMSM0,115200n8 rdinit=/init clk_ignore_unused pd_ignore_unused fw_devlink.sync_state=timeout panic=10 printk.devkmsg=on systemd.firstboot=off plymouth.enable=0' \
     -o /out/boot.img
 size=$(stat -c %s /out/boot.img)
 # A conservative cap on the image lk2nd's fastboot has to download.
@@ -172,4 +181,6 @@ size=$(stat -c %s /out/boot.img)
 cp "$stage/etc/omamobile-modules" /out/modules.list
 echo "$release" > /out/kernel.release
 echo "${ROOT_UUID:-none}" > /out/root-uuid
+# tools/markw-install commits only an image whose root is on the eMMC.
+if [ -n "${ROOT_UUID:-}" ]; then echo "${ROOT_ON:-sd}"; else echo none; fi > /out/root-on
 (cd /out && sha256sum boot.img markw.dtb initramfs.cpio.gz > SHA256SUMS)

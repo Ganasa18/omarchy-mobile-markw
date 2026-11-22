@@ -34,10 +34,14 @@ srcinfo=$("$ssh" "su - '$phone_user' -c 'cd $build/$name && makepkg --printsrcin
 want=$(awk '$1 ~ /^(depends|makedepends|checkdepends)$/ {print $3}' <<<"$srcinfo" | sort -u | tr '\n' ' ')
 buildonly=$(awk '$1 ~ /^(makedepends|checkdepends)$/ {print $3}' <<<"$srcinfo" | sort -u | tr '\n' ' ')
 missing=""
-[[ -n ${want// } ]] && missing=$("$ssh" "pacman -T $want" || true)
+# Quoted for the phone's shell: unquoted, the '>' of a versioned
+# dependency (omarchy>=4.0.6) redirected pacman -T's output to a file, so
+# no dependency was ever reported missing and makepkg failed instead.
+quote() { tr -s ' \n' '\n\n' | sed -n "s/'/'\\\\''/g; s/.\{1,\}/'&'/p" | tr '\n' ' '; }
+[[ -n ${want// } ]] && missing=$("$ssh" "pacman -T $(quote <<<"$want")" || true)
 if [[ -n $missing ]]; then
   echo "build dependencies: $(tr '\n' ' ' <<<"$missing")"
-  "$ssh" "OMARCHY_ALLOW_DIRECT_PACMAN=1 pacman -S --needed --noconfirm --asdeps $(tr '\n' ' ' <<<"$missing") >/dev/null"
+  "$ssh" "OMARCHY_ALLOW_DIRECT_PACMAN=1 pacman -S --needed --noconfirm --asdeps $(quote <<<"$missing") >/dev/null"
 fi
 remove=""
 for dep in $missing; do

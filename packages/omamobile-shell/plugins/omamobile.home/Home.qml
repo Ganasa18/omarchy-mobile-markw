@@ -875,6 +875,8 @@ Item {
     if (!entry || !entry.id) return false
     if (appLibrary && typeof appLibrary.beginLaunchFeedback === "function")
       appLibrary.beginLaunchFeedback(appLibrary.entryName(entry))
+    if (!desktopMode && appLibrary)
+      launchSplash.show(appLibrary.iconSource(entry.icon || ""), appLibrary.entryName(entry))
     Quickshell.execDetached(HomeModel.appLaunchArgv(entry.id))
     return true
   }
@@ -1062,6 +1064,14 @@ Item {
       Keys.onEscapePressed: {
         if (root.sheet) root.sheet = ""
         else root.setEditing(false)
+      }
+
+      // Shown the moment a tile is tapped (launch()); the app's window maps
+      // over it, this surface being below every window.
+      LaunchSplash {
+        id: launchSplash
+        anchors.fill: parent
+        z: 1000
       }
 
       // ---------- pages

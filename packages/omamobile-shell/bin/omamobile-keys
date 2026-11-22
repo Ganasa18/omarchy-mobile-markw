@@ -134,7 +134,9 @@ short_press() {
       sleep 0.1
     done
     omarchy-brightness-display off
-    [[ -n $level ]] && brightnessctl -q -d "$device" set "$level"
+    if [[ -n $level ]]; then
+      brightnessctl -q -d "$device" set "$level"
+    fi
   fi
 }
 
@@ -220,6 +222,11 @@ case "${1:-}" in
     sleep "$(printf '0.%03d' "$bounce")"
     [[ $(cat "$state/power-release" 2>/dev/null) == "$release" ]] || exit 0
     rm -f "$state/power-release"
+    # The press is over: drop its marker before acting on it. Locking waits
+    # up to 3 s for the lock to be secure, longer than a long press, and with
+    # the marker still there the long-press timer fired too and woke the
+    # screen it had just turned off.
+    rm -f "$state/power"
     if [[ -f $state/chord ]]; then
       rm -f "$state/chord"
     elif [[ -f $state/long ]]; then
@@ -227,7 +234,6 @@ case "${1:-}" in
     else
       short_press
     fi
-    rm -f "$state/power"
     ;;
   *)
     echo "Usage: omamobile-keys power-down|power-up|volume-down|volume-up|home|recents|back" >&2

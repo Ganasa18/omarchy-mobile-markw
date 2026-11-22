@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: MIT
+# The microSD card as storage at /mnt/sd once the root is on the eMMC
+# (device/markw/BRINGUP-M9.md). On a microSD-root boot the script sees the
+# card is the root and does nothing. It never fails the boot.
+[Unit]
+Description=Omarchy Mobile: the markw microSD card as storage
+After=local-fs.target systemd-udev-trigger.service
+Before=multi-user.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=400
+ExecStart=/usr/lib/omamobile/omamobile-markw-sd-storage
+
+[Install]
+WantedBy=multi-user.target

@@ -38,7 +38,11 @@ Item {
   signal reply(string text)
   signal fold()
 
-  readonly property bool ringing: mode === "incoming"
+  // Only while shown: Call.qml keeps the card built with mode "incoming"
+  // when there is no call, and its pulse and wiggle loops kept Qt's 60 Hz
+  // animation timer running behind a hidden window (device/markw/NOTES.md,
+  // 2026-11-19 idle shell).
+  readonly property bool ringing: mode === "incoming" && card.visible
   readonly property color foreground: Commons.Color.foreground
   readonly property color accent: Commons.Color.accent
   // Answer and end are the colours every phone uses for them; the rest

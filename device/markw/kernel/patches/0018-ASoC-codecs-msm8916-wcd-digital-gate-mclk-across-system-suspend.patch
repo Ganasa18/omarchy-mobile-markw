@@ -1,0 +1,87 @@
+From: Omarchy Mobile <omamobile@localhost>
+Subject: [PATCH] ASoC: codecs: msm8916-wcd-digital: gate mclk across system suspend
+
+The driver enables mclk at probe and keeps it on until remove. On msm8953
+mclk is LPASS_CLK_ID_INTERNAL_DIGITAL_CODEC_CORE, a clock the ADSP
+provides through q6afe, and while it is enabled the ADSP never lets RPM
+shut down XO: on a Redmi 4 Prime the RPM master stats show LPASS with
+0.1 s of XO off over a 96-minute s2idle with every PCM closed.
+
+The register interface needs the clock as well (the vendor driver turns
+it on before every digital register access), so turn it off at system
+suspend with the regmap in cache-only mode, and on resume turn it back
+on and write back whatever was written meanwhile.
+
+---
+ sound/soc/codecs/msm8916-wcd-digital.c | 39 +++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 39 insertions(+)
+
+--- a/sound/soc/codecs/msm8916-wcd-digital.c
++++ b/sound/soc/codecs/msm8916-wcd-digital.c
+@@ -226,6 +226,7 @@
+ 
+ struct msm8916_wcd_digital_priv {
+ 	struct clk *ahbclk, *mclk;
++	struct regmap *regmap;
+ };
+ 
+ static const unsigned long rx_gain_reg[] = {
+@@ -1199,6 +1200,7 @@
+ 		goto err_clk;
+ 	}
+ 
++	priv->regmap = digital_map;
+ 	dev_set_drvdata(dev, priv);
+ 
+ 	ret = devm_snd_soc_register_component(dev, &msm8916_wcd_digital,
+@@ -1224,6 +1226,42 @@
+ 	clk_disable_unprepare(priv->ahbclk);
+ }
+ 
++/*
++ * On msm8953 the codec core clock (mclk) is an LPASS clock that the ADSP
++ * provides, and while it is enabled the ADSP never lets RPM shut down XO.
++ * The register interface needs it too, so keep register writes in the
++ * cache while it is off and write back whatever changed on resume.
++ */
++static int msm8916_wcd_digital_suspend(struct device *dev)
++{
++	struct msm8916_wcd_digital_priv *priv = dev_get_drvdata(dev);
++
++	regcache_cache_only(priv->regmap, true);
++	clk_disable_unprepare(priv->mclk);
++
++	return 0;
++}
++
++static int msm8916_wcd_digital_resume(struct device *dev)
++{
++	struct msm8916_wcd_digital_priv *priv = dev_get_drvdata(dev);
++	int ret;
++
++	ret = clk_prepare_enable(priv->mclk);
++	if (ret < 0) {
++		dev_err(dev, "failed to enable mclk %d\n", ret);
++		return ret;
++	}
++
++	regcache_cache_only(priv->regmap, false);
++
++	return regcache_sync(priv->regmap);
++}
++
++static DEFINE_SIMPLE_DEV_PM_OPS(msm8916_wcd_digital_pm_ops,
++				msm8916_wcd_digital_suspend,
++				msm8916_wcd_digital_resume);
++
+ static const struct of_device_id msm8916_wcd_digital_match_table[] = {
+ 	{ .compatible = "qcom,msm8916-wcd-digital-codec" },
+ 	{ }
+@@ -1235,6 +1273,7 @@
+ 	.driver = {
+ 		   .name = "msm8916-wcd-digital-codec",
+ 		   .of_match_table = msm8916_wcd_digital_match_table,
++		   .pm = pm_sleep_ptr(&msm8916_wcd_digital_pm_ops),
+ 	},
+ 	.probe = msm8916_wcd_digital_probe,
+ 	.remove = msm8916_wcd_digital_remove,

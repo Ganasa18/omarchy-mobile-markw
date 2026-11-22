@@ -34,15 +34,19 @@ for method in ram-only uboot-ext4 unknown ''; do
   [[ ! -e $t/calls && ! -e $t/work ]] || fail "unsupported method accessed phone or prepared image"
   echo "ok - BOOT_METHOD='${method}' refused by images/flash/push and both installer modes before phone access"
 done
-# The shipped RAM-only descriptors must remain outside all persistent paths too.
-for dev in flame markw; do
+# The shipped non-Android descriptors stay outside the generic persistent
+# paths: flame is RAM-only, and markw installs only through its own
+# tools/markw-install (lk2nd-emmc).
+for dev in flame:ram-only markw:lk2nd-emmc; do
+  method=${dev#*:}; dev=${dev%%:*}
+  grep -qx "BOOT_METHOD=$method" "device/$dev/device.conf" || { : > "$t/log"; fail "$dev is not $method"; }
   mkdir -p "$t/repo/device/$dev"
   cp "device/$dev/device.conf" "$t/repo/device/$dev/"
   if "$t/repo/tools/install-phone" --device "$dev" > "$t/log" 2>&1; then fail "$dev installs"; fi
-  grep -q 'unsupported BOOT_METHOD=ram-only;' "$t/log" || fail "$dev fails for the wrong reason"
+  grep -q "unsupported BOOT_METHOD=$method;" "$t/log" || fail "$dev fails for the wrong reason"
   for cmd in images flash push; do
     if DEVICE=$dev "$t/repo/bin/omamobile" "$cmd" > "$t/log" 2>&1; then fail "$cmd accepts $dev"; fi
-    grep -q 'unsupported BOOT_METHOD=ram-only;' "$t/log" || fail "$cmd fails $dev for the wrong reason"
+    grep -q "unsupported BOOT_METHOD=$method;" "$t/log" || fail "$cmd fails $dev for the wrong reason"
   done
   [[ ! -e $t/calls ]] || fail "$dev accessed a phone"
   echo "ok - the shipped $dev descriptor has no persistent install, image, flash or push path"

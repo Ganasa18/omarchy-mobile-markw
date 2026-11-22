@@ -1,0 +1,107 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: MIT
+"""omamobile-gnss for markw: the quick settings Location tile over the modem's GPS.
+
+The Pixel's omamobile-gnss runs Google's GNSS stack; markw's GPS is in the
+modem, and ModemManager drives it. This is the same command line, so the
+shell's Location tile works unchanged:
+
+  omamobile-gnss on              start the modem's GPS (NMEA, through ModemManager)
+  omamobile-gnss off             stop it
+  omamobile-gnss status [--json] whether it is on, and whether it has a fix
+
+ModemManager's polkit policy lets the active local user change location
+settings, so on and off need no root. Location is off at every boot: the
+receiver keeps the modem busy, so it costs battery, and asleep it would keep
+the phone out of deep sleep. Status prints the fix quality and the number of
+satellites used, never a position.
+"""
+
+import json
+import os
+import subprocess
+import sys
+
+MMCLI = os.environ.get("OMAMOBILE_MMCLI", "mmcli")
+
+
+def mm(*args):
+    try:
+        result = subprocess.run([MMCLI, "-m", "any", *args],
+                                capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return False, str(error)
+    return result.returncode == 0, result.stdout if result.returncode == 0 else result.stderr.strip()
+
+
+def location():
+    ok, out = mm("--location-status", "-J")
+    if not ok:
+        return None
+    try:
+        return json.loads(out)["modem"]["location"]
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def fix():
+    """(fix, satellites) from the newest GGA sentence; ("unknown", "") without one."""
+    ok, out = mm("--location-get", "-J")
+    if not ok:
+        return "unknown", ""
+    try:
+        nmea = json.loads(out)["modem"]["location"]["gps"]["nmea"]
+    except (ValueError, KeyError, TypeError):
+        return "unknown", ""
+    if isinstance(nmea, str):
+        nmea = nmea.splitlines()
+    for sentence in reversed(nmea or []):
+        fields = sentence.split("*")[0].split(",")
+        if len(fields) > 7 and fields[0][3:] == "GGA":
+            quality = fields[6] or "0"
+            return ("yes" if quality != "0" else "no"), (fields[7].lstrip("0") or "0")
+    return "unknown", ""
+
+
+def status(as_json):
+    loc = location()
+    installed = loc is not None and "gps-nmea" in loc.get("capabilities", [])
+    on = installed and "gps-nmea" in loc.get("enabled", [])
+    got, satellites = fix() if on else ("no", "")
+    if as_json:
+        print(json.dumps({"location": "on" if on else "off", "running": "no",
+                          "fix": got, "satellites": satellites, "installed": installed},
+                         separators=(",", ":")))
+        return 0
+    if not installed:
+        print("location: unavailable (no modem with GPS in ModemManager)")
+        return 0
+    print(f"location: {'on' if on else 'off'}")
+    if on:
+        print(f"fix: {got}" + (f" ({satellites} satellites)" if got == "yes" else ""))
+    return 0
+
+
+def switch(enable):
+    flag = "--location-enable-gps-nmea" if enable else "--location-disable-gps-nmea"
+    ok, out = mm(flag)
+    if not ok:
+        print(f"omamobile-gnss: {flag[2:]} failed: {out}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def main(argv):
+    command = argv[1] if len(argv) > 1 else ""
+    if command == "on":
+        return switch(True)
+    if command == "off":
+        return switch(False)
+    if command == "status":
+        return status(len(argv) > 2 and argv[2] == "--json")
+    print(__doc__.split("\n\n")[1], file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

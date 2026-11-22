@@ -1,0 +1,95 @@
+From: Omarchy Mobile <omamobile@localhost>
+Subject: [PATCH] net: ipa2-lite: turn the IPA clock off across system suspend
+
+The driver enables the IPA clock at probe and only lowers its rate in
+runtime suspend, so the clock stays on for the whole boot. On msm8953 it
+is an RPM clock that votes in the sleep set too, and while it is on RPM
+keeps XO running: on a Redmi 4 Prime every RPM master voted XO off
+through a 60 s s2idle and the SoC still never reached VDD minimization.
+With the driver unbound, the same sleep reached it four times.
+
+Turn the clock off at the end of system suspend when mobile data is down,
+after the netdevs are stopped, and back on at resume before they are
+reopened. Disable the two IPA interrupts meanwhile, so that no handler
+reads a register while the clock is off. The other path that touches the
+registers, the modem restart notifier, runs from the freezable remoteproc
+recovery workqueue and so can't run during the sleep.
+
+This can't wait for the noirq phase: the clock change is an SMD request
+to RPM, whose acknowledgment interrupt is off by then.
+
+---
+ drivers/net/ipa2-lite/ipa.c | 34 +++++++++++++++++++++++++++++++--
+ 1 file changed, 32 insertions(+), 2 deletions(-)
+
+--- a/drivers/net/ipa2-lite/ipa.c
++++ b/drivers/net/ipa2-lite/ipa.c
+@@ -83,6 +83,8 @@
+ 	atomic_t uc_cmd_busy;
+ 	bool test_mode;
+ 	struct clk *clk;
++	bool clk_gated;
++	int irq, dma_irq;
+ 	struct device *dev;
+ 	struct ipa_ep ep[EP_NUM];
+ 	struct ipa_partition layout[MEM_END + 1];
+@@ -1175,7 +1177,8 @@
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	ret = devm_request_threaded_irq(dev, ret, NULL, ipa_isr_thread,
++	ipa->irq = ret;
++	ret = devm_request_threaded_irq(dev, ipa->irq, NULL, ipa_isr_thread,
+ 					IRQF_ONESHOT, "ipa", ipa);
+ 	if (ret)
+ 		return ret;
+@@ -1184,7 +1187,8 @@
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	ret = devm_request_irq(dev, ret, ipa_dma_isr, 0, "ipa-dma", ipa);
++	ipa->dma_irq = ret;
++	ret = devm_request_irq(dev, ipa->dma_irq, ipa_dma_isr, 0, "ipa-dma", ipa);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -1282,6 +1286,18 @@
+ {
+ 	struct ipa *ipa = dev_get_drvdata(dev);
+ 
++	if (ipa->clk_gated) {
++		int ret = clk_prepare_enable(ipa->clk);
++
++		if (ret) {
++			dev_err(dev, "failed to enable the IPA clock: %d\n", ret);
++			return ret;
++		}
++		ipa->clk_gated = false;
++		enable_irq(ipa->dma_irq);
++		enable_irq(ipa->irq);
++	}
++
+ 	ipa_ndev_suspend_resume(ipa->modem, true);
+ 	ipa_ndev_suspend_resume(ipa->loopback, true);
+ 	ipa_ndev_suspend_resume(ipa->lan, true);
+@@ -1297,6 +1313,20 @@
+ 	ipa_ndev_suspend_resume(ipa->loopback, false);
+ 	ipa_ndev_suspend_resume(ipa->lan, false);
+ 
++	/*
++	 * The IPA clock is an RPM clock with a sleep-set vote, so while it is
++	 * on RPM keeps XO running. With mobile data down nothing uses the IPA
++	 * during the sleep: turn it off, with the IRQs off first so that no
++	 * handler reads a register meanwhile. A modem restart, the other path
++	 * that touches the registers, runs from a freezable workqueue.
++	 */
++	if (!ipa->modem || !netif_running(ipa->modem)) {
++		disable_irq(ipa->irq);
++		disable_irq(ipa->dma_irq);
++		clk_disable_unprepare(ipa->clk);
++		ipa->clk_gated = true;
++	}
++
+ 	return 0;
+ }
+ 

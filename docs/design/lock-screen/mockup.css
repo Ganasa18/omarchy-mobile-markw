@@ -1,0 +1,44 @@
+/* SPDX-License-Identifier: MIT */
+* { box-sizing: border-box; }
+:root { color-scheme: dark; font-family: 'Segoe UI', sans-serif; background: #08090c; color: #e8ebf1; }
+body { margin: 0; }
+.phone { position: relative; isolation: isolate; width: 100%; max-width: 480px; height: 844px; margin: auto; overflow: hidden; background: #10151e; }
+.landscape { position: absolute; inset: 0; width: 100%; height: 100%; z-index: -2; }
+.shade { position: absolute; inset: 0; z-index: -1; background: linear-gradient(#0b0d1120, #0b0d1100 45%, #0b0d1199); }
+svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.65; stroke-linecap: round; stroke-linejoin: round; }
+.status { height: 56px; padding: 19px 25px; display: flex; align-items: center; justify-content: space-between; font-size: 12px; }
+.brand { font-size: 10px; letter-spacing: 1.8px; }
+.signals { display: flex; align-items: center; gap: 7px; font-variant-numeric: tabular-nums; }
+.signals svg { width: 16px; height: 16px; }
+.clock-area { text-align: center; margin-top: 61px; }
+.lock { width: 19px; height: 19px; color: #c9d5e6; }
+.date { margin: 21px 0 0; font-size: 15px; color: #c9d5e6; }
+.clock { font-size: 88px; line-height: 1.15; font-weight: 300; letter-spacing: -5px; font-variant-numeric: tabular-nums; margin: 2px 0 0; }
+.battery { font-size: 12px; margin-top: 12px; color: #c9d5e6; }
+.notification { margin: 53px 22px 0; padding: 17px 18px; border-radius: 18px; background: #1c2534ed; border: 1px solid #d7e6ff13; }
+.notification-head { display: flex; gap: 9px; align-items: center; color: #c9d5e6; font-size: 12px; }
+.notification-head svg { width: 17px; height: 17px; color: #9cc2ff; }
+.notification-head time { margin-left: auto; color: #abb7c9; font-size: 11px; }
+.notification p { margin: 13px 0 3px; font-size: 14px; font-weight: 600; }
+.notification small { color: #b8c5d8; font-size: 12px; }
+.unlock { position: absolute; bottom: 95px; left: 0; right: 0; display: grid; justify-items: center; gap: 12px; }
+.unlock svg { width: 19px; height: 19px; color: #9cc2ff; }
+.unlock span { font-size: 12px; color: #c9d5e6; }
+.home-indicator { position: absolute; width: 108px; height: 4px; background: #c9d5e6; border-radius: 4px; bottom: 12px; left: calc(50% - 54px); opacity: .8; }
+.pin .shade { background: #0b0d11d9; }
+.pin-heading { text-align: center; margin-top: 98px; }
+.pin-heading h1 { font-size: 25px; font-weight: 500; margin: 21px 0 10px; letter-spacing: -.5px; }
+.pin-heading p { color: #a6adba; font-size: 13px; margin: 0; }
+.dots { display: flex; justify-content: center; gap: 17px; margin-top: 32px; }
+.dots span { width: 11px; height: 11px; border: 1.5px solid #9aa8bd; border-radius: 50%; }
+.dots .filled { background: #9cc2ff; border-color: #9cc2ff; }
+.keypad { margin: 53px auto 0; width: 282px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px 18px; }
+button { font: inherit; color: inherit; border: 0; cursor: pointer; }
+.key { width: 82px; height: 72px; border-radius: 24px; background: #1c2534; display: grid; place-content: center; gap: 1px; font-size: 28px; font-weight: 350; }
+.key small { font-size: 9px; color: #a6adba; letter-spacing: 2px; height: 12px; }
+.key.utility { background: transparent; font-size: 12px; font-weight: 400; }
+.key svg { margin: auto; }
+.pin-footer { text-align: center; margin-top: 30px; }
+.cancel { background: transparent; padding: 14px 25px; color: #c9d5e6; font-size: 13px; min-height: 44px; }
+button:focus-visible { outline: 2px solid #9cc2ff; outline-offset: 4px; }
+.key:hover { background: #2b384b; }

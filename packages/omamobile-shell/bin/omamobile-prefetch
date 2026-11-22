@@ -1,0 +1,163 @@
+#!/usr/bin/python3 -I
+# SPDX-License-Identifier: MIT
+"""Warm the page cache with the apps used last, once per session.
+
+  omamobile-prefetch [--delay SECONDS] [--dry-run]
+
+The first launch of an app after boot read its program and libraries from
+storage: Files (Nautilus) took 2.2-3.7 s to map its window on markw, against
+about 1 s once cached. Some seconds after login, this asks the kernel to read
+ahead (posix_fadvise WILLNEED) the programs of the apps in the launcher's
+Recent row (omamobile-launch keeps the list) and the libraries they link, so
+the first tap finds them in memory.
+
+It reads, never writes; it skips everything while memory is short (less than
+MIN_AVAILABLE free for the cache), and stops at MAX_BYTES. phone.lua starts
+it at the idle I/O class and the lowest CPU priority. --dry-run prints the
+files instead.
+"""
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import time
+
+RECENT_MAX = 8
+MAX_BYTES = 256 << 20
+MIN_AVAILABLE = 768 << 20
+# Launchers in front of the real program in a desktop entry's Exec.
+WRAPPERS = {"env", "uwsm-app", "uwsm", "app", "systemd-run", "gtk-launch", "setsid", "nohup", "--"}
+
+
+def recent_ids():
+    base = os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local/state")
+    try:
+        with open(os.path.join(base, "omamobile", "recent-apps")) as f:
+            ids = [line.strip() for line in f if line.strip()]
+    except OSError:
+        return []
+    return ids[:RECENT_MAX]
+
+
+def application_dirs():
+    home = os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local/share")
+    dirs = [home] + [d for d in (os.environ.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share").split(":") if d]
+    return [os.path.join(d, "applications") for d in dirs]
+
+
+def exec_line(app_id):
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", app_id):
+        return None
+    for d in application_dirs():
+        path = os.path.join(d, app_id + ".desktop")
+        try:
+            with open(path) as f:
+                section = None
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("["):
+                        section = line
+                    elif section == "[Desktop Entry]" and line.startswith("Exec="):
+                        return line[5:]
+        except OSError:
+            continue
+    return None
+
+
+def program(exec_value):
+    """The program a desktop entry's Exec runs, past env and launchers."""
+    try:
+        words = shlex.split(re.sub(r"%[a-zA-Z%]", "", exec_value))
+    except ValueError:
+        return None
+    for word in words:
+        if "=" in word and not word.startswith("/") or word in WRAPPERS or word.startswith("-"):
+            continue
+        return shutil.which(word)
+    return None
+
+
+def is_elf(path):
+    try:
+        with open(path, "rb") as f:
+            return f.read(4) == b"\x7fELF"
+    except OSError:
+        return False
+
+
+def libraries(path):
+    try:
+        out = subprocess.run(["ldd", path], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    return re.findall(r"(/\S+) \(0x", out)
+
+
+def files_for(ids):
+    seen, files = set(), []
+    for app_id in ids:
+        value = exec_line(app_id)
+        path = program(value) if value else None
+        if not path:
+            continue
+        path = os.path.realpath(path)
+        for f in [path] + (libraries(path) if is_elf(path) else []):
+            f = os.path.realpath(f)
+            if f not in seen:
+                seen.add(f)
+                files.append(f)
+    return files
+
+
+def available():
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return 0
+
+
+def main(argv):
+    delay, dry = 0.0, False
+    args = list(argv)
+    while args:
+        a = args.pop(0)
+        if a == "--delay" and args:
+            delay = float(args.pop(0))
+        elif a == "--dry-run":
+            dry = True
+        else:
+            print(__doc__.strip().splitlines()[2].strip(), file=sys.stderr)
+            return 2
+    if delay > 0:
+        time.sleep(delay)
+    files = files_for(recent_ids())
+    if dry:
+        print("\n".join(files))
+        return 0
+    if available() < MIN_AVAILABLE:
+        return 0
+    total = 0
+    for path in files:
+        try:
+            fd = os.open(path, os.O_RDONLY)
+        except OSError:
+            continue
+        try:
+            size = os.fstat(fd).st_size
+            if total + size > MAX_BYTES:
+                break
+            os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_WILLNEED)
+            total += size
+        finally:
+            os.close(fd)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

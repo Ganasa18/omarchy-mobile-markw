@@ -166,7 +166,7 @@ Item {
     color: root.foreground
     opacity: 0.6
     font.family: Style.font.family
-    font.pixelSize: Style.font.small
+    font.pixelSize: Style.font.bodySmall
   }
 
   PanelWindow {
@@ -255,7 +255,7 @@ Item {
             color: root.foreground
             opacity: 0.6
             font.family: Style.font.family
-            font.pixelSize: Style.font.small
+            font.pixelSize: Style.font.bodySmall
           }
         }
 
@@ -329,7 +329,7 @@ Item {
                       text: seg.modelData.label
                       color: seg.chosen ? root.background : root.foreground
                       font.family: Style.font.family
-                      font.pixelSize: Style.font.small
+                      font.pixelSize: Style.font.bodySmall
                     }
                     MouseArea { id: segTouch; anchors.fill: parent; onClicked: root.choose(seg.modelData.minutes) }
                   }
@@ -376,7 +376,7 @@ Item {
                     color: root.foreground
                     opacity: 0.6
                     font.family: Style.font.family
-                    font.pixelSize: Style.font.small
+                    font.pixelSize: Style.font.bodySmall
                   }
                   MouseArea { id: cmdTouch; anchors.fill: parent; onClicked: root.copy(cmd.line) }
                 }
@@ -419,7 +419,7 @@ Item {
               color: root.foreground
               opacity: 0.6
               font.family: Style.font.family
-              font.pixelSize: Style.font.small
+              font.pixelSize: Style.font.bodySmall
             }
           }
         }

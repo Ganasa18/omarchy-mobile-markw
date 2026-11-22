@@ -340,6 +340,12 @@ def real_package(t):
     ok(not status["upstream"] and len(status["applied"]) == len(glob.glob(os.path.join(SERIES, "*.patch"))),
        "real omarchy %s: every patch applied, none upstream" % version)
     ok("omamobile-update" in read(root, "usr/bin/omarchy-update"), "real omarchy: omarchy-update hands over (0012)")
+    if rc == 0:
+        subprocess.run([sys.executable, os.path.join(HERE, "display-touch.py"),
+                        os.path.join(root, "usr/bin/omarchy-brightness-display")], check=True)
+        if shutil.which("node"):
+            subprocess.run(["node", os.path.join(HERE, "wake-routing.js"),
+                            os.path.join(root, "usr/share/omarchy/shell/plugins/lock/Service.qml")], check=True)
     ok(os.path.isfile(os.path.join(root, "usr/share/omarchy/shell/plugins/lock/Keypad.qml")), "real omarchy: the lock's keypad is there (0003)")
     notif = "usr/share/omarchy/shell/plugins/notifications/"
     ok("inlineReplySupported: true" in read(root, notif + "Service.qml")

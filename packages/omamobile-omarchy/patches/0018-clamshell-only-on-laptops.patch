@@ -1,0 +1,25 @@
+# Clamshell: only on laptops. On a phone the panel's name (DSI-1) makes it the
+# "internal" monitor, so every wake and monitor event put its scale back to
+# monitors.lua's, keeping the transform: a phone in landscape desktop mode
+# (scale 1.5) jumped to 2, and the lock screen flickered between the two
+# while the session put its own scale back. With no lid there is no
+# clamshell to follow.
+#
+# Against Omarchy 4.0.6 (edge 4.0.6-1).
+diff --git i/bin/omarchy-hyprland-monitor-clamshell w/bin/omarchy-hyprland-monitor-clamshell
+index f33f23a..3b52d35 100644
+--- i/bin/omarchy-hyprland-monitor-clamshell
++++ w/bin/omarchy-hyprland-monitor-clamshell
+@@ -245,6 +245,12 @@ disable_internal() {
+ omarchy-hyprland-monitor-internal recover >/dev/null 2>&1 || true
+ omarchy-hyprland-monitor-internal-mirror recover >/dev/null 2>&1 || true
+ 
++# Only a laptop has a lid to close. Anywhere else (a phone) the internal
++# panel's scale is the session's own: a rule set at runtime, such as a
++# phone's landscape desktop mode, must not be put back to monitors.lua's
++# scale every time the panel wakes or a monitor event arrives.
++omarchy-hw-laptop || exit 0
++
+ if omarchy-hw-clamshell && omarchy-hyprland-monitor-external-active; then
+   disable_internal
+ else

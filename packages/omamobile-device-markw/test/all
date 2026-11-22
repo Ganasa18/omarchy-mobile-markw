@@ -122,6 +122,170 @@ rt || fail "the rmtfs copy runs"
 echo 0 >"$fs/sys/devices/mmcblk1/mmcblk1p2/ro"
 rt && fail "a partition that isn't read-only is never read"
 pass "rmtfs: modem NV copied to RAM from read-only partitions only, unit not enabled"
+
+# The idle modem boot: enabled, after and requiring rmtfs on RAM copies,
+# the driver blacklisted from autoloading; the script on a fake sysfs.
+unit=vendor/systemd/system/omamobile-markw-modem.service
+[[ -x $tmp/root/usr/lib/omamobile/omamobile-markw-modem ]] || fail "the modem script is staged"
+[[ -L $tmp/root/usr/lib/systemd/system/multi-user.target.wants/omamobile-markw-modem.service ]] \
+  || fail "the modem unit is enabled"
+grep -qx 'blacklist qcom_q6v5_mss' "$tmp/root/usr/lib/modprobe.d/omamobile-markw-modem.conf" \
+  || fail "the modem driver is blacklisted from autoloading"
+grep -qx 'Requires=omamobile-markw-rmtfs.service' "$unit" || fail "the modem requires rmtfs on RAM copies"
+grep -q '^After=omamobile-markw-rmtfs.service' "$unit" || fail "the modem starts after rmtfs"
+grep -qx 'ConditionPathExists=/usr/bin/rmtfs' "$unit" || fail "the modem unit is skipped without rmtfs"
+grep -qi 'modemmanager' "$unit" && grep -qiE '^(Wants|Requires)=.*ModemManager' "$unit" && fail "the modem unit never starts ModemManager"
+md=$tmp/modem; mkdir -p "$md/sys/class/remoteproc/remoteproc0" "$md/sys/class/remoteproc/remoteproc2" "$md/bin"
+echo adsp >"$md/sys/class/remoteproc/remoteproc0/name"; echo running >"$md/sys/class/remoteproc/remoteproc0/state"
+echo 4080000.remoteproc >"$md/sys/class/remoteproc/remoteproc2/name"
+printf '#!/bin/sh\necho "$@" >>%s/modprobe.log\n' "$md" >"$md/bin/ok"; printf '#!/bin/sh\nexit 1\n' >"$md/bin/no"; chmod +x "$md/bin/ok" "$md/bin/no"
+mm() { OMAMOBILE_SYSFS=$md/sys OMAMOBILE_MODPROBE=$md/bin/$1 OMAMOBILE_MODEM_WAIT=1 bash vendor/omamobile-markw-modem "$2" 2>/dev/null; }
+st=$md/sys/class/remoteproc/remoteproc2/state
+echo running >"$st"; mm ok start || fail "a running modem is left alone"
+[[ $(cat "$st") == running ]] || fail "a running modem gets no second start"
+grep -qx qcom_q6v5_mss "$md/modprobe.log" || fail "start loads qcom_q6v5_mss"
+echo crashed >"$st"; mm ok start && fail "a modem in another state isn't started"
+echo offline >"$st"; mm no start && fail "a failed modprobe stops the start"
+[[ $(cat "$st") == offline ]] || fail "nothing is written after a failed modprobe"
+echo offline >"$st"; mm ok start && fail "a modem that never reaches running fails the unit"
+[[ $(cat "$st") == start ]] || fail "start writes start to the modem's state"
+echo offline >"$st"; mm ok stop || fail "stop leaves an offline modem alone"
+[[ $(cat "$st") == offline ]] || fail "an offline modem gets no stop"
+echo running >"$st"; mm ok stop && fail "a modem that never reaches offline fails the stop"
+[[ $(cat "$st") == stop ]] || fail "stop writes stop to a running modem"
+pass "modem: booted idle after rmtfs, enabled, driver blacklisted, script states"
+# ModemManager at boot, after the modem; the sleep hook on a fake sysfs:
+# rmnet_ipa0 goes down before a suspend only when no link sits on it.
+[[ $(readlink "$tmp/root/usr/lib/systemd/system/multi-user.target.wants/ModemManager.service") == ../ModemManager.service ]] \
+  || fail "ModemManager is enabled"
+grep -qx 'After=omamobile-markw-modem.service' \
+  "$tmp/root/usr/lib/systemd/system/ModemManager.service.d/10-omamobile-markw.conf" \
+  || fail "ModemManager starts after the modem"
+dropin=$tmp/root/usr/lib/systemd/system/ModemManager.service.d/10-omamobile-markw.conf
+grep -qx 'ExecStart=' "$dropin" \
+  && grep -qx 'ExecStart=/usr/bin/ModemManager --test-quick-suspend-resume' "$dropin" \
+  || fail "ModemManager keeps the modem across a suspend (quick suspend/resume)"
+hook=$tmp/root/usr/lib/systemd/system-sleep/omamobile-markw
+[[ -x $hook ]] || fail "the sleep hook is staged"
+sl=$tmp/sleep; mkdir -p "$sl/sys/class/net/rmnet_ipa0" "$sl/sys/class/net/usb0"
+echo 3 >"$sl/sys/class/net/rmnet_ipa0/ifindex"; echo 3 >"$sl/sys/class/net/rmnet_ipa0/iflink"
+echo 4 >"$sl/sys/class/net/usb0/ifindex"; echo 4 >"$sl/sys/class/net/usb0/iflink"
+printf '#!/bin/sh\necho "$@" >>%s/ip.log\n' "$sl" >"$sl/ip"; chmod +x "$sl/ip"
+hk() { rm -f "$sl/ip.log"; OMAMOBILE_SYSFS=$sl/sys OMAMOBILE_IP=$sl/ip "$hook" "$@" >/dev/null; }
+echo 0x1003 >"$sl/sys/class/net/rmnet_ipa0/flags"
+hk pre suspend || fail "the hook succeeds"
+[[ $(cat "$sl/ip.log") == "link set rmnet_ipa0 down" ]] || fail "pre brings an unused rmnet_ipa0 down"
+hk post suspend; [[ ! -e $sl/ip.log ]] || fail "post leaves rmnet_ipa0 alone"
+mkdir -p "$sl/sys/class/net/qmapmux0.0"; echo 5 >"$sl/sys/class/net/qmapmux0.0/ifindex"; echo 3 >"$sl/sys/class/net/qmapmux0.0/iflink"
+echo 0x1003 >"$sl/sys/class/net/qmapmux0.0/flags"
+hk pre suspend; [[ ! -e $sl/ip.log ]] || fail "rmnet_ipa0 stays up while a data link is on it"
+echo 0x1002 >"$sl/sys/class/net/qmapmux0.0/flags"
+hk pre suspend
+[[ $(cat "$sl/ip.log" 2>/dev/null) == "link set rmnet_ipa0 down" ]]   || fail "a data link left down (ModemManager gone) does not keep rmnet_ipa0 up"
+rm -r "$sl/sys/class/net/qmapmux0.0"; echo 0x1002 >"$sl/sys/class/net/rmnet_ipa0/flags"
+hk pre suspend; [[ ! -e $sl/ip.log ]] || fail "a down rmnet_ipa0 is left alone"
+rm -r "$sl/sys/class/net/rmnet_ipa0"
+hk pre suspend || fail "the hook succeeds without rmnet_ipa0"
+[[ ! -e $sl/ip.log ]] || fail "no rmnet_ipa0, nothing to do"
+pass "ModemManager after the modem; the sleep hook drops an unused rmnet_ipa0"
+# Auto-rotate: omamobile-sensors' client, byte for byte, staged where its
+# wrapper looks, the user unit installed but not enabled (the tile does).
+if [[ -d ../omamobile-sensors ]]; then
+  cmp -s vendor/autorotate/autorotate.py ../omamobile-sensors/lib/autorotate.py \
+    && cmp -s vendor/autorotate/omamobile-autorotate ../omamobile-sensors/bin/omamobile-autorotate \
+    && cmp -s vendor/autorotate/omamobile-autorotate.service ../omamobile-sensors/systemd/omamobile-autorotate.service \
+    || fail "the auto-rotate files drifted from omamobile-sensors"
+fi
+[[ -x $tmp/root/usr/bin/omamobile-autorotate && -f $tmp/root/usr/lib/omamobile-sensors/autorotate.py ]] \
+  || fail "auto-rotate is staged"
+grep -q '/usr/lib/omamobile-sensors/autorotate.py' "$tmp/root/usr/bin/omamobile-autorotate" \
+  || fail "the auto-rotate wrapper finds its script"
+[[ -f $tmp/root/usr/lib/systemd/user/omamobile-autorotate.service ]] || fail "the auto-rotate user unit is staged"
+find "$tmp/root" -lname '*omamobile-autorotate.service' | grep -c . >/dev/null \
+  && fail "auto-rotate is turned on from the tile, never enabled"
+grep -q 'iio-sensor-proxy' PKGBUILD && grep -q 'conflicts=.*omamobile-sensors' PKGBUILD \
+  || fail "auto-rotate runs on iio-sensor-proxy, never next to omamobile-sensors"
+pass "auto-rotate: omamobile-sensors' client unchanged, not enabled"
+# The Location tile: a fake mmcli. Status must give the tile's JSON keys,
+# on/off must flip only gps-nmea, and nothing may print a position.
+gnss=$tmp/root/usr/bin/omamobile-gnss
+[[ -x $gnss ]] || fail "omamobile-gnss is staged"
+python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" vendor/omamobile-gnss \
+  || fail "omamobile-gnss parses"
+fakemm=$tmp/mmcli; mmstate=$tmp/mm-enabled; mmlog=$tmp/mm-log
+cat >"$fakemm" <<'EOF'
+#!/bin/bash
+echo "$*" >>"$MMLOG"
+enabled=$(cat "$MMSTATE" 2>/dev/null)
+case "$*" in
+  *--location-status*) [[ -n ${MMNOGPS:-} ]] && { echo "error: no modems" >&2; exit 1; }
+    printf '{"modem":{"location":{"capabilities":["3gpp-lac-ci","gps-nmea"],"enabled":["3gpp-lac-ci"%s]}}}\n' \
+      "$([[ $enabled == on ]] && echo ',"gps-nmea"')" ;;
+  *--location-get*) printf '{"modem":{"location":{"gps":{"latitude":"12.5","longitude":"98.5","nmea":["$GPRMC,,V,,,,,,,,,,N*53","%s"]}}}}\n' "${MMGGA:-\$GPGGA,,,,,,0,,,,,,,,*66}" ;;
+  *--location-enable-gps-nmea*) echo on >"$MMSTATE" ;;
+  *--location-disable-gps-nmea*) echo off >"$MMSTATE" ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "$fakemm"
+run_gnss() { OMAMOBILE_MMCLI=$fakemm MMSTATE=$mmstate MMLOG=$mmlog python3 "$gnss" "$@"; }
+[[ $(run_gnss status --json) == '{"location":"off","running":"no","fix":"no","satellites":"","installed":true}' ]] \
+  || fail "omamobile-gnss status: off, as the tile reads it"
+run_gnss on || fail "omamobile-gnss on"
+grep -q -- '-m any --location-enable-gps-nmea' "$mmlog" || fail "on enables gps-nmea on the modem"
+[[ $(run_gnss status --json) == '{"location":"on","running":"no","fix":"no","satellites":"0","installed":true}' ]] \
+  || fail "omamobile-gnss status: on, no fix"
+fixed=$(MMGGA='$GPGGA,120000.00,1230.000,N,09830.000,E,1,07,1.2,10.0,M,,M,,*00' run_gnss status)
+[[ $fixed == $'location: on\nfix: yes (7 satellites)' ]] || fail "omamobile-gnss status reads the GGA fix"
+MMGGA='$GPGGA,120000.00,1230.000,N,09830.000,E,1,07,1.2,10.0,M,,M,,*00' run_gnss status --json | grep -c -E '12\.5|98\.5|1230|09830' >/dev/null \
+  && fail "omamobile-gnss status prints a position"
+run_gnss off || fail "omamobile-gnss off"
+grep -q -- '--location-disable-gps-nmea' "$mmlog" || fail "off disables gps-nmea"
+grep -v -E -- '--location-(status|get|enable-gps-nmea|disable-gps-nmea)' "$mmlog" | grep -c . >/dev/null \
+  && fail "omamobile-gnss asks ModemManager for something else"
+[[ $(MMNOGPS=1 run_gnss status --json) == *'"installed":false'* ]] || fail "no modem: the tile says No GNSS"
+rc=0; run_gnss force 2>/dev/null || rc=$?
+[[ $rc == 2 ]] || fail "unknown commands give usage"
+grep -q 'conflicts=.*omamobile-gnss' PKGBUILD || fail "omamobile-gnss (the Pixel's) conflicts"
+pass "the Location tile: omamobile-gnss over ModemManager's GPS, no position printed"
+# The Hotspot tile: a fake iptables that keeps a rule list, and a fake nmcli.
+hs=$tmp/root/usr/lib/NetworkManager/dispatcher.d/50-omamobile-markw-hotspot
+[[ -x $hs ]] || fail "the hotspot dispatcher script is staged and executable"
+bash -n "$hs" || fail "the hotspot dispatcher script parses"
+fakeipt=$tmp/iptables; iptrules=$tmp/ipt-rules; : >"$iptrules"
+cat >"$fakeipt" <<'EOF'
+#!/bin/bash
+[[ $1 == -w ]] || exit 9
+op=$2; shift 2; rule="$*"
+case $op in
+  -I) echo "$rule" >>"$IPTRULES" ;;
+  -D) grep -qxF -- "$rule" "$IPTRULES" || exit 1
+      awk -v r="$rule" 'done || $0 != r { print; next } { done = 1 }' "$IPTRULES" >"$IPTRULES.n" && mv "$IPTRULES.n" "$IPTRULES" ;;
+  *) exit 9 ;;
+esac
+EOF
+fakenm=$tmp/nmcli-hs
+printf '#!/bin/bash\n[[ "$*" == "-g ipv4.method connection show uuid $UUID_SHARED" ]] && echo shared || echo auto\n' >"$fakenm"
+chmod +x "$fakeipt" "$fakenm"
+run_hs() { OMAMOBILE_IPTABLES=$fakeipt OMAMOBILE_NMCLI=$fakenm IPTRULES=$iptrules UUID_SHARED=u-hot bash "$hs" "$@" >/dev/null; }
+CONNECTION_UUID=u-client run_hs wlan0 up
+[[ ! -s $iptrules ]] || fail "the hotspot rules stay off for a client Wi-Fi connection"
+CONNECTION_UUID=u-hot run_hs wlan0 up
+[[ $(wc -l <"$iptrules") == 4 ]] || fail "a shared connection opens four rules"
+grep -qxF 'ufw-user-input -i wlan0 -p udp --dport 67 -m comment --comment omamobile-hotspot-wlan0 -j ACCEPT' "$iptrules" \
+  || fail "DHCP is open on the hotspot"
+grep -qxF 'ufw-user-forward -i wlan0 ! -o usb0 -m comment --comment omamobile-hotspot-wlan0 -j ACCEPT' "$iptrules" \
+  || fail "forwarding from the hotspot never reaches usb0"
+grep -v -E -- '-i wlan0 ' "$iptrules" | grep -c . >/dev/null && fail "every hotspot rule is bound to its interface"
+CONNECTION_UUID=u-hot run_hs wlan0 up
+[[ $(wc -l <"$iptrules") == 4 ]] || fail "a second up does not add the rules twice"
+CONNECTION_UUID=u-hot run_hs wlan0 down
+[[ ! -s $iptrules ]] || fail "down removes every hotspot rule"
+run_hs wlan0 down && run_hs none up || fail "down without rules, and no interface, are fine"
+grep -v '^[[:space:]]*#' "$hs" | grep -c -E 'ufw (allow|route|insert|delete|reload)|ufw-user-input -[AP]|iptables-save|/etc/ufw' >/dev/null \
+  && fail "the hotspot script never changes ufw's saved rules"
+grep -q 'depends=.*dnsmasq' PKGBUILD || fail "the package pulls in dnsmasq for the hotspot's DHCP"
+pass "the Hotspot tile: ufw opens DHCP, DNS and forwarding only while a shared connection is up"
 # USB rescue: a fake sysfs and configfs. The script must leave a working
 # link, a wall charger and the other roles alone, and rebind otherwise.
 [[ -x $tmp/root/usr/lib/omamobile/omamobile-markw-usb-rescue ]] || fail "the USB rescue is staged"
@@ -147,25 +311,37 @@ setusb device 'Unknown [SDP] DCP CDP' 0; ur && fail "a dead link that stays dead
 [[ $(grep -c rebinding "$us/out") == 2 ]] || fail "a dead link is rebound twice at most"
 [[ $(cat "$us/cfs/usb_gadget/g/UDC") == 7000000.usb ]] || fail "the gadget ends up bound to the controller"
 pass "USB rescue: rebinds a dead link on a computer's port only, at most twice"
-# Charge LED: a fake sysfs. Triggers go only to LEDs with none set, and
-# only once the fuel gauge offers them.
+# Charge LED: a fake sysfs. The script sets brightness from the battery
+# status and never hands the LED to the kernel's battery triggers.
 [[ -x $tmp/root/usr/lib/omamobile/omamobile-markw-charge-led ]] || fail "the charge LED script is staged"
 grep -c 'KERNEL=="qcom-battery"' "$tmp/root/usr/lib/udev/rules.d/81-omamobile-markw-charge-led.rules" >/dev/null \
   || fail "the battery's events run the charge LED script"
-cl=$tmp/cled; mkdir -p "$cl/class/leds/red:indicator" "$cl/class/leds/green:indicator"
+cl=$tmp/cled; mkdir -p "$cl/class/leds/red:indicator" "$cl/class/leds/green:indicator" "$cl/class/power_supply/qcom-battery"
 setled() { echo "$2" >"$cl/class/leds/$1/trigger"; }
 led() { sed -E 's/.*\[([^]]*)\].*/\1/' "$cl/class/leds/$1/trigger"; }
+lit() { cat "$cl/class/leds/$1/brightness"; }
+bat() { echo "$1" >"$cl/class/power_supply/qcom-battery/status"; }
 crun() { OMAMOBILE_SYSFS=$cl bash vendor/omamobile-markw-charge-led || fail "the charge LED script exits 0"; }
+echo 0 >"$cl/class/leds/red:indicator/brightness"; echo 0 >"$cl/class/leds/green:indicator/brightness"
 # A fake trigger file shows the written value as the selection.
-setled red:indicator '[none] heartbeat pattern'; setled green:indicator '[none] heartbeat pattern'
-crun; [[ $(led red:indicator) == none ]] || fail "no trigger before the fuel gauge offers one"
 setled red:indicator '[none] pattern qcom-battery-charging qcom-battery-full'
 setled green:indicator '[none] pattern qcom-battery-charging qcom-battery-full'
-crun; [[ $(cat "$cl/class/leds/red:indicator/trigger") == qcom-battery-charging ]] || fail "red shows charging"
-[[ $(cat "$cl/class/leds/green:indicator/trigger") == qcom-battery-full ]] || fail "green shows full"
+crun; [[ $(lit red:indicator) == 0 && $(lit green:indicator) == 0 ]] || fail "no battery status: both off"
+bat Charging; crun
+[[ $(lit red:indicator) == 255 && $(lit green:indicator) == 0 ]] || fail "red shows charging"
+[[ $(led red:indicator) == none ]] || fail "charging sets no kernel trigger"
+bat Full; crun
+[[ $(lit red:indicator) == 0 && $(lit green:indicator) == 255 ]] || fail "green shows full"
+bat Discharging; crun
+[[ $(lit red:indicator) == 0 && $(lit green:indicator) == 0 ]] || fail "unplugged: both off"
+setled red:indicator 'none pattern [qcom-battery-charging] qcom-battery-full'
+bat Charging; crun
+[[ $(cat "$cl/class/leds/red:indicator/trigger") == none ]] || fail "an old battery trigger is released"
+[[ $(lit red:indicator) == 255 ]] || fail "red shows charging after the release"
 setled red:indicator 'none [pattern] qcom-battery-charging qcom-battery-full'
-crun; [[ $(led red:indicator) == pattern ]] || fail "a feedbackd blink is never cut off"
-pass "charge LED: red charging, green full, only on LEDs with no trigger"
+echo 7 >"$cl/class/leds/red:indicator/brightness"; bat Full; crun
+[[ $(led red:indicator) == pattern && $(lit red:indicator) == 7 ]] || fail "a feedbackd blink is never cut off"
+pass "charge LED: red charging, green full, set from userspace without kernel triggers"
 grep -qx 'w /sys/devices/system/cpu/cpufreq/schedutil/rate_limit_us - - - - 20000' \
   "$tmp/root/usr/lib/tmpfiles.d/omamobile-schedutil.conf" \
   || fail "schedutil changes the clock at most every 20 ms"
@@ -184,9 +360,26 @@ grep -q '^AUTO_SUSPEND_DELAY=10$' "$tmp/root/usr/share/omamobile/device.conf" \
   || fail "the descriptor sets the auto-suspend delay"
 [[ -x $tmp/root/usr/lib/omamobile/omamobile-autosuspend && -f $tmp/root/usr/lib/systemd/system/omamobile-autosuspend.service ]] \
   || fail "install stages auto-suspend"
-! find "$tmp/root" -lname '*omamobile-autosuspend.service' | grep -c . >/dev/null \
-  || fail "auto-suspend ships disabled until it is proven"
+[[ $(readlink "$tmp/root/usr/lib/systemd/system/multi-user.target.wants/omamobile-autosuspend.service") == ../omamobile-autosuspend.service ]] \
+  || fail "auto-suspend is enabled at boot"
+! grep -c 'runuser -u' "$tmp/root/usr/lib/omamobile/omamobile-autosuspend" >/dev/null \
+  || fail "auto-suspend polls without a PAM session (no runuser)"
 bash test/autosuspend.sh || fail "auto-suspend decisions"
+[[ -x $tmp/root/usr/lib/omamobile/omamobile-markw-screen-power && -f $tmp/root/usr/lib/systemd/system/omamobile-markw-screen-power.service ]] \
+  || fail "install stages the screen-off power saver"
+! find "$tmp/root" -lname '*omamobile-markw-screen-power.service' | grep -c . >/dev/null \
+  || fail "the screen-off power saver ships disabled until CPU hotplug is proven"
+grep -q '^SCREEN_OFF_CPUS=4-7$' "$tmp/root/usr/share/omamobile/device.conf" \
+  || fail "the descriptor names the CPUs to take offline with the screen off"
+bash test/screen-power.sh || fail "screen-off power saver"
+sd=$tmp/root/usr/lib/systemd/system/omamobile-markw-sd-storage.service
+[[ -f $sd && -x $tmp/root/usr/lib/omamobile/omamobile-markw-sd-storage &&
+   -L $tmp/root/usr/lib/systemd/system/multi-user.target.wants/omamobile-markw-sd-storage.service ]] \
+  || fail "install stages and enables the microSD storage mount"
+bash -n vendor/omamobile-markw-sd-storage || fail "the microSD storage script parses"
+bash test/sd-storage.sh || fail "microSD storage decisions"
+[[ ! -e $tmp/root/usr/bin/omamobile-display-touch ]] || fail "global touch disable hook must stay absent"
+grep -qx 'POWER_KEY_WAKE_ONLY=1' "$tmp/root/usr/share/omamobile/device.conf" || fail "Power-only wake policy staged"
 ucm=$tmp/root/usr/share/alsa/ucm2
 hifi=$ucm/Xiaomi/markw/HiFi.conf
 [[ -f $ucm/conf.d/xiaomi-markw/xiaomi-markw.conf && -f $hifi ]] || fail "install stages the UCM profile"
@@ -203,7 +396,9 @@ grep -qF "cset \"name='PRI_MI2S_RX Audio Mixer MultiMedia1' 1\"" "$hifi" || fail
 sed -n "s/.*Digital Volume' \([0-9]*\)\".*/\1/p" "$hifi" | awk '$1 >= 84 { bad = 1 } END { exit bad }' \
   || fail "a digital volume reaches 0 dB"
 grep -c 'PlaybackMixerElem\|PlaybackVolume' "$hifi" >/dev/null && fail "PipeWire must not own the hardware gain"
-pass "the UCM profile: speaker on the line output, gains below 0 dB"
+grep -qF "cset \"name='EAR_S' Switch\"" "$hifi" || fail "the earpiece plays through EAR_S"
+awk '/SectionDevice."Earpiece"/ { e = 1 } e && /PlaybackPriority/ { print $2; exit }' "$hifi"   | awk '$1 >= 100 { bad = 1 } END { exit bad }' || fail "the earpiece outranks the speaker"
+pass "the UCM profile: speaker on the line output, earpiece below it, gains below 0 dB"
 wp=$tmp/root/usr/share/wireplumber/wireplumber.conf.d/51-xiaomi-markw.conf
 [[ -f $wp ]] || fail "install stages the WirePlumber rule"
 grep -q 'audio.format = "S16LE"' "$wp" || fail "the WirePlumber rule pins S16LE"
@@ -230,6 +425,11 @@ prox=$tmp/root/usr/lib/udev/rules.d/80-omamobile-markw-proximity.rules
 grep -q 'ATTR{name}=="ltr559", ENV{PROXIMITY_NEAR_LEVEL}="50"' "$prox" || fail "the proximity rule sets the near level on the LTR-559"
 [[ $(grep -v '^#' "$prox" | grep -c .) == 1 ]] || fail "the proximity rule is one line"
 pass "the proximity rule: near at 50 on the LTR-559"
+mtu=$tmp/root/usr/lib/udev/rules.d/80-omamobile-markw-ipa-mtu.rules
+[[ -f $mtu ]] || fail "install stages the IPA MTU rule"
+grep -q 'KERNEL=="rmnet_ipa0", ATTR{mtu}="1504"' "$mtu" || fail "the IPA MTU rule sets rmnet_ipa0 to 1504"
+[[ $(grep -v '^#' "$mtu" | grep -c .) == 1 ]] || fail "the IPA MTU rule is one line"
+pass "the IPA MTU rule: rmnet_ipa0 at 1504, so the mux link carries 1500"
 for absent in usr/bin/omamobile-boot-success usr/bin/omamobile-bootctl \
               usr/lib/systemd/system/omamobile-boot-success.service \
               usr/bin/omamobile-wifi-start usr/bin/omamobile-charge-guard \

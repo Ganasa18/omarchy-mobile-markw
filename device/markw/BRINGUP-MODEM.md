@@ -1,10 +1,19 @@
 <!-- SPDX-License-Identifier: MIT -->
 # markw: mobile data over the modem (runbook)
 
-Status: step 0 (backup) passed (2026-11-03). The phone runs
-`7.1.3-msm8953-oma3`, which already has the modem and IPA drivers; the
-probe's DTB keeps the modem's node disabled. Steps 0-3 passed; next:
-step 4, a boot of `probe-m10-modem` (owner's go).
+Status: steps 0-7 passed (2026-11-12, `oma10`): SIM registered on LTE,
+data over `qmapmux0.0` works but slowly (radio suspected). Next: a
+speed comparison with MIUI at the same spot, data with Wi-Fi off, then
+step 8 (packaging).
+
+Status (2026-11-16): step 8 in part. omamobile-device-markw 0.1.21 boots
+the modem idle at startup (`omamobile-markw-modem.service`, after the
+rmtfs RAM copies; ModemManager and so mobile data stay off), because
+s2idle reaches VDD minimization only with a booted, idle modem
+(BRINGUP-SUSPEND.md runbooks N-S). Not on the phone yet. ipa2-lite turns
+its clock off in suspend when mobile data is down (kernel patch 0024);
+mobile data after a resume is still to be tested. Fresh NV backup
+`20261115T150215Z-after-miui` (all six sums match).
 
 ## Scope (owner's decision, 2026-11-03)
 
@@ -147,3 +156,102 @@ Results go here and in NOTES.md, with the date and `uname -r`.
   the `qcom-soc` plugin (`qrtr0` control, `rmnet_ipa0` data) and stopped
   at `failed` / `sim-missing` ("GW primary session index unknown"), as
   expected with no SIM; with one in the tray, step 6 again.
+
+**2026-11-12, `7.1.3-msm8953-oma10`, SIM inserted:**
+
+- **Step 0 again** (MIUI ran this morning, with the SIM): a fresh
+  read-only backup (`…-after-miui`), all six sums match on both sides;
+  `modemst1`, `modemst2` and `persist` differ from 2026-11-06's, `fsg`
+  doesn't.
+- **Step 5 again: pass.** rmtfs (RAM copies) and tqftpserv, `modprobe
+  qcom_q6v5_mss`, `echo start`: the modem up 1.1 s later; partitions still
+  `ro=1`; `rmnet_ipa0` and `ipa_lan0` back.
+- **Step 6: pass.** ModemManager: `registered` (home), LTE, signal 71-75 %
+  (RSRP -104 dBm, RSRQ -17 dB indoors), packet service `attached`; the
+  network handed the initial bearer its APN. Lock `sim-pin2` only (the
+  SIM has no PIN1 set).
+- **Step 7: pass, slow.** `nmcli connection add type gsm ifname '*'
+  con-name omamobile-mobile apn <APN> connection.autoconnect no`, then
+  `up`: ModemManager made a multiplexed bearer, so the address is on
+  `qmapmux0.0` (on `rmnet_ipa0`), not on `rmnet_ipa0` itself; a ping or
+  curl bound to `rmnet_ipa0` gets nothing. Over `qmapmux0.0`: ping
+  answers (RTT 43-590 ms, about 10 % lost, jitter with no batching), HTTP
+  and HTTPS work, 1 MiB in 23 s (about 45 KB/s), a second try 2.6 KB/s.
+  The phone was idle meanwhile (CPU, no drops or errors on the
+  interface, no kernel error), so the radio link is the first suspect;
+  compare with a speed test in MIUI at the same spot before blaming
+  ipa2-lite. Wi-Fi stayed on (its route wins); traffic was bound to the
+  interface.
+- **Step 0 again, 2026-11-15** (oma16, before the MPSS suspend test in
+  BRINGUP-SUSPEND.md runbook N): MIUI had changed `modemst1`, `modemst2`
+  and `persist` since 2026-11-12's backup, so a fresh read-only one,
+  `…-after-miui`, was taken. All six sums match on both sides. The USB
+  network dropped once during the first copy, and `modemst2` was fetched
+  twice before its sum matched.
+- Next: the MIUI comparison, a test with Wi-Fi off (the default route on
+  mobile data), then step 8.
+- **ModemManager crashes on a quick reconnect.** The quick settings tile
+  (omamobile-shell: NetworkManager's gsm profile when there is no
+  omamobile-sit) turned data off and on 3 s apart, and ModemManager
+  1.24.2 (libqmi 1.38.0, glib2 2.90.1) died with SIGSEGV right after "net
+  link qmapmux0.0 created (mux id 1)"; systemd restarted it. Reproduced:
+  a reconnect 1 s and 5 s after the disconnect crashed, 10 s and minutes
+  after worked. The old mux link is gone 190 ms after the disconnect, so
+  it isn't that. The stack is unreadable without symbols (a frame in
+  ModemManager's static code next to `mm_port_mbim_new`). The tile waits
+  out 15 s after "off" before "on", and keeps the profile's autoconnect
+  with the tile, so NetworkManager reconnects by itself if it crashes
+  anyway. Later the same afternoon, with a better signal: ping 30 ms.
+  **A resume hits the same window (2026-11-18, modemmanager 1.24.2-2.1).**
+  The patched ModemManager disconnects the bearer on "about to suspend"
+  and reconnects it on resume. CLOCK_MONOTONIC stops in suspend, so to
+  ModemManager the two are about a second apart, whatever the sleep
+  length: after a 2 h 41 min sleep it segfaulted right after "net link
+  qmapmux0.0 created (mux id 1)" (pc 0x30, from `ModemManager+0x188b0c`),
+  and systemd restarted it. **Cause:** with a debug build (same `.text`)
+  the core lands in `transaction_complete()` (`src/mm-netlink.c:242`),
+  which reads `tr->completion_fn` after `g_hash_table_remove()` has freed
+  `tr`. Fixed upstream in `9317cbc4702c` (on `main`, in no release yet);
+  packages/modemmanager 1.24.2-2.3 carries it as 0002.
+  **2.3 passes the reconnect test (2026-11-18, 7.1.3-msm8953-oma19).**
+  Installed with `modemmanager-debug`; the restart with data up left no
+  core and data was back in 7 s. Then the gsm profile went down and up
+  1 s apart and 5 s apart, the gaps that crashed every time before: both
+  reconnected (`qmapmux0.0` created twice), the PID stayed the same, no
+  core dump, and ping went out through `qmapmux0.0`.
+- **ModemManager aborts when the phone suspends with data connected**
+  (2026-11-17 13:17, oma19, found 2026-11-18): `Bail out!
+  mm-iface-modem.c:6779:mm_iface_modem_count_bearers: assertion failed:
+  (max >= ctx.count)`, right after "system is about to suspend". On the
+  suspend path `mm_base_manager_cleanup()` counts ACTIVE bearers only to
+  lengthen its timeout. In 1.24.2 the maximum for that count is
+  `MaxActiveBearers` alone, and on an IPA setup that is 0 (only
+  multiplexed bearers: `MaxActiveMultiplexedBearers` is 254 on the
+  phone), so one connected `qmapmux0.0` bearer fails the assertion.
+  Upstream fixed it in `0edcb916ad2b` ("base-manager: fix cleanup of
+  multiplexed bearers", 2025-10-03), in 1.25.x but not on `mm-1-24`.
+  Until then every sleep with mobile data up costs a core dump; systemd
+  restarts ModemManager on resume and NetworkManager reconnects. The
+  dead ModemManager left `qmapmux0.0` behind, down, and the sleep hook
+  kept `rmnet_ipa0` up for it (no vmin for 19 h); device-markw 0.1.27
+  ignores a down link. Fix options: carry the upstream patch in a
+  ModemManager package of ours, or `--test-no-suspend-resume` (no
+  reaction to sleep at all; resume sync lost, to be tested).
+- The USB link dropped once, 50 s after the first crash (usb0 "Lost
+  carrier", no role change, no kernel error) and came back on a replug;
+  not shown to be related.
+
+## GPS through ModemManager, indoors (2026-11-16, oma18, device-markw 0.1.24)
+
+The modem reports `gps-raw`, `gps-nmea`, `agps-msa` and `agps-msb`
+(XTRA assistance, SUPL server preset). With the owner's go,
+`--location-enable-gps-nmea` for 10 minutes, the phone indoors near a
+window, mobile data off: NMEA every refresh (`GPGGA`, `GPRMC`, `GPVTG`,
+`GPGSA`, `GNGSA`, `GNGNS`), but `GSA` mode 1 with no satellites, no
+`GSV` sentence, `RMC` status `V`: the GNSS engine runs, no satellite was
+seen. Indoors that says nothing about the antenna; the next try is
+outdoors or at an open window, ideally with data on for XTRA. GPS was
+turned off after (`enabled: 3gpp-lac-ci` only). Coordinates are never
+logged. The quick settings Location tile drives omamobile-gnss (the
+Pixel's receiver); on markw the path would be GeoClue's `modem-gps`
+source over ModemManager, once a fix is shown.

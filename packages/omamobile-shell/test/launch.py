@@ -83,6 +83,7 @@ class Sandbox:
             "PATH": self.bin + ":" + os.environ.get("PATH", "/usr/bin:/bin"),
             "XDG_DATA_HOME": os.path.join(self.root, "data"),
             "XDG_DATA_DIRS": os.path.join(self.root, "none"),
+            "XDG_RUNTIME_DIR": os.path.join(self.root, "run"),
         })
         return self
 
@@ -452,6 +453,43 @@ def launches_are_remembered_for_the_recent_row():
         s.desktop("foot")
         r = s.run("app", "foot")
         assert r.returncode == 0 and "recent apps not saved" in r.stderr, r
+
+
+@test
+def an_app_still_starting_is_not_started_twice():
+    def starts(s):
+        return [a for a in s.actions() if a[0] == "eval" and "gtk-launch chromium.desktop" in a[1]]
+    with Sandbox() as s:
+        s.desktop("chromium")
+        assert s.run("app", "chromium").returncode == 0
+        assert len(starts(s)) == 1, s.actions()
+        r = s.run("app", "chromium")
+        assert r.returncode == 0 and "still starting" in r.stderr, r
+        assert len(starts(s)) == 1, s.actions()
+        # Once its window is open, a tap focuses it as before.
+        s.set_clients([client("0xc", "chromium", workspace=3)])
+        assert s.run("app", "chromium").returncode == 0
+        assert ("dispatch", 'hl.dsp.focus({ window = "address:0xc" })') in s.actions(), s.actions()
+        # --new always starts one.
+        s.set_clients([])
+        assert s.run("app", "--new", "chromium").returncode == 0
+        assert len(starts(s)) == 2, s.actions()
+        # After STARTING_S an app that never showed a window starts again.
+        stamp = os.path.join(s.root, "run/omamobile-launch/starting/chromium")
+        old = os.stat(stamp).st_mtime - mod.STARTING_S - 1
+        os.utime(stamp, (old, old))
+        assert s.run("app", "chromium").returncode == 0
+        assert len(starts(s)) == 3, s.actions()
+
+
+@test
+def terminals_are_started_even_while_one_is_starting():
+    with Sandbox() as s:
+        s.desktop("foot", Terminal="true")
+        assert s.run("app", "foot").returncode == 0
+        assert s.run("app", "foot").returncode == 0
+        evals = [a for a in s.actions() if a[0] == "eval" and "gtk-launch foot.desktop" in a[1]]
+        assert len(evals) == 2, s.actions()
 
 
 def main():

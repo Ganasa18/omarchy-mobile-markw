@@ -1,0 +1,22 @@
+From: Omarchy Mobile <omamobile@localhost>
+Subject: [PATCH] arm64: dts: qcom: msm8953-xiaomi-markw: restart charging at 4.18 V
+
+With the default 100 mV recharge threshold the phone, left on a charger
+at full, alternates between Full and Charging about once a minute and
+keeps the battery at the top of its charge. Restart charging 200 mV below
+the 4.38 V float instead.
+
+---
+ arch/arm64/boot/dts/qcom/msm8953-xiaomi-markw.dts |    1 +
+ 1 file changed, 1 insertion(+)
+
+--- a/arch/arm64/boot/dts/qcom/msm8953-xiaomi-markw.dts
++++ b/arch/arm64/boot/dts/qcom/msm8953-xiaomi-markw.dts
+@@ -142,6 +142,7 @@
+ 	constant-charge-current-max-microamp = <1000000>;
+ 	voltage-min-design-microvolt = <3400000>;
+ 	voltage-max-design-microvolt = <4380000>;
++	re-charge-voltage-microvolt = <4180000>;
+ };
+ 
+ &camss {

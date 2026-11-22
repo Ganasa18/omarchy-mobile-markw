@@ -7,9 +7,16 @@ pkgdesc="Omarchy Mobile support for the Xiaomi Redmi 4 Prime (markw): storage gu
 arch=(aarch64)
 url="https://github.com/derekross/omarchy-mobile"
 license=(MIT)
-depends=(bash systemd omamobile-keyring)
+# dnsmasq: NetworkManager's DHCP and DNS for the Hotspot tile.
+depends=(bash systemd iproute2 python python-gobject iio-sensor-proxy dnsmasq iptables omamobile-keyring)
+optdepends=('modemmanager: mobile data from the quick settings tile'
+            'rmtfs: the idle modem boot')
 provides=(omamobile-device)
-conflicts=(omamobile-device)
+# omamobile-sensors is the Pixel's AoC sensor proxy; markw ships only its
+# auto-rotate client (the same files), against iio-sensor-proxy.
+# omamobile-gnss is the Pixel's GNSS stack; markw ships its own
+# /usr/bin/omamobile-gnss over the modem's GPS for the Location tile.
+conflicts=(omamobile-device omamobile-sensors omamobile-gnss)
 backup=(etc/pacman.d/omamobile-mirrorlist etc/NetworkManager/conf.d/zz-omamobile-wifi-powersave.conf)
 install=omamobile-device-markw.install
 makedepends=(gcc)

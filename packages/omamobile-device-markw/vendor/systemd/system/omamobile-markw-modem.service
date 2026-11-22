@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: MIT
+# Boot markw's modem at startup and leave it idle, so RPM can reach VDD
+# minimization in s2idle: a modem that never boots never votes for sleep
+# (device/markw/BRINGUP-SUSPEND.md, runbooks N-S). Mobile data stays off
+# (ModemManager isn't started). The modem's NV comes from RAM copies made
+# by omamobile-markw-rmtfs.service; the eMMC is never written. Skipped when
+# rmtfs isn't installed.
+[Unit]
+Description=Omarchy Mobile: boot the markw modem, idle
+ConditionPathExists=/usr/bin/rmtfs
+Requires=omamobile-markw-rmtfs.service
+Wants=tqftpserv.service
+After=omamobile-markw-rmtfs.service tqftpserv.service omamobile-markw-firmware.service systemd-modules-load.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/omamobile/omamobile-markw-modem start
+ExecStop=/usr/lib/omamobile/omamobile-markw-modem stop
+TimeoutStartSec=90
+
+[Install]
+WantedBy=multi-user.target

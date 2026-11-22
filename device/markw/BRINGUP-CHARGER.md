@@ -175,3 +175,280 @@ has dropped, with a patch in `device/markw/kernel/patches`.
   property added (`fdtput`; `dtc` diff of the two DTBs shows only that
   line). Next, owner's go: boot it, expect `TCC_CFG` & 7 = 2 and one
   taper to 100 % without the cycling.
+
+## Fuel gauge reading (2026-11-15, oma12 candidate)
+
+Why: the gauge's capacity is not a usable measure. After an overnight
+suspend test it read 69 % at the replug and 77 % about 15 minutes later on
+a laptop port (about 400 mA, so roughly 100 mAh of the 4000 mAh battery,
+2.5 points); the night's 99 % -> 69 % therefore says little about the
+sleep current (BRINGUP-SUSPEND.md, 2026-11-15). current_now agrees with
+what the phone does (about 50 mA screen-off awake, 300 mA screen on,
+400 mA charging) but has not been checked against an external meter.
+
+Facts from the source:
+
+- Mainline `pmi8994_fg` reports capacity from the gauge's monotonic SOC
+  register (0x09) and reads only temperature, voltage and current from
+  the gauge's SRAM. It never loads a battery profile, never writes the
+  nominal capacity and never reads the coulomb counter.
+- The downstream driver (Xiaomi's GPL `markw-m-oss` kernel,
+  `drivers/power/qpnp-fg.c`) loads a 128-byte profile into SRAM at 0x4c0
+  when the integrity bit at 0x53c is clear or the loaded profile differs,
+  picking it by battery ID. Its SRAM table matches the addresses mainline
+  already uses (BATT_TEMP 0x550, voltage and current at 0x5cc).
+- markw has three profiles in that tree (`MARKW-qrd-{Default,Coslight,
+  Feimaotui}-4v4-4000mah.dtsi`, 4.4 V, 4000 mAh), chosen by a 1, 100 or
+  50 kOhm ID resistor. The profile data is GPL source; it is not copied
+  here until a step needs it.
+- SRAM is volatile but survives a reboot while the battery is connected,
+  so the profile MIUI loaded may still be in the gauge when Linux boots.
+  Whether it is, is the first thing to learn.
+
+Patch 0014 (`power: supply: pmi8994_fg: report the coulomb counter and
+gauge state`) is read-only: `charge_counter` (CC_CHARGE 0x570 scaled by
+the nominal capacity at 0x4f4, uAh), `voltage_ocv` (0x588), and
+`/sys/kernel/debug/pmi8994_fg/info` with the profile integrity flag, the
+battery ID, the gauge's own SOC, the nominal capacity, the counter and the
+first 32 bytes of the loaded profile. Nothing is written to the gauge.
+Release `7.1.3-msm8953-oma12`; the probe is oma11's watchdog probe with
+only the kernel and its seven initramfs modules replaced (same DTB, same
+command line; the repack tool reproduces oma11's image byte for byte when
+given oma11's own modules).
+
+Offline checks (2026-11-15): `checkpatch --strict --no-signoff` 0/0/0;
+the driver with `W=1`: no compiler warning, and 109 kernel-doc warnings
+before and after (all from the file's existing `@brief` comments). The
+kernel built with `tools/build-markw-kernel` (Alpine clang 20.1.8; oma11's
+config came from an Ubuntu clang 20.1.8 build, the only config difference
+apart from the release and OpenSSL's ML-DSA options). The markw DTB is
+byte-identical to oma11's. Probe `out/markw/probe-oma12-fg/boot.img`:
+oma11 watchdog probe's header, command line and DTB, oma12's Image.gz and
+seven initramfs modules (vermagic checked); unpacked again, every part
+matches. Image and modules tarball checksums are in the probe's
+`SHA256SUMS` and next to the tarball (local, not committed).
+
+### Runbook G (each step after the owner's go)
+
+| Step | Command | Expect / pass | Stop if | Rollback | Risk |
+| --- | --- | --- | --- | --- | --- |
+| G0 | `tools/phone-ssh --fresh 'uname -r; cat /proc/sys/kernel/random/boot_id'` | oma11, phone answers | no SSH | none | none |
+| G1 | `tools/phone-ssh --fresh 'tar -C /usr/lib/modules --zstd -xf - && depmod 7.1.3-msm8953-oma12' < out/markw/modules-7.1.3-msm8953-oma12.tar.zst` | new release directory, oma11's kept | extraction or depmod error | remove only `/usr/lib/modules/7.1.3-msm8953-oma12` | low |
+| G2 | `./DEBUGING_RUN.sh --restart --probe "$PWD/out/markw/probe-oma12-fg/boot.img"` | fastboot, lk2nd, SSH within 3 min; `uname -r` is oma12 | no fresh SSH in 3 min | owner recovers physically; boot oma11's probe | medium |
+| G3 | `tools/phone-ssh --fresh 'cat /proc/sys/kernel/tainted; dmesg | grep -iE "pmi8994|fg|oops|abort"; cat /sys/kernel/debug/pmi8994_fg/info; cd /sys/class/power_supply/qcom-battery; cat capacity voltage_now voltage_ocv current_now charge_counter'` | taint 0, no FG error, info prints; OCV near voltage_now at low current | an SRAM access error or timeout | reboot to oma11 | none |
+| G4 | Sample `charge_counter` and `current_now` every 10 s for 10 min awake (screen off, cable out) | counter moves by about the integral of current_now | counter frozen, jumps, or moves the wrong way by much | none | none |
+| G5 | Read `charge_counter` before and after a 300 s `rtcwake -m freeze` (watchdog feeder and dead-man as in BRINGUP-SUSPEND) | counter keeps moving during the sleep | as for any suspend gate | as for any suspend gate | medium |
+
+G3 tells which way to go: an integrity bit set and a profile head matching
+one of the three markw profiles means the gauge already runs on MIUI's
+profile, and the jumps come from something else (no capacity learning, or
+SOC recalculated at plug events). A clear bit, or a head matching none,
+means the gauge runs on OTP defaults; loading a profile is then a write to
+the gauge and a separate, gated step.
+
+### Results (2026-11-15, `7.1.3-msm8953-oma12`)
+
+- G0-G2 pass: oma12 modules installed next to oma11's (820 modules,
+  depmod clean); `DEBUGING_RUN.sh --restart --probe …/probe-oma12-fg`
+  went fastboot, lk2nd, probe, SSH; `uname -r` oma12. Taint 512, the
+  documented DSI clock WARNs; no fuel gauge or SRAM error.
+- G3: the gauge **runs on a markw profile**. `profile_integrity: 0x01
+  (loaded)`, and the 32-byte profile head matches the Feimaotui profile
+  (`MARKW-qrd-Feimaotui-4v4-4000mah.dtsi`) in every byte; the nominal
+  capacity in SRAM is 4 203 000 uAh, the value in that profile's
+  nominal-capacity word (0x106b). The Default and Coslight profiles
+  differ from the fourth byte. So MIUI's profile survives in the gauge
+  across the boot into Linux, and a profile load is not what's missing.
+  At the same moment: capacity 95 %, the gauge's own `battery_soc` 92.25 %,
+  voltage_now 4.013 V, voltage_ocv 4.272 V while charging.
+- G4 pass (cable in, charging at about 158 mA): over 125 s the counter
+  rose 5.4 mAh and the integral of current_now was 5.5 mAh. The counter
+  tracks the current within about 2 % and in the same direction
+  (charging raises it, as current_now is positive when charging). In the
+  same two minutes capacity went 95 % -> 96 % for 0.13 % of the
+  battery's charge: the reported percentage is the problem, not the
+  gauge's measurement.
+- Downstream exposes this register as `CHARGE_NOW_RAW` (a raw count to
+  take differences of), not as remaining charge; read it that way.
+- Next: G5, whether the counter keeps counting across a suspend. If it
+  does, sleep drain is measurable from its difference, and a correct
+  capacity can come from the counter between a full charge and empty
+  instead of from the monotonic SOC.
+- G5 (cable in, 2026-11-15): guarded `rtcwake -m freeze -s 300` on oma12
+  (qcom_wdt loaded, feeder armed then disarmed, USB dead-man): slept
+  301.1 s, RTC wake (IRQ 72), success 0 -> 1, fail 0, taint 512
+  unchanged, no Oops or new WARNING. The counter rose 1.43 mAh over 340 s
+  of boot time, while the 39 s awake at about 148 mA of charge account
+  for about 1.6 mAh: across the sleep it barely moved. That fits either a
+  counter that stops in s2idle or a charge that stops with the USB link
+  suspended (the laptop sees the gadget suspend) and roughly offsets a
+  small sleep drain. Not decided; the next run has the cable out, where a
+  stopped counter reads zero and a running one reads the sleep drain.
+- **G5b pass: the counter counts through s2idle** (cable out, 2026-11-15,
+  same oma12 boot). A unit on the phone waited for the unplug, took 69 s
+  awake with the panel off as the control, then armed the watchdog
+  feeder and ran `rtcwake -m freeze -s 180`: suspend entry 13:23:03,
+  exit 13:26:06, RTC wake (IRQ 72), success 1 -> 2, fail 0, taint 512
+  unchanged, no Oops, feeder armed then disarmed. By the counter: awake
+  60.6 mA (current_now averaged 72.7 mA over the same window), asleep
+  28.3 mA over the 182 s window. The window includes the entry and exit,
+  so 28 mA is an upper bound for the sleep itself. s2idle as it stands
+  (Wi-Fi associated, Bluetooth powered, ADSP up) about halves the
+  screen-off drain; it does not reach a deep low-power state yet.
+- **The percentage, not the counter, is off.** Between G3 and a reading
+  after G5b (same boot, cable back in): capacity 95 -> 85 %, the gauge's
+  own SOC 92.25 -> 81.92 %, but the counter fell only 169 mAh, 4.0 % of
+  the 4203 mAh nominal capacity. Since the counter matches the integral of
+  current_now, the reported SOC fell about 2.5 times faster than the
+  charge used, and rises in jumps on charge: it follows the voltage far
+  more than the charge. Downstream computes capacity from the same
+  monotonic SOC register with the same formula, so the difference on
+  Android lies in what qpnp-fg configures around it (hold at 100 % on
+  charge termination, capacity learning, ESR and rslow compensation), or
+  above the kernel.
+
+## Capacity from the counter (2026-11-15, oma13 candidate)
+
+Patch 0015 (`power: supply: pmi8994_fg: report capacity from the coulomb
+counter`) changes only what `capacity` reports; nothing is written to the
+gauge. The counter value when the charger reports FULL is 100 %; until the
+first full charge after boot that point is estimated from the monotonic
+SOC. Below full the capacity is at most 99 %. A counter step larger than a
+5 A current can explain moves the full point with it. At or below 10 % on
+the monotonic SOC the lower of the two is reported. debugfs info gains
+`monotonic_soc_capacity` and `counter_at_full_uah`.
+
+Offline (2026-11-15): `checkpatch --strict` 0/0/0; `W=1` no compiler
+warning, kernel-doc warnings 109 as before. Release
+`7.1.3-msm8953-oma13`, DTB byte-identical to oma11/oma12; probe
+`out/markw/probe-oma13-fg/boot.img` repacked from oma11's watchdog probe as
+for oma12 (header, command line and DTB unchanged, parts verified).
+
+Limits: the 100 % point is kept in kernel memory, so after every boot the
+first estimate comes from the monotonic SOC (as inaccurate as before) until
+the next full charge; the nominal 4203 mAh is used as the full capacity,
+not a learned one, so an aged battery reads high until empty-side
+correction at 10 %.
+
+### Runbook H (each step after the owner's go)
+
+| Step | Command | Expect / pass | Stop if | Rollback | Risk |
+| --- | --- | --- | --- | --- | --- |
+| H1 | `tools/phone-ssh --fresh 'tar -C /usr/lib/modules --zstd -xf - && depmod 7.1.3-msm8953-oma13' < out/markw/modules-7.1.3-msm8953-oma13.tar.zst` | new release directory | extraction or depmod error | remove only that directory | low |
+| H2 | `./DEBUGING_RUN.sh --restart --probe "$PWD/out/markw/probe-oma13-fg/boot.img"` | SSH within 3 min, `uname -r` oma13 | no fresh SSH in 3 min | owner recovers; boot oma12's probe | medium |
+| H3 | `tools/phone-ssh --fresh 'cat /sys/kernel/debug/pmi8994_fg/info; cat /sys/class/power_supply/qcom-battery/capacity; upower -i $(upower -e | grep -m1 battery) | grep percentage'` | capacity near the monotonic SOC at boot; full point set; upower shows the same | capacity outside 0-100, or the shell's battery differs | boot oma12 | none |
+| H4 | Sample capacity, monotonic SOC and the counter every 30 s for 10 min, cable in, then unplug and replug once | capacity moves about 1 point per 42 mAh; no jump at unplug/replug while the monotonic SOC jumps | capacity jumps with the monotonic SOC, or freezes while the counter moves | boot oma12 | none |
+
+### Results (2026-11-15, `7.1.3-msm8953-oma13`)
+
+- H1-H3 pass: modules installed, RAM boot to oma13, taint 512 (the DSI
+  WARNs), no Oops. At boot capacity 97 % = the monotonic SOC, the full
+  point estimated from it; upower and the shell showed 97 % too.
+- H4, cable in near full (12 min at 15 s): the charger flips between
+  FULL and Charging every sample or two (the termination flapping seen
+  since oma6). Each FULL re-anchors the full point, so capacity reads 100
+  on FULL and 99 otherwise; the monotonic SOC stayed at 97-98 % with the
+  charger reporting a full battery.
+- H4, unplug (10 s samples): over 325 s off the cable the counter fell
+  4.7 mAh (0.11 %); capacity held 99 %, the monotonic SOC fell 98 -> 96 %
+  on the voltage step alone. After about 17 minutes off the cable
+  (14:55-15:12) and the replug: counter 13.3 mAh below the full point
+  (0.32 %, about 47 mA average with the panel off), capacity 99 %,
+  monotonic SOC 94 %. No `counter stepped` message. The old reading
+  would have shown a 4-point drop for 0.3 % of charge.
+- To fix: the 99/100 flicker while the charger flaps at termination.
+  Once the full point has been set by a FULL report, the "at most 99 %"
+  rule isn't needed; it only guards the estimated point.
+
+## Steady full reading (2026-11-15, oma14 candidate)
+
+Patch 0016 applies the "at most 99 %" rule only until a FULL report has
+set the full point, so the charger's FULL/Charging flapping at termination
+no longer makes a full battery flicker 99/100. Offline: `checkpatch
+--strict` 0/0/0, `W=1` no compiler warning (kernel-doc 109 as before),
+DTB unchanged; probe `out/markw/probe-oma14-fg/boot.img` repacked as for
+oma12/oma13.
+
+Runbook J (after the owner's go): J1/J2 as H1/H2 with oma14; J3 as H4's
+first part, cable in at termination: pass when capacity stays 100 % while
+status flips. J4 is the suspend measurement in BRINGUP-SUSPEND.md.
+
+### Results (2026-11-15, `7.1.3-msm8953-oma14`)
+
+- J1/J2 pass: modules installed (820), RAM boot to oma14, taint 0, no
+  Oops, system running.
+- J3 pass: cable in at termination, 36 samples at 10 s over 6 minutes:
+  status Full 15 times and Charging 21 times (about 100 mA in each
+  Charging stretch), capacity 100 % in all 36. The monotonic SOC read
+  99 %. The flicker is gone.
+
+## Wall charger and laptop at full (2026-11-16, `7.1.3-msm8953-oma18`)
+
+Read-only log every 15 s (status, current, the coulomb counter,
+`usb_type`, the LEDs), the battery at 100 % throughout.
+
+- Laptop port: `usb_type` `[SDP]`. Status alternated between `Full`
+  (battery current about -0.5 mA, the system on USB power) and short
+  `Charging` stretches at about 100-180 mA, about once a minute; the
+  counter rose slowly (+1.7 mAh in 7 min). No drain on the laptop at
+  full. The notification LED followed the status (green at `Full`, red
+  while `Charging`), so it flickers red at full: the 100 mV recharge
+  threshold noted above.
+- Wall charger: `usb_type` `[DCP]` within about 15 s of the plug, a
+  top-off taper from about 140 mA to 79 mA over 11 min (counter +15.3
+  mAh), then `Full` with the LED green. Temperature 30-31 degC.
+- Unplugged for the swap: `Discharging` at 52-66 mA (awake, screen on)
+  and both LEDs off.
+
+The recharge cycling at full is the open item here: a 200 mV threshold
+(about 4.18 V) would stop it and keep the battery off its top.
+
+### Candidate: a 200 mV recharge threshold (oma19, 2026-11-16)
+
+Patch 0026 makes `qcom-smbchg` take the recharge threshold from the
+battery's `re-charge-voltage-microvolt`: 200 mV below float when that
+voltage is at least 200 mV below `voltage-max-design-microvolt`, else
+100 mV as before (the only two the charger offers, `CHGR_CFG` bit 0).
+Patch 0027 gives markw's battery node 4.18 V (4.38 V float less 200 mV).
+checkpatch `--strict`: 0/0/0 on both. Everything else as oma18.
+Built: `7.1.3-msm8953-oma19`, the same three W=1 warnings as oma18;
+probe `out/markw/probe-oma19/boot.img` (header and cmdline as oma11's,
+touchscreen and watchdog enabled as before), its DTB reads
+`/battery/re-charge-voltage-microvolt` 4180000; modules tarball
+`out/markw/modules-7.1.3-msm8953-oma19.tar.zst`. Not on the phone yet.
+
+On a laptop port the phone runs from USB and the battery rests at about
+4.20 V, so with 4.18 V it may sit below 100 % for hours before topping
+up: that is the intent (the owner's wish: down into the 90s, then back
+to 100).
+
+| Step | What | Expect / pass | Stop if | Rollback | Risk |
+| --- | --- | --- | --- | --- | --- |
+| R1 | After the overnight sleep on oma18, and the owner's go: modules to the phone, `./DEBUGING_RUN.sh --restart --probe out/markw/probe-oma19/boot.img` | oma19, the usual checks (modem, ModemManager, Wi-Fi, sound, eMMC `ro=1`); `CHGR_CFG` (0x10ff on the SMBCHG regmap) reads bit 0 set | no SSH in 3 min, Oops | Power held about 30 s (MIUI), then the oma18 probe | low |
+| R2 | Read-only log every 15 s, the cable in at full for 30 min (laptop, then wall) | after `Full`, no return to `Charging` until the battery is near 4.18 V; the LED stays green | battery past 40 degC | unplug; the oma18 probe | low |
+
+#### Results R (2026-11-17, `7.1.3-msm8953-oma19`)
+
+- R1 pass. Modules installed (`depmod`), then the oma18 boot restarted
+  into `out/markw/probe-oma19/boot.img`: SSH back, oma19, taint 512 (the
+  boot WARNINGs, as oma18), no Oops. Modem, ADSP and WCNSS `running`,
+  ModemManager sees the modem, Wi-Fi connected, the speaker sink there.
+  The eMMC (`mmcblk1` on this boot: the SD card came up as `mmcblk0`)
+  is `ro=1` with all 49 partitions `ro=1`; only the SD root is mounted.
+  `/battery/re-charge-voltage-microvolt` reads 4180000, and `CHGR_CFG`
+  (0x10ff on the PMI8950 regmap `0-02`, one register read) is 0x09: bit 0
+  set, the 200 mV threshold.
+- After the reboot the gauge read 68 % charging at 3.97 V; it had shown
+  85 % on oma18 before the reboot. The counter-based percentage restarts
+  from a voltage estimate at boot, so it isn't a drain.
+- R2 runs detached (`r2-charge.service`): a line a minute until `Full`,
+  then 30 min at 15 s, counting Full -> Charging.
+- **R2 pass.** From 68 % at 07:04 to `Full` at 09:02 (about 2 h, cable
+  in, 29-30 degC). Then 30 min at full with 120 samples: **0 Full ->
+  Charging changes**, the battery current at -0.5 to -0.8 mA (the charger
+  carries the load, the battery neither charges nor drains), the voltage
+  drifting between 4.277 and 4.298 V, well above the 4.18 V recharge
+  threshold, 30.2 degC throughout. Before, the status flipped
+  between `Full` and `Charging` every sample or two (H4, seen since oma6);
+  the 200 mV threshold (0026/0027) ends that. Laptop port only; the LED
+  colour and a wall charger were not checked in this run.

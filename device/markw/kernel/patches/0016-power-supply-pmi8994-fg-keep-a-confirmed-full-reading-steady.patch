@@ -1,0 +1,60 @@
+From: Omarchy Mobile <omamobile@localhost>
+Subject: [PATCH] power: supply: pmi8994_fg: keep a confirmed full reading steady
+
+At termination the PMI8950 charger on a Redmi 4 Prime reports FULL and
+charging in turn every few seconds. The counter-based capacity capped
+every reading outside FULL at 99 %, so a full battery flickered between
+99 and 100 %.
+
+The cap exists for a full point estimated from the monotonic SOC, which
+can sit too low, so charging past it doesn't read 100 % early. Apply it
+only until a FULL report has set the full point.
+
+---
+--- a/drivers/power/supply/pmi8994_fg.c
++++ b/drivers/power/supply/pmi8994_fg.c
+@@ -112,6 +112,7 @@
+ 
+ 	/* Counter value taken as 100 %, and the last reading */
+ 	bool cc_anchored;
++	bool cc_full_seen;
+ 	s64 cc_full_uah;
+ 	s64 cc_last_uah;
+ 	ktime_t cc_last_time;
+@@ -607,10 +608,11 @@
+  * counter under load. Report the charge used since the battery was last
+  * full instead. The counter value at a full charge (the charger reports
+  * FULL) is 100 %; until the first one after boot, the 100 % point is
+- * estimated from the monotonic SOC. A counter step larger than a battery
+- * current can explain moves that point with it, so the reported capacity
+- * stays continuous. Near empty, where the voltage is the better guide,
+- * the lower of the two is reported.
++ * estimated from the monotonic SOC and the reading stays below 100 %.
++ * A counter step larger than a battery current can explain moves that
++ * point with it, so the reported capacity stays continuous. Near empty,
++ * where the voltage is the better guide, the lower of the two is
++ * reported.
+  *
+  * @param chip Pointer to chip
+  * @param val Pointer to store value at
+@@ -649,11 +651,19 @@
+ 	chip->cc_last_uah = cc;
+ 	chip->cc_last_time = now;
+ 
++	if (chip->status == POWER_SUPPLY_STATUS_FULL)
++		chip->cc_full_seen = true;
+ 	if (chip->status == POWER_SUPPLY_STATUS_FULL || cc > chip->cc_full_uah)
+ 		chip->cc_full_uah = cc;
+ 
+ 	cap = 100 - div_s64((chip->cc_full_uah - cc) * 100 + nom_uah / 2, nom_uah);
+-	if (chip->status != POWER_SUPPLY_STATUS_FULL)
++	/*
++	 * An estimated full point can be too low, and charging past it must
++	 * not read 100 % before the charger terminates. Once a FULL report has
++	 * set it, the charger's own flapping between FULL and charging at
++	 * termination must not make the reading flicker.
++	 */
++	if (!chip->cc_full_seen && chip->status != POWER_SUPPLY_STATUS_FULL)
+ 		cap = min_t(s64, cap, 99);
+ 	if (soc <= CC_LOW_SOC)
+ 		cap = min_t(s64, cap, soc);

@@ -1,0 +1,14 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Stage omamobile-storage into DESTDIR. Enables nothing.
+#   ./install DESTDIR
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+d=${1:?Usage: ./install DESTDIR}
+[[ $d == /* && $d != "/" ]] || { echo "Use an absolute staging directory" >&2; exit 1; }
+install -Dm755 bin/omamobile-storage "$d/usr/bin/omamobile-storage"
+install -Dm644 app/shell.qml "$d/usr/share/omamobile-storage/shell.qml"
+install -Dm644 share/omamobile-storage.desktop "$d/usr/share/applications/omamobile-storage.desktop"
+install -Dm644 README.md "$d/usr/share/doc/omamobile-storage/README.md"
+install -Dm644 LICENSE "$d/usr/share/licenses/omamobile-storage/LICENSE"
+install -Dm644 version "$d/usr/share/omamobile-storage/version"

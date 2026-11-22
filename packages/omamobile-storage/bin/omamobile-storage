@@ -1,0 +1,575 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: MIT
+"""Storage: what fills each drive, what can go, and the apps, from a phone window.
+
+  omamobile-storage [overview|clean-up|uninstall]   open the window, on that tab
+  omamobile-storage drives           the mounted drives, one each, as JSON
+  omamobile-storage usage DIR        DIR's folders and files by size, on DIR's drive only
+  omamobile-storage places           where the internal drive's space goes
+  omamobile-storage clean-info       what clean-up can free, item by item
+  omamobile-storage clean ITEM...    as the user: cache (files unused 7 days), trash
+  omamobile-storage apps             installed apps (desktop entries) by package size
+  omamobile-storage remove-data PATH...   delete an app's own folders (under ~/.config, ~/.local/share, ~/.cache)
+  pkexec omamobile-storage root clean-logs|clean-packages|remove PKG
+
+Sizes are bytes on disk. A drive is one block device: the eMMC root and the
+microSD card are reported apart, never summed, and `usage` stays on one file
+system (du -x). Folders the user can't read are left out and reported as
+such, never guessed. Only `clean`, `remove-data` and `root` change anything,
+and `root` refuses an app another package needs, and any removal that would
+take a core package (the shell, the compositor, the kernel, Omarchy) with it.
+"""
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+SHARE = os.environ.get("OMAMOBILE_STORAGE_SHARE", "/usr/share/omamobile-storage")
+SYS_BLOCK = os.environ.get("OMAMOBILE_STORAGE_SYS", "/sys/class/block")
+APPS_DIR = os.environ.get("OMAMOBILE_STORAGE_APPS", "/usr/share/applications")
+PKG_CACHE = os.environ.get("OMAMOBILE_STORAGE_PKG_CACHE", "/var/cache/pacman/pkg")
+PACMAN = os.environ.get("OMAMOBILE_STORAGE_PACMAN", "pacman")
+JOURNALCTL = os.environ.get("OMAMOBILE_STORAGE_JOURNALCTL", "journalctl")
+HOME = os.path.expanduser("~")
+VIRTUAL = {"tmpfs", "devtmpfs", "proc", "sysfs", "cgroup2", "devpts", "securityfs", "pstore",
+           "bpf", "debugfs", "tracefs", "configfs", "fusectl", "mqueue", "hugetlbfs", "efivarfs",
+           "autofs", "binfmt_misc", "ramfs", "squashfs", "overlay", "nsfs", "fuse.portal",
+           "fuse.gvfsd-fuse", "zram"}
+DU_TIMEOUT = 180
+UNUSED_DAYS = 7
+LOG_KEEP = "2weeks"
+# Never removed from here, nor taken along by a removal.
+CORE_PREFIXES = ("omamobile-", "omarchy", "linux", "mesa", "hyprland", "quickshell", "systemd",
+                 "pipewire", "wireplumber", "qt6-", "glibc", "pacman", "polkit")
+CORE_NAMES = {"base", "bash", "coreutils", "filesystem", "foot", "uwsm", "networkmanager",
+              "modemmanager", "openssh", "sudo", "dbus", "mkinitcpio", "python", "gtk3", "gtk4",
+              "libadwaita", "xdg-desktop-portal", "xdg-desktop-portal-hyprland", "nautilus",
+              "alacritty", "kitty", "ghostty", "gnome-keyring", "fcitx5", "squeekboard"}
+
+
+def emit(data):
+    json.dump(data, sys.stdout)
+    sys.stdout.write("\n")
+
+
+def run(argv, timeout=30, env=None):
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, env=env)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def read(path):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def is_core(pkg):
+    return pkg in CORE_NAMES or pkg.startswith(CORE_PREFIXES)
+
+
+# ---------------------------------------------------------------- drives
+
+def disk_of(source):
+    """The whole-disk name and its sysfs dir for a partition (mmcblk0p49 -> mmcblk0)."""
+    name = os.path.basename(os.path.realpath(source)) if source.startswith("/dev/") else ""
+    if not name:
+        return "", ""
+    part = os.path.join(SYS_BLOCK, name)
+    if os.path.exists(os.path.join(part, "partition")):
+        disk = os.path.basename(os.path.dirname(os.path.realpath(part)))
+    else:
+        disk = name
+    return disk, os.path.join(SYS_BLOCK, disk)
+
+
+def kind_of(disk, sysdir):
+    mmc_type = read(os.path.join(sysdir, "device", "type"))
+    if mmc_type == "MMC":
+        return "emmc"
+    if mmc_type == "SD":
+        return "sd"
+    if "/usb" in os.path.realpath(sysdir):
+        return "usb"
+    return "other"
+
+
+NAMES = {"emmc": "Internal storage", "sd": "microSD card", "usb": "USB drive", "other": "Drive"}
+
+
+def drives():
+    proc = run(["findmnt", "-J", "-b", "-l", "-o", "TARGET,SOURCE,FSTYPE,SIZE,USED,AVAIL"])
+    rows = []
+    if proc and proc.returncode == 0:
+        try:
+            rows = json.loads(proc.stdout).get("filesystems", [])
+        except ValueError:
+            rows = []
+    seen, out = set(), []
+    for row in rows:
+        source = (row.get("source") or "").split("[", 1)[0]
+        fstype = row.get("fstype") or ""
+        if fstype in VIRTUAL or not source.startswith("/dev/") or source in seen:
+            continue
+        seen.add(source)
+        size = int(row.get("size") or 0)
+        if size <= 0:
+            continue
+        disk, sysdir = disk_of(source)
+        kind = kind_of(disk, sysdir) if disk else "other"
+        mount = row.get("target") or ""
+        out.append({
+            "mount": mount, "name": NAMES[kind], "kind": kind, "device": os.path.basename(source),
+            "disk": disk, "fstype": fstype, "size": size,
+            "used": int(row.get("used") or 0), "free": int(row.get("avail") or 0),
+            # The card kept as the way back still holds a whole system.
+            "system_copy": mount != "/" and os.access(os.path.join(mount, "usr/lib/systemd/systemd"), os.X_OK),
+        })
+    order = {"emmc": 0, "sd": 1, "usb": 2, "other": 3}
+    out.sort(key=lambda d: (d["mount"] != "/", order[d["kind"]], d["mount"]))
+    return out
+
+
+# ---------------------------------------------------------------- sizes
+
+def du_children(path):
+    proc = run(["du", "-x", "-B1", "-d1", "--", path], timeout=DU_TIMEOUT)
+    sizes = {}
+    if proc is None:
+        return sizes, True
+    for line in proc.stdout.splitlines():
+        parts = line.split("\t", 1)
+        if len(parts) == 2 and parts[0].isdigit():
+            sizes[parts[1]] = int(parts[0])
+    return sizes, proc.returncode != 0
+
+
+def du_total(path):
+    proc = run(["du", "-x", "-s", "-B1", "--", path], timeout=DU_TIMEOUT)
+    if proc is None or not proc.stdout.strip():
+        return None, True
+    first = proc.stdout.split("\t", 1)[0]
+    return (int(first) if first.isdigit() else None), proc.returncode != 0
+
+
+def usage(path):
+    path = os.path.realpath(path)
+    if not os.path.isdir(path):
+        return {"dir": path, "error": "not a folder"}
+    try:
+        dev = os.lstat(path).st_dev
+    except OSError as error:
+        return {"dir": path, "error": str(error)}
+    sizes, unreadable = du_children(path)
+    items = []
+    try:
+        entries = list(os.scandir(path))
+    except OSError:
+        entries, unreadable = [], True
+    for entry in entries:
+        try:
+            st = entry.stat(follow_symlinks=False)
+        except OSError:
+            unreadable = True
+            continue
+        is_dir = entry.is_dir(follow_symlinks=False)
+        other_drive = is_dir and st.st_dev != dev
+        size = (0 if other_drive else sizes.get(entry.path, 0)) if is_dir else st.st_blocks * 512
+        items.append({"name": entry.name, "path": entry.path, "bytes": size,
+                      "dir": is_dir, "other_drive": other_drive})
+    items.sort(key=lambda i: (-i["bytes"], i["name"].lower()))
+    total = sizes.get(path, sum(i["bytes"] for i in items))
+    return {"dir": path, "total": total, "unreadable": unreadable, "items": items}
+
+
+def places():
+    wanted = [
+        ("system", "Apps and system", "/usr"),
+        ("packages", "Downloaded packages", PKG_CACHE),
+        ("logs", "System logs", "/var/log"),
+        ("cache", "App caches", os.path.join(HOME, ".cache")),
+        ("trash", "Trash", os.path.join(HOME, ".local/share/Trash")),
+        ("home", "Your files", HOME),
+    ]
+    root_dev = os.lstat("/").st_dev
+    out = []
+    for key, label, path in wanted:
+        try:
+            if os.lstat(path).st_dev != root_dev:
+                continue
+        except OSError:
+            out.append({"key": key, "label": label, "path": path, "bytes": 0, "partial": False})
+            continue
+        size, partial = du_total(path)
+        out.append({"key": key, "label": label, "path": path, "bytes": size, "partial": partial})
+    return out
+
+
+# ---------------------------------------------------------------- clean-up
+
+def unused_cache(cache=None):
+    """Files in ~/.cache neither read nor written for UNUSED_DAYS: (paths, bytes)."""
+    cache = cache or os.path.join(HOME, ".cache")
+    limit = time.time() - UNUSED_DAYS * 86400
+    paths, total = [], 0
+    try:
+        dev = os.lstat(cache).st_dev
+    except OSError:
+        return paths, total
+    for top, dirs, files in os.walk(cache):
+        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(top, d))
+                   and os.lstat(os.path.join(top, d)).st_dev == dev]
+        for name in files:
+            p = os.path.join(top, name)
+            try:
+                st = os.lstat(p)
+            except OSError:
+                continue
+            if max(st.st_mtime, st.st_atime) < limit:
+                paths.append(p)
+                total += st.st_blocks * 512
+    return paths, total
+
+
+def trash_dirs():
+    base = os.path.join(HOME, ".local/share/Trash")
+    return [os.path.join(base, d) for d in ("files", "info", "expunged")]
+
+
+def trash_bytes():
+    total = 0
+    for d in trash_dirs():
+        if os.path.isdir(d):
+            size, _ = du_total(d)
+            total += size or 0
+    return total
+
+
+PKG_FILE = re.compile(r"^(?P<name>.+)-(?P<ver>[^-]+-[^-]+)-(?P<arch>[^-]+)\.pkg\.tar\.[a-z0-9]+$")
+
+
+def installed_versions():
+    proc = run([PACMAN, "-Q"])
+    out = {}
+    if proc and proc.returncode == 0:
+        for line in proc.stdout.splitlines():
+            parts = line.split()
+            if len(parts) == 2:
+                out[parts[0]] = parts[1]
+    return out
+
+
+def stale_packages():
+    """Cached package files (and their .sig) whose exact version is not installed."""
+    installed = installed_versions()
+    paths, total = [], 0
+    try:
+        names = os.listdir(PKG_CACHE)
+    except OSError:
+        return paths, total
+    for name in names:
+        m = PKG_FILE.match(name)
+        if not m or installed.get(m.group("name")) == m.group("ver"):
+            continue
+        for p in (os.path.join(PKG_CACHE, name), os.path.join(PKG_CACHE, name + ".sig")):
+            try:
+                st = os.lstat(p)
+            except OSError:
+                continue
+            paths.append(p)
+            total += st.st_blocks * 512
+    return paths, total
+
+
+def clean_info():
+    cache_paths, cache_bytes = unused_cache()
+    pkg_paths, pkg_bytes = stale_packages()
+    logs, logs_partial = du_total("/var/log/journal")
+    return [
+        {"key": "cache", "label": "Unused app caches", "bytes": cache_bytes, "files": len(cache_paths),
+         "root": False, "exact": True,
+         "detail": "Files in ~/.cache no app has opened for %d days. Apps rebuild them when needed." % UNUSED_DAYS},
+        {"key": "logs", "label": "Old system logs", "bytes": logs or 0, "files": 0,
+         "root": True, "exact": False,
+         "detail": "Keeps the last 2 weeks of the journal."},
+        {"key": "packages", "label": "Old downloaded packages", "bytes": pkg_bytes, "files": len(pkg_paths),
+         "root": True, "exact": True,
+         "detail": "Installer files of versions no longer installed. The installed ones stay."},
+        {"key": "trash", "label": "Trash", "bytes": trash_bytes(), "files": 0,
+         "root": False, "exact": True, "detail": "Files you deleted in Files."},
+    ]
+
+
+def remove_paths(paths):
+    freed = 0
+    for p in paths:
+        try:
+            st = os.lstat(p)
+            os.unlink(p)
+            freed += st.st_blocks * 512
+        except OSError:
+            pass
+    return freed
+
+
+def prune_empty(top):
+    for d, dirs, files in os.walk(top, topdown=False):
+        if d != top and not dirs and not files:
+            try:
+                os.rmdir(d)
+            except OSError:
+                pass
+
+
+def clean(items):
+    freed = {}
+    for item in items:
+        if item == "cache":
+            paths, _ = unused_cache()
+            freed["cache"] = remove_paths(paths)
+            prune_empty(os.path.join(HOME, ".cache"))
+        elif item == "trash":
+            before = trash_bytes()
+            for d in trash_dirs():
+                if os.path.isdir(d):
+                    shutil.rmtree(d, ignore_errors=True)
+                    os.makedirs(d, exist_ok=True)
+            freed["trash"] = before - trash_bytes()
+        else:
+            raise SystemExit("clean: unknown item %s (as the user: cache, trash)" % item)
+    return freed
+
+
+# ---------------------------------------------------------------- apps
+
+def desktop_entries():
+    out = []
+    try:
+        names = sorted(os.listdir(APPS_DIR))
+    except OSError:
+        return out
+    for name in names:
+        if not name.endswith(".desktop"):
+            continue
+        path = os.path.join(APPS_DIR, name)
+        entry, section = {}, ""
+        try:
+            with open(path, errors="replace") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("["):
+                        section = line
+                        continue
+                    if section != "[Desktop Entry]" or "=" not in line:
+                        continue
+                    k, v = line.split("=", 1)
+                    entry.setdefault(k.strip(), v.strip())
+        except OSError:
+            continue
+        if entry.get("NoDisplay") == "true" or entry.get("Hidden") == "true" or entry.get("Type", "Application") != "Application":
+            continue
+        out.append((name[:-8], path, entry))
+    return out
+
+
+def owners(paths):
+    """{file: package} for files owned by a package."""
+    out = {}
+    if not paths:
+        return out
+    proc = run([PACMAN, "-Qo", "--"] + paths, timeout=60, env=dict(os.environ, LANG="C", LC_ALL="C"))
+    if proc is None:
+        return out
+    for line in proc.stdout.splitlines():
+        m = re.match(r"^(.*) is owned by (\S+) ", line)
+        if m:
+            out[m.group(1)] = m.group(2)
+    return out
+
+
+SIZE_UNITS = {"B": 1, "KiB": 1024, "MiB": 1024 ** 2, "GiB": 1024 ** 3}
+
+
+def package_info(pkgs):
+    """{pkg: {size, version, required_by}} from one pacman -Qi."""
+    out = {}
+    if not pkgs:
+        return out
+    proc = run([PACMAN, "-Qi", "--"] + sorted(pkgs), timeout=60, env=dict(os.environ, LANG="C", LC_ALL="C"))
+    if proc is None:
+        return out
+    cur = None
+    for line in proc.stdout.splitlines():
+        if ":" not in line:
+            continue
+        k, v = [s.strip() for s in line.split(":", 1)]
+        if k == "Name":
+            cur = out.setdefault(v, {"size": 0, "version": "", "required_by": []})
+        elif cur is None:
+            continue
+        elif k == "Version":
+            cur["version"] = v
+        elif k == "Installed Size":
+            parts = v.split()
+            if len(parts) == 2 and parts[1] in SIZE_UNITS:
+                try:
+                    cur["size"] = int(float(parts[0]) * SIZE_UNITS[parts[1]])
+                except ValueError:
+                    pass
+        elif k == "Required By":
+            cur["required_by"] = [] if v == "None" else v.split()
+    return out
+
+
+def data_dirs(names):
+    """The app's own folders: ~/.config/X, ~/.local/share/X, ~/.cache/X for X a name of the app."""
+    found = []
+    bases = [os.path.join(HOME, ".config"), os.path.join(HOME, ".local/share"), os.path.join(HOME, ".cache")]
+    wanted = {n.lower() for n in names if n and len(n) > 2}
+    for base in bases:
+        try:
+            children = os.listdir(base)
+        except OSError:
+            continue
+        for child in children:
+            p = os.path.join(base, child)
+            if child.lower() in wanted and os.path.isdir(p) and not os.path.islink(p):
+                size, _ = du_total(p)
+                found.append({"path": p, "bytes": size or 0})
+    return found
+
+
+def apps():
+    entries = desktop_entries()
+    own = owners([path for _, path, _ in entries])
+    info = package_info(set(own.values()))
+    by_pkg = {}
+    for app_id, path, entry in entries:
+        pkg = own.get(path)
+        if not pkg:
+            continue
+        by_pkg.setdefault(pkg, []).append((app_id, entry))
+    out = []
+    for pkg, items in by_pkg.items():
+        app_id, entry = items[0]
+        meta = info.get(pkg, {"size": 0, "version": "", "required_by": []})
+        if is_core(pkg):
+            locked = "part of the system"
+        elif meta["required_by"]:
+            locked = "needed by " + ", ".join(meta["required_by"][:2])
+        else:
+            locked = ""
+        names = {pkg, app_id, entry.get("StartupWMClass", "")}
+        if "." in app_id:
+            names.add(app_id.rsplit(".", 1)[1])
+        out.append({
+            "pkg": pkg, "name": entry.get("Name", pkg), "id": app_id, "icon": entry.get("Icon", ""),
+            "version": meta["version"], "bytes": meta["size"], "locked": locked,
+            "apps": len(items), "data": [] if locked else data_dirs(names),
+        })
+    out.sort(key=lambda a: (-a["bytes"], a["name"].lower()))
+    return out
+
+
+def remove_data(paths):
+    bases = [os.path.join(HOME, ".config"), os.path.join(HOME, ".local/share"), os.path.join(HOME, ".cache")]
+    freed = 0
+    for p in paths:
+        real = os.path.realpath(p)
+        if os.path.dirname(real) not in bases or os.path.islink(p) or not os.path.isdir(real):
+            raise SystemExit("remove-data: %s is not an app folder under ~/.config, ~/.local/share or ~/.cache" % p)
+    for p in paths:
+        size, _ = du_total(p)
+        shutil.rmtree(p, ignore_errors=True)
+        freed += size or 0
+    return freed
+
+
+# ---------------------------------------------------------------- root
+
+def root(args):
+    if os.geteuid() != 0:
+        raise SystemExit("root: run through pkexec")
+    done = {}
+    i = 0
+    while i < len(args):
+        what = args[i]
+        if what == "clean-logs":
+            proc = run([JOURNALCTL, "--vacuum-time=" + LOG_KEEP], timeout=300)
+            done["logs"] = bool(proc and proc.returncode == 0)
+        elif what == "clean-packages":
+            paths, _ = stale_packages()
+            done["packages"] = remove_paths(paths)
+        elif what == "remove" and i + 1 < len(args):
+            i += 1
+            done["remove"] = remove_app(args[i])
+        else:
+            raise SystemExit("root: unknown action %s" % what)
+        i += 1
+    return done
+
+
+def remove_app(pkg):
+    """pacman -Rns of an app's own package, refused for core or needed packages."""
+    if not re.fullmatch(r"[a-z0-9@._+-]+", pkg):
+        raise SystemExit("remove: bad package name")
+    app = next((a for a in apps() if a["pkg"] == pkg), None)
+    if app is None:
+        raise SystemExit("remove: %s is not an installed app" % pkg)
+    if app["locked"]:
+        raise SystemExit("remove: %s is %s" % (pkg, app["locked"]))
+    plan = run([PACMAN, "-Rns", "--print", "--print-format", "%n", "--", pkg], timeout=60)
+    if plan is None or plan.returncode != 0:
+        raise SystemExit("remove: pacman refuses: %s" % (plan.stderr.strip() if plan else "no answer"))
+    targets = [t for t in plan.stdout.split() if t]
+    core = [t for t in targets if is_core(t)]
+    if core:
+        raise SystemExit("remove: would also take %s" % ", ".join(core))
+    proc = run([PACMAN, "-Rns", "--noconfirm", "--", pkg], timeout=600)
+    if proc is None or proc.returncode != 0:
+        raise SystemExit("remove: pacman failed: %s" % (proc.stderr.strip() if proc else "no answer"))
+    return targets
+
+
+def usage_text():
+    return __doc__.split("\n\n")[1]
+
+
+def main(argv):
+    cmd = argv[1] if len(argv) > 1 else ""
+    rest = argv[2:]
+    tabs = {"": "overview", "overview": "overview", "clean-up": "clean", "uninstall": "apps"}
+    if cmd in tabs and not rest:
+        os.chdir(HOME)
+        os.environ["OMAMOBILE_STORAGE_TAB"] = tabs[cmd]
+        os.execvp("quickshell", ["quickshell", "-p", os.path.join(SHARE, "shell.qml")])
+    if cmd == "drives" and not rest:
+        emit(drives())
+    elif cmd == "usage" and len(rest) == 1:
+        emit(usage(rest[0]))
+    elif cmd == "places" and not rest:
+        emit(places())
+    elif cmd == "clean-info" and not rest:
+        emit(clean_info())
+    elif cmd == "clean" and rest:
+        emit(clean(rest))
+    elif cmd == "apps" and not rest:
+        emit(apps())
+    elif cmd == "remove-data" and rest:
+        emit({"freed": remove_data(rest)})
+    elif cmd == "root" and rest:
+        emit(root(rest))
+    else:
+        sys.stderr.write("Usage:\n" + usage_text() + "\n")
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

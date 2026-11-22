@@ -1,8 +1,10 @@
 #!/bin/bash
 # SPDX-License-Identifier: MIT
 # Stage omamobile-device-markw into DESTDIR. Nothing is enabled that would
-# start a remote processor, the radio, the charger, or a camera (it enables
-# zram swap and the copy of the phone's own firmware, nothing else).
+# start the radio's data path, the charger, or a camera. It enables zram
+# swap, the copy of the phone's own firmware, the light sensor bind, the
+# idle modem boot (on RAM copies of its NV) and ModemManager, which
+# connects nothing until the mobile data tile is on.
 #   ./install DESTDIR [BUILDDIR]
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
@@ -14,6 +16,9 @@ install -Dm644 vendor/udev/rules.d/10-omamobile-storage.rules \
   "$destination/usr/lib/udev/rules.d/10-omamobile-storage.rules"
 install -Dm644 vendor/udev/rules.d/80-omamobile-markw-proximity.rules \
   "$destination/usr/lib/udev/rules.d/80-omamobile-markw-proximity.rules"
+# rmnet_ipa0 at 1504, so the QMAP mux link can take the bearer's 1500.
+install -Dm644 vendor/udev/rules.d/80-omamobile-markw-ipa-mtu.rules \
+  "$destination/usr/lib/udev/rules.d/80-omamobile-markw-ipa-mtu.rules"
 install -Dm644 vendor/systemd/network/20-usb-gadget.network \
   "$destination/usr/lib/systemd/network/20-usb-gadget.network"
 install -Dm644 vendor/systemd/logind.conf.d/10-omamobile-power-key.conf \
@@ -43,20 +48,69 @@ ln -sf ../omamobile-markw-light.service   "$destination/usr/lib/systemd/system/m
 install -Dm755 vendor/omamobile-markw-rmtfs "$destination/usr/lib/omamobile/omamobile-markw-rmtfs"
 install -Dm644 vendor/systemd/system/omamobile-markw-rmtfs.service \
   "$destination/usr/lib/systemd/system/omamobile-markw-rmtfs.service"
+# Boot the modem idle at startup, for deep sleep (BRINGUP-SUSPEND.md,
+# runbooks N-S): enabled. It pulls in the rmtfs unit above; ModemManager,
+# and so mobile data, stays off.
+install -Dm755 vendor/omamobile-markw-modem "$destination/usr/lib/omamobile/omamobile-markw-modem"
+install -Dm644 vendor/systemd/system/omamobile-markw-modem.service \
+  "$destination/usr/lib/systemd/system/omamobile-markw-modem.service"
+ln -sf ../omamobile-markw-modem.service \
+  "$destination/usr/lib/systemd/system/multi-user.target.wants/omamobile-markw-modem.service"
+install -Dm644 vendor/modprobe.d/omamobile-markw-modem.conf \
+  "$destination/usr/lib/modprobe.d/omamobile-markw-modem.conf"
+# ModemManager at boot, after the modem, so the quick settings tile can
+# turn mobile data on; it connects nothing by itself. Before each suspend
+# the sleep hook brings rmnet_ipa0 down when no data link is on it, or the
+# IPA clock holds XO (BRINGUP-SUSPEND.md, U and V).
+install -Dm644 vendor/systemd/system/ModemManager.service.d/10-omamobile-markw.conf \
+  "$destination/usr/lib/systemd/system/ModemManager.service.d/10-omamobile-markw.conf"
+ln -sf ../ModemManager.service \
+  "$destination/usr/lib/systemd/system/multi-user.target.wants/ModemManager.service"
+install -Dm755 vendor/omamobile-markw-sleep "$destination/usr/lib/systemd/system-sleep/omamobile-markw"
+# Auto-rotate: omamobile-sensors' client, unchanged, against iio-sensor-proxy
+# (markw's BMI120 is a plain IIO device). Not enabled: the rotation lock
+# tile turns the user service on.
+install -Dm755 vendor/autorotate/omamobile-autorotate "$destination/usr/bin/omamobile-autorotate"
+install -Dm644 vendor/autorotate/autorotate.py "$destination/usr/lib/omamobile-sensors/autorotate.py"
+install -Dm644 vendor/autorotate/omamobile-autorotate.service \
+  "$destination/usr/lib/systemd/user/omamobile-autorotate.service"
+# The Location tile: omamobile-gnss's command line over the modem's GPS in
+# ModemManager. Off at every boot; the tile turns it on.
+install -Dm755 vendor/omamobile-gnss "$destination/usr/bin/omamobile-gnss"
+# The Hotspot tile: ufw opens DHCP, DNS and forwarding on a shared Wi-Fi
+# connection only while it is up (runtime rules, never saved).
+install -Dm755 vendor/NetworkManager/dispatcher.d/50-omamobile-markw-hotspot \
+  "$destination/usr/lib/NetworkManager/dispatcher.d/50-omamobile-markw-hotspot"
 # Rebind the USB gadget when a computer's port gives no link after a role
 # change (device/markw/NOTES.md, 2026-11-06): started by udev, not enabled.
 install -Dm755 vendor/omamobile-markw-usb-rescue "$destination/usr/lib/omamobile/omamobile-markw-usb-rescue"
 install -Dm644 vendor/systemd/system/omamobile-markw-usb-rescue.service   "$destination/usr/lib/systemd/system/omamobile-markw-usb-rescue.service"
 install -Dm644 vendor/udev/rules.d/80-omamobile-markw-usb-role.rules   "$destination/usr/lib/udev/rules.d/80-omamobile-markw-usb-role.rules"
-# The notification LED shows charging (red) and full (green) through the
-# battery's LED triggers. (feedbackd's own rules already know the PMI8950
-# haptics, spmi_haptics.)
+# The notification LED shows charging (red) and full (green), set from
+# udev rather than the kernel's battery triggers.
+# (feedbackd's own rules already know the PMI8950 haptics, spmi_haptics.)
 install -Dm755 vendor/omamobile-markw-charge-led "$destination/usr/lib/omamobile/omamobile-markw-charge-led"
 install -Dm644 vendor/udev/rules.d/81-omamobile-markw-charge-led.rules   "$destination/usr/lib/udev/rules.d/81-omamobile-markw-charge-led.rules"
-# Suspend when the screen has been off a while: installed, not enabled.
+# Suspend when the screen has been off a while: enabled from 0.1.28, after
+# the overnight data-on soak (device/markw/BRINGUP-SUSPEND.md, CE).
+# `systemctl mask omamobile-autosuspend` turns it off.
 install -Dm755 vendor/omamobile-autosuspend "$destination/usr/lib/omamobile/omamobile-autosuspend"
 install -Dm644 vendor/systemd/system/omamobile-autosuspend.service \
   "$destination/usr/lib/systemd/system/omamobile-autosuspend.service"
+ln -sf ../omamobile-autosuspend.service \
+  "$destination/usr/lib/systemd/system/multi-user.target.wants/omamobile-autosuspend.service"
+# The microSD card as storage at /mnt/sd once the root is on the eMMC
+# (BRINGUP-M9): enabled; on a microSD-root boot it does nothing.
+install -Dm755 vendor/omamobile-markw-sd-storage "$destination/usr/lib/omamobile/omamobile-markw-sd-storage"
+install -Dm644 vendor/systemd/system/omamobile-markw-sd-storage.service \
+  "$destination/usr/lib/systemd/system/omamobile-markw-sd-storage.service"
+ln -sf ../omamobile-markw-sd-storage.service \
+  "$destination/usr/lib/systemd/system/multi-user.target.wants/omamobile-markw-sd-storage.service"
+# Fewer CPUs and a lower clock while the screen is off: installed, not
+# enabled (CPU hotplug is unproven on markw).
+install -Dm755 vendor/omamobile-markw-screen-power "$destination/usr/lib/omamobile/omamobile-markw-screen-power"
+install -Dm644 vendor/systemd/system/omamobile-markw-screen-power.service \
+  "$destination/usr/lib/systemd/system/omamobile-markw-screen-power.service"
 # The sound card's UCM profile (device/markw/BRINGUP-AUDIO.md); the card
 # itself needs the ADSP, so without it this does nothing.
 install -Dm644 vendor/ucm2/conf.d/xiaomi-markw/xiaomi-markw.conf \

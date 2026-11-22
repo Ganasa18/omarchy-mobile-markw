@@ -10,6 +10,15 @@ All the credit for Omarchy Mobile itself belongs to the original project: the sh
   <img src="docs/screenshots/markw/quick-settings.png" width="30%" alt="Quick settings on the Redmi 4 Prime">
 </p>
 
+### Desktop mode
+
+With a Bluetooth keyboard and mouse, the Desktop tile in quick settings turns the phone's own screen into a small desktop. The panel turns landscape at scale 1.5, and windows float between a bar and a dock. The dock holds the app menu and the apps you opened last, and it steps aside when a window is maximized. Design and details: [docs/design/desktop-mode](docs/design/desktop-mode/).
+
+<p align="center">
+  <img src="docs/screenshots/markw/desktop.png" width="48%" alt="Desktop mode on the Redmi 4 Prime: the bar and the dock">
+  <img src="docs/screenshots/markw/desktop-apps.png" width="48%" alt="Desktop mode's app menu over the dock">
+</p>
+
 ## What Omarchy Mobile is
 
 Omarchy Mobile runs native [Omarchy](https://omarchy.org) on phones: Arch Linux ARM, Hyprland and Omarchy's own packages, on a mainline Linux kernel, with no Android underneath. The upstream reference device is the Google Pixel 7 Pro (`cheetah`).
@@ -25,7 +34,7 @@ Omarchy Mobile runs native [Omarchy](https://omarchy.org) on phones: Arch Linux 
 | `packages/tqftpserv`, `packages/pd-mapper` | Qualcomm modem helper services for mobile data |
 | `tools/build-markw-kernel`, `tools/build-markw-probe`, `tools/build-markw-sd`, `tools/markw-*` | Build the markw kernel, a RAM-loaded boot image and the microSD root; debug, charge-log and OTG-watch helpers |
 
-Changes to shared packages (`omamobile-shell`, `omamobile-omarchy`, `mesa`, `omamobile-firstboot`) add what markw needs: a smaller screen scale, touch keys, Adreno (freedreno) graphics, and some small fixes.
+Changes to shared packages (`omamobile-shell`, `omamobile-omarchy`, `mesa`, `omamobile-firstboot`) add what markw needs: a smaller screen scale, touch keys, Adreno (freedreno) graphics, desktop mode, and some small fixes.
 
 ## The device
 

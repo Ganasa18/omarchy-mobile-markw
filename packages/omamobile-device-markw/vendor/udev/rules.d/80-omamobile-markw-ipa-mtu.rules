@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: MIT
+# QMAP puts a 4-byte header on each packet, so qmapmux0.0 can carry at most
+# its parent's MTU minus 4. rmnet_ipa0 comes up at 1500 (it allows up to
+# 2012), which caps the mux link at 1496, while the network's bearer asks for
+# 1500. NetworkManager then failed to set the bearer's MTU every 30 s
+# (device/markw/NOTES.md, 2026-11-19 systemd audit). At 1504 the mux link
+# takes 1500 and a 1500-byte don't-fragment ping goes through.
+ACTION=="add", SUBSYSTEM=="net", KERNEL=="rmnet_ipa0", ATTR{mtu}="1504"

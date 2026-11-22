@@ -82,21 +82,27 @@ grep -cF 'size = { 860, 372 }' "$lua" >/dev/null || fail "a new window fits betw
 mode off
 pass "a new window fits between the bar and the dock"
 
-# reapply: nothing while off; on, a reload only when the scale drifted.
+# reapply: nothing while off; on, the monitor rule alone (no reload, which
+# would pass through the phone's scale) only when the scale drifted, and
+# never twice within 5 s, so it can't chase another writer in a loop.
 : >"$log"
 mode reapply
-[[ $(grep -c "hyprctl reload" "$log") == 0 ]] || fail "reapply does nothing while off"
+[[ $(grep -c "^hyprctl \(reload\|eval\)" "$log") == 0 ]] || fail "reapply does nothing while off"
 echo '[]' >"$tmp/clients"
 mode on
 : >"$log"
 echo '[{"name": "DSI-1", "width": 1080, "height": 1920, "scale": 1.5}]' >"$tmp/monitors"
 mode reapply
-[[ $(grep -c "hyprctl reload" "$log") == 0 ]] || fail "reapply leaves a right scale alone"
+[[ $(grep -c "^hyprctl \(reload\|eval\)" "$log") == 0 ]] || fail "reapply leaves a right scale alone"
 echo '[{"name": "DSI-1", "width": 1080, "height": 1920, "scale": 2.0}]' >"$tmp/monitors"
 mode reapply
-[[ $(grep -c "hyprctl reload" "$log") == 1 ]] || fail "reapply reloads when the scale drifted"
+want='hyprctl eval hl.monitor({ output = "DSI-1", mode = "preferred", position = "auto", scale = 1.5, transform = 3 })'
+[[ $(grep -cxF "$want" "$log") == 1 ]] || fail "reapply applies desktop.lua's monitor rule when the scale drifted"
+[[ $(grep -c "hyprctl reload" "$log") == 0 ]] || fail "reapply doesn't reload"
+mode reapply 2>/dev/null
+[[ $(grep -cxF "$want" "$log") == 1 ]] || fail "reapply doesn't chase the scale again within 5 s"
 mode off
-pass "reapply puts a drifted scale back, and only then"
+pass "reapply puts a drifted scale back with one rule, only then, and not in a loop"
 
 if mode sideways 2>/dev/null; then fail "unknown commands are refused"; fi
 pass "unknown commands are refused"

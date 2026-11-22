@@ -98,7 +98,8 @@ Item {
       brightness: brightness.available ? brightness.percent : null,
       volume: audio.available ? Math.round(audio.volume * 100) : null,
       wifiPanel: wifiPicker.opened,
-      bluetoothPanel: bluetoothPanelItem.opened
+      bluetoothPanel: bluetoothPanelItem.opened,
+      hotspotPanel: hotspotPanelItem.opened
     })
   }
 
@@ -124,6 +125,18 @@ Item {
 
   function wifiPanel() {
     return wifiPicker.snapshot()
+  }
+
+  // `shell call omamobile.quicksettings openHotspot ''`: the same as a
+  // long-press on the Hotspot tile. `hotspotPanel ''` returns its state as
+  // JSON, never the password.
+  function openHotspot() {
+    openHotspotPanel()
+    return hotspotPanelItem.snapshot()
+  }
+
+  function hotspotPanel() {
+    return hotspotPanelItem.snapshot()
   }
 
   // `shell call omamobile.quicksettings toggleTile <name>`: the same
@@ -365,7 +378,8 @@ Item {
     readonly property string status: !available ? "No Wi-Fi radio" : enabled ? "On" : "Off"
     readonly property bool longPress: true
     function toggle() { if (available) root.runTileAction("hotspot", !enabled) }
-    function openDetails() { root.openWifiPanel() }
+    // Long-press: the hotspot's own page (name, password, join QR code).
+    function openDetails() { root.openHotspotPanel() }
   }
 
   // Battery saver: power-profiles-daemon's power-saver profile.
@@ -717,16 +731,28 @@ Item {
     root.dismiss()
   }
 
+  function openHotspotPanel() {
+    openPage("hotspot")
+    root.dismiss()
+  }
+
   // One page at a time.
   function openPage(page) {
     if (page !== "wifi") wifiPicker.close()
     if (page !== "bluetooth") bluetoothPanelItem.close()
     if (page !== "record") recordPanelItem.close()
     if (page !== "ssh") sshPanelItem.close()
+    if (page !== "hotspot") hotspotPanelItem.close()
     if (page === "wifi") wifiPicker.open()
     else if (page === "bluetooth") bluetoothPanelItem.open()
     else if (page === "record") recordPanelItem.open()
     else if (page === "ssh") sshPanelItem.open()
+    else if (page === "hotspot") hotspotPanelItem.open()
+  }
+
+  HotspotPanel {
+    id: hotspotPanelItem
+    onBackRequested: root.backToSheet(hotspotPanelItem)
   }
 
   SshPanel {
@@ -851,7 +877,9 @@ Item {
   // Mobile data over omamobile-modem-sit: the tile is the cellular bearer
   // (omamobile-sit data on|off, which starts or stops
   // omamobile-sit-data.service through polkit). "No modem" until
-  // omamobile-sitd publishes its state.
+  // omamobile-sitd publishes its state. Without it, the tile is
+  // NetworkManager's mobile broadband connection on ModemManager's modem
+  // (tile-state.sh, tile-action.sh).
   QtObject {
     id: mobileData
     readonly property bool available: root.probedHas("data")

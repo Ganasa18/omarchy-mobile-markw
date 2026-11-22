@@ -1,9 +1,13 @@
 #!/bin/sh
 # SPDX-License-Identifier: MIT
-# Redmi 4 Prime RAM-loaded initramfs. Never writes the eMMC. Without a root
-# UUID (M1) every disk stays read-only; with one (/etc/omamobile-sd-root,
-# packed by tools/build-markw-probe --root-uuid) exactly that ext4 partition
-# on the microSD card is writable and Arch starts from it.
+# Redmi 4 Prime initramfs. Without a root UUID (M1) every disk stays
+# read-only. With one in /etc/omamobile-sd-root (tools/build-markw-probe
+# --root-uuid) exactly that ext4 partition on the microSD card is writable
+# and Arch starts from it; the eMMC is never written. With one in
+# /etc/omamobile-emmc-root (--root-on emmc, the persistent install of
+# device/markw/BRINGUP-M9.md) the eMMC partition named userdata carrying it
+# is the root, the microSD card is writable storage, and every other eMMC
+# partition, boot0 and boot1 stay read-only.
 export PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # PID 1 exiting on a mount or initial guard failure panics (panic=10), rather
@@ -21,25 +25,32 @@ say() {
     echo "omamobile-markw: $*" > /dev/tty0 2>/dev/null
 }
 
-# The Arch root on the microSD card, by file system UUID. omamobile.initramfs
-# on the command line keeps every disk read-only and stays here.
-ROOT_UUID=""
-[ -s /etc/omamobile-sd-root ] && read -r ROOT_UUID < /etc/omamobile-sd-root
+# The Arch root by file system UUID, on the microSD card or the eMMC's
+# userdata. Both files packed is a build error: neither is used.
+# omamobile.initramfs on the command line keeps every disk read-only and
+# stays here.
+ROOT_UUID="" ROOT_ON=""
+if [ -s /etc/omamobile-sd-root ] && [ -s /etc/omamobile-emmc-root ]; then
+    :
+elif [ -s /etc/omamobile-emmc-root ]; then
+    read -r ROOT_UUID < /etc/omamobile-emmc-root; ROOT_ON=emmc
+elif [ -s /etc/omamobile-sd-root ]; then
+    read -r ROOT_UUID < /etc/omamobile-sd-root; ROOT_ON=sd
+fi
 case $ROOT_UUID in
     ????????-????-????-????-????????????) ;;
     *) ROOT_UUID="" ;;
 esac
 case $ROOT_UUID in *[!0-9a-f-]*) ROOT_UUID="" ;; esac
 grep -q omamobile.initramfs /proc/cmdline && ROOT_UUID=""
+[ -n "$ROOT_UUID" ] || ROOT_ON=""
 mkdir -p /run/omamobile-rw
 
-# Writable: the microSD card's whole disk (the kernel writes a partition only
+# SD root: the microSD card's whole disk (the kernel writes a partition only
 # if its disk is writable; its node is removed below) and its partition that
 # carries ROOT_UUID. Never anything on the eMMC (type MMC), its boot0/boot1
 # hardware partitions, or any card when no root UUID is set.
 sd_writable() {
-    [ -n "$ROOT_UUID" ] || return 1
-    [ -e "/run/omamobile-rw/$2" ] && return 0
     if [ -e "$1/partition" ]; then
         [ "$(cat "/sys/class/block/${2%p*}/device/type" 2>/dev/null)" = SD ] || return 1
         [ "$(blkid -s UUID -o value "/dev/$2" 2>/dev/null)" = "$ROOT_UUID" ] || return 1
@@ -47,7 +58,83 @@ sd_writable() {
         [ "$(cat "$1/device/type" 2>/dev/null)" = SD ] || return 1
         rm -f "/dev/$2"
     fi
+}
+
+# The eMMC root: an eMMC (type MMC) partition named userdata whose file
+# system carries ROOT_UUID. Found by name and type, never by number: the
+# eMMC is mmcblk0 on some boots and mmcblk1 on others.
+emmc_root() {
+    [ -e "/sys/class/block/$1/partition" ] || return 1
+    [ "$(cat "/sys/class/block/${1%p*}/device/type" 2>/dev/null)" = MMC ] || return 1
+    grep -qx PARTNAME=userdata "/sys/class/block/$1/uevent" 2>/dev/null || return 1
+    [ "$(blkid -s UUID -o value "/dev/$1" 2>/dev/null)" = "$ROOT_UUID" ]
+}
+
+# eMMC root: that partition, its disk (which the kernel needs writable; its
+# node is removed, so nothing writes across partitions), and the microSD
+# card whole, as storage. Never boot0/boot1 (whole disks of type MMC with no
+# partitions of their own), any other eMMC partition, or anything else.
+emmc_writable() {
+    case $2 in
+        mmcblk[0-9]|mmcblk[0-9][0-9])
+            [ ! -e "$1/partition" ] || return 1
+            case $(cat "$1/device/type" 2>/dev/null) in
+                SD) return 0 ;;
+                MMC)
+                    for p in "$1/$2"p*; do
+                        [ -e "$p/partition" ] && emmc_root "${p##*/}" && { rm -f "/dev/$2"; return 0; }
+                    done
+                    return 1 ;;
+            esac
+            return 1 ;;
+        mmcblk[0-9]p[0-9]*|mmcblk[0-9][0-9]p[0-9]*)
+            [ -e "$1/partition" ] || return 1
+            [ "$(cat "/sys/class/block/${2%p*}/device/type" 2>/dev/null)" = SD ] && return 0
+            emmc_root "$2" ;;
+        *) return 1 ;;
+    esac
+}
+
+writable() {
+    [ -n "$ROOT_UUID" ] || return 1
+    [ -e "/run/omamobile-rw/$2" ] && return 0
+    case $ROOT_ON in
+        sd) sd_writable "$1" "$2" ;;
+        emmc) emmc_writable "$1" "$2" ;;
+        *) false ;;
+    esac || return 1
     : > "/run/omamobile-rw/$2"
+}
+
+# A boot loop guard for the eMMC root, which boots with no laptop attached:
+# a try is counted on the root before each switch, and a runtime unit in
+# Arch clears the count once graphical.target is reached. After three
+# failed tries the initramfs stays put (SSH up); with no USB host its keeper
+# then reboots to the bootloader, which waits in fastboot. To clear the
+# count, mount the root from that SSH and remove var/lib/omamobile/boot-tries.
+# Arguments: the
+# mounted root and the /run that Arch will get.
+boot_tries() {
+    f=$1/var/lib/omamobile/boot-tries
+    n=0
+    [ -s "$f" ] && read -r n < "$f"
+    case $n in ''|*[!0-9]*) n=3 ;; esac
+    [ "$n" -lt 3 ] || return 1
+    mkdir -p "${f%/*}" && echo $((n + 1)) > "$f" && sync || return 1
+    mkdir -p "$2/systemd/system/graphical.target.wants"
+    printf '[Unit]\nDescription=Clear the initramfs boot-loop count\nAfter=graphical.target\n\n[Service]\nType=oneshot\nExecStart=/usr/bin/rm -f /var/lib/omamobile/boot-tries\n' \
+        > "$2/systemd/system/omamobile-boot-ok.service"
+    ln -sf ../omamobile-boot-ok.service "$2/systemd/system/graphical.target.wants/omamobile-boot-ok.service"
+}
+
+# The root partition among the allowed ones.
+root_ok() {
+    case $ROOT_ON in
+        sd) [ "$(cat "/sys/class/block/${1%p*}/device/type" 2>/dev/null)" = SD ] &&
+            [ "$(blkid -s UUID -o value "/dev/$1" 2>/dev/null)" = "$ROOT_UUID" ] ;;
+        emmc) emmc_root "$1" ;;
+        *) false ;;
+    esac
 }
 
 # Everything else is set read-only, on every pass. No udev, mdev or
@@ -58,7 +145,7 @@ storage_guard() {
         name=${s##*/}
         [ -b "/dev/$name" ] || continue
         [ "$(cat "$s/ro")" = 1 ] && continue
-        sd_writable "$s" "$name" && continue
+        writable "$s" "$name" && continue
         if ! blockdev --setro "/dev/$name" || [ "$(cat "$s/ro")" != 1 ]; then
             say "FAILED to protect /dev/$name; stop bring-up"
             return 1
@@ -208,12 +295,12 @@ boot_arch() {
     for _ in $(seq 1 20); do
         storage_guard || return 1
         for f in /run/omamobile-rw/*p*; do
-            [ -e "$f" ] && dev=/dev/${f##*/}
+            [ -e "$f" ] && root_ok "${f##*/}" && dev=/dev/${f##*/}
         done
         [ -n "$dev" ] && break
         sleep 1
     done
-    [ -n "$dev" ] || { say "arch: no microSD partition with UUID $ROOT_UUID"; return 1; }
+    [ -n "$dev" ] || { say "arch: no $ROOT_ON root partition with UUID $ROOT_UUID"; return 1; }
     e2fsck -p "$dev" >/dev/null 2>&1
     grow_root "$dev"
     mkdir -p /newroot
@@ -225,6 +312,11 @@ boot_arch() {
     open=$(storage_unguarded)
     if [ -n "$open" ]; then
         say "arch: writable outside the allowlist: $(echo "$open" | tr '\n' ' ')(staying here)"
+        umount /newroot
+        return 1
+    fi
+    if [ "$ROOT_ON" = emmc ] && ! boot_tries /newroot /run; then
+        say "arch: three boots of $dev did not reach the desktop; staying here (SSH up, see boot_tries)"
         umount /newroot
         return 1
     fi

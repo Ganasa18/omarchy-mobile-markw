@@ -1,0 +1,71 @@
+From: Omarchy Mobile <omamobile@localhost>
+Subject: [PATCH] arm64: dts: qcom: msm8953: add the MPM wakeup interrupt controller
+
+When the apps subsystem enters system power collapse and RPM shuts down
+XO, the GIC sees no interrupts; RPM's MPM watches the wakeup sources
+instead and wakes the CPUs. Describe it as on agatti: the vMPM slice of
+the RPM message RAM at 0x1d4, the RPM-to-APSS interrupt (SPI 171), the
+APCS IPC bit 1 to notify RPM, and the MPM as the parent power domain of
+the system domain, so it is programmed when the last cluster goes down.
+
+Route the SPMI arbiter's peripheral interrupt (MPM pin 88, SPI 190)
+through it, so the power key, the RTC alarm and the charger can wake the
+SoC. The values are those of the vendor kernel's msm8953-pm.dtsi
+(qcom,mpm-v2, gic-map <88 222>, where 222 is the GIC hwirq, SPI 190).
+
+---
+ arch/arm64/boot/dts/qcom/msm8953.dtsi | 23 ++++++++++++++++++++++-
+ 1 file changed, 22 insertions(+), 1 deletion(-)
+
+--- a/arch/arm64/boot/dts/qcom/msm8953.dtsi
++++ b/arch/arm64/boot/dts/qcom/msm8953.dtsi
+@@ -619,12 +619,26 @@
+ 		system_pd: power-domain-system {
+ 			#power-domain-cells = <0>;
+ 			domain-idle-states = <&system_pc>;
++			power-domains = <&mpm>;
+ 		};
+ 	};
+ 
+ 	rpm: remoteproc {
+ 		compatible = "qcom,msm8953-rpm-proc", "qcom,rpm-proc";
+ 
++		mpm: interrupt-controller {
++			compatible = "qcom,mpm";
++			qcom,rpm-msg-ram = <&apss_mpm>;
++			interrupts = <GIC_SPI 171 IRQ_TYPE_EDGE_RISING>;
++			mboxes = <&apcs 1>;
++			interrupt-controller;
++			#interrupt-cells = <2>;
++			#power-domain-cells = <0>;
++			interrupt-parent = <&intc>;
++			qcom,mpm-pin-count = <96>;
++			qcom,mpm-pin-map = <88 190>; /* SPMI peripheral interrupt */
++		};
++
+ 		smd-edge {
+ 			interrupts = <GIC_SPI 168 IRQ_TYPE_EDGE_RISING>;
+ 			mboxes = <&apcs 0>;
+@@ -883,6 +897,13 @@
+ 		rpm_msg_ram: sram@60000 {
+ 			compatible = "qcom,rpm-msg-ram";
+ 			reg = <0x00060000 0x8000>;
++			#address-cells = <1>;
++			#size-cells = <1>;
++			ranges = <0 0x00060000 0x8000>;
++
++			apss_mpm: sram@1d4 {
++				reg = <0x1d4 0x48>;
++			};
+ 		};
+ 
+ 		hsusb_phy: phy@79000 {
+@@ -2205,7 +2226,7 @@
+ 			      <0x0200a000 0x2100>;
+ 			reg-names = "core", "chnls", "obsrvr", "intr", "cnfg";
+ 			interrupt-names = "periph_irq";
+-			interrupts = <GIC_SPI 190 IRQ_TYPE_LEVEL_HIGH>;
++			interrupts-extended = <&mpm 88 IRQ_TYPE_LEVEL_HIGH>;
+ 			qcom,ee = <0>;
+ 			qcom,channel = <0>;
+ 			interrupt-controller;

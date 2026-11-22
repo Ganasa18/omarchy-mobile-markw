@@ -199,3 +199,85 @@ separate step.
   through TrustZone; not checked further. The node stays `disabled`
   (patch 0004 unchanged) and step 5 (systemd petting it) is moot; the
   soft and hard lockup detectors with `panic=10` remain the hang net.
+
+## oma19: ten warm reboots (2026-11-18)
+
+Owner's go, cable in, attended. Each cycle: `./DEBUGING_RUN.sh --restart
+--probe out/markw/probe-oma19/boot.img` (Arch `systemctl reboot
+--reboot-argument=bootloader`, stock fastboot, lk2nd and the probe in RAM),
+SSH, 45 s to settle, then a read-only check. Stop conditions: an `Oops:`,
+`Internal error`, panic, `BUG:`, ext4 or MMC error, any eMMC partition
+not `ro=1`, a failed unit, the wrong kernel, or a WARNING other than the
+accepted `pclk0_clk_src` one.
+
+- **10 of 10 passed** on `7.1.3-msm8953-oma19`: 102-107 s from the reboot
+  command to SSH, SSH at about 72 s of uptime, `is-system-running`
+  `running`, no failed unit, ModemManager active, every eMMC partition
+  `ro=1`, no Oops, panic or storage error.
+- The `pclk0_clk_src: rcg didn't update its configuration` pair (taint
+  512) came on 4 of the 10 boots (cycles 3, 4, 8, 10) and on none of the
+  others: it is intermittent, the panel came up either way. No other
+  WARNING.
+- Two false stops on the way, both from the check, not the phone: a
+  case-insensitive "oops" matched `ramoops` (cycle 1), and the pclk0
+  pair was not yet allowed (cycle 3).
+- Wi-Fi read `unavailable` throughout: NetworkManager's Wi-Fi switch was
+  off (rfkill soft block, kept across reboots), set before the test.
+- Still to do: ten attended cold boots (power off, Power key), which need
+  the owner's hands.
+
+## oma19: ten cold boots, runbook (prepared 2026-11-19)
+
+Nothing is flashed on markw, so Power alone boots MIUI, and a MIUI boot
+rewrites the modem NV (`modemst1/2`, `persist`), which would need a fresh
+backup. Each cold boot therefore goes through stock fastboot by hand:
+full power-off, then Volume Down + Power, then lk2nd and the probe in
+RAM as before. This also tests `systemctl poweroff` on markw for the
+first time, and the first boots with device-markw 0.1.28 (auto-suspend
+enabled at boot).
+
+Risk: low (RAM-only, no eMMC write). Attended, cable in for the checks.
+
+Each cycle (the laptop script stops at the first failure):
+
+1. Laptop: `systemctl poweroff` (armed 3 s ahead), then waits until SSH
+   is gone. **Stop** if SSH still answers 2 min later.
+2. Owner: when the screen is dark, unplug the cable (a cable left in can
+   start the stock charger mode), wait until the phone is fully off,
+   hold **Volume Down + Power** until the fastboot screen, plug back in.
+   **Stop** if the screen hangs lit after poweroff: hold Power about 15 s
+   to force it off, and report.
+3. Laptop: `./DEBUGING_RUN.sh --probe out/markw/probe-oma19/boot.img`
+   (fastboot -> lk2nd -> probe). **Stop** if the phone came up in MIUI
+   instead: take a fresh NV backup before any radio work.
+4. Laptop: SSH, 45 s to settle, then the warm-reboot check (no `Oops:`,
+   panic, `BUG:`, ext4 or MMC error; every eMMC partition `ro=1`; no
+   failed unit; `running`; kernel `7.1.3-msm8953-oma19`; no WARNING but
+   the accepted pclk0 pair), plus `omamobile-autosuspend` active.
+
+Expect: the screen goes dark within about 10 s of step 1; from fastboot
+to SSH about 75-105 s.
+Rollback: none needed; Volume Down + Power reaches fastboot from any
+state, and Power alone still boots MIUI (then back up the NV).
+Logs: `logs/markw-coldboots-1119/` (summary, cycle logs, dmesg per boot).
+
+### Results (2026-11-19): 4 of 4 passed; the owner cut the run to 4
+
+The owner decided 4 cold boots are enough next to the ten warm reboots,
+so the run stopped after cycle 4 (the plan's ten is reduced by the
+owner's decision, not by a failure).
+
+- **4 of 4 passed** on `7.1.3-msm8953-oma19`, device-markw 0.1.28,
+  modemmanager 1.24.2-2.3: SSH at about 71 s of uptime, `running`, no
+  failed unit, ModemManager active, every eMMC partition `ro=1`, no
+  Oops, panic or storage error. `omamobile-autosuspend` was active at
+  every boot, the first proof that 0.1.28 enables it.
+- `systemctl poweroff` works on markw: each time SSH was gone within
+  seconds, and the previous boot's journal ends in `Reached target System
+  Power Off`, `systemd-shutdown` syncing and sending SIGTERM. No charger
+  mode and no MIUI boot, so the modem NV was not touched.
+- The pclk0 pair came on 3 of the 4 boots (cycles 1, 3, 4); no other
+  WARNING.
+- Two waits ran out (cycle 2, 15 min each) before the phone reached
+  fastboot by hand. Those were the timeout for the owner's step, not the
+  phone; cycle 2 then passed once it was in fastboot.

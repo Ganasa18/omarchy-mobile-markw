@@ -1,0 +1,51 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# The microSD card as storage once the root lives on the eMMC
+# (device/markw/BRINGUP-M9.md): mount the card's ext4 partition at
+# /mnt/sd, and give the owner (uid 1000) /mnt/sd/data. When the card is the
+# root, as on a microSD-root boot, it does nothing. The card is found by its
+# MMC type (SD), never by mmcblkN, which can swap between boots. The rest of
+# the card, the old microSD root, stays as it is: it is the way back when
+# the eMMC root is damaged (BRINGUP-M9 §5). A card that is missing or won't
+# mount never fails the boot.
+#   omamobile-markw-sd-storage
+set -uo pipefail
+SYS=${OMAMOBILE_SYS:-/sys}
+DEV=${OMAMOBILE_DEV:-/dev}
+MNT=${OMAMOBILE_SD_MOUNT:-/mnt/sd}
+log() { echo "omamobile-markw-sd-storage: $*"; }
+
+root=$(findmnt -n -o SOURCE /)
+root=${root##*/}
+part=""
+for f in "$SYS"/class/block/mmcblk*p*/uevent; do
+  [[ -e $f ]] || continue
+  d=${f%/uevent}; d=${d##*/}
+  [[ $(cat "$SYS/class/block/${d%p*}/device/type" 2>/dev/null) == SD ]] || continue
+  [[ $(blkid -s TYPE -o value "$DEV/$d" 2>/dev/null) == ext4 ]] || continue
+  part=$d
+  break
+done
+[[ -n $part ]] || { log "no ext4 partition on a microSD card; nothing to mount"; exit 0; }
+[[ $part != "$root" ]] || { log "$part is the root (a microSD-root boot); nothing to mount"; exit 0; }
+if findmnt -n "$MNT" >/dev/null; then log "$MNT is already mounted"; exit 0; fi
+
+# e2fsck: 0 clean, 1 fixed, 2 fixed (reboot asked; harmless for an unmounted
+# card), 4 and up left errors: then mount read-only rather than write on it.
+opts=noatime,nosuid,nodev
+timeout 300 e2fsck -p "$DEV/$part"; rc=$?
+if ((rc >= 4)); then
+  log "e2fsck left errors on $part (exit $rc): mounting read-only"
+  opts=ro,$opts
+fi
+mkdir -p "$MNT"
+timeout 60 mount -t ext4 -o "$opts" "$DEV/$part" "$MNT" || { log "mounting $part failed"; exit 0; }
+log "$part mounted at $MNT ($opts)"
+
+if [[ $opts != ro,* ]]; then
+  owner=$(getent passwd 1000 | cut -d: -f1)
+  if [[ -n $owner && ! -e $MNT/data ]]; then
+    mkdir -m 0755 "$MNT/data" && chown 1000:1000 "$MNT/data" && log "$MNT/data made for $owner"
+  fi
+fi
+exit 0
